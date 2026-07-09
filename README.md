@@ -27,7 +27,10 @@ join outcomes, writes `runs/<ts>-<id>/`, and leaves the cluster up.
 
 ```bash
 ./bin/cluster ls                     # running clusters
-./bin/cluster web <id>               # web URL (real TLS) + admin signup link
+./bin/cluster admin <id>             # privileged admin bot identity (MFA-free CLI)
+./bin/cluster tctl <id> get nodes    # admin tctl via the bot identity
+./bin/cluster tsh  <id> ls           # tsh via the bot identity + proxy
+./bin/cluster web  <id>              # web URL (real TLS) + admin signup link (break-glass)
 ./bin/cluster logs <id> [service]
 ./bin/cluster teardown <id>          # or --all
 ```

@@ -49,10 +49,21 @@ and image `teleport-harness:<sha>-<variant>`. Repeat builds are instant.
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `build --repo` · `up <module> --repo [--id]` · `run-plan <module> --repo [--features a,b] [--version vNN] [--id]`
-· `ls` · `logs <id> [svc]` · `web <id>` · `report <id>` · `teardown <id|--all>`.
+· `ls` · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` · `teardown <id|--all>`.
 `run-plan` gates on `requires_features`/`min_version` (SKIP with a logged reason — no silent
 skips), brings the cluster up (or reuses an existing `--id`), verifies, writes `runs/<ts>-<id>/`
 (results + per-service logs + rendered config + meta), and **leaves the cluster up**.
+
+### Admin access (`lib/admin.sh`)
+Teleport's **admin-action MFA** (v15+) blocks user-minted identity files but **exempts
+bot identities**. So admin CLI access uses a privileged **bot**, not `tctl auth sign --user`
+(that path can't satisfy the MFA requirement). `cluster admin <id>` creates a
+`harness-admin` bot (roles `editor,access,auditor`) and a long-running tbot that writes a
+renewable identity to volume `harness-admin-<id>` (+ a host copy at `state/<id>/identity`).
+`cluster tctl`/`cluster tsh` run the cluster's own image (version-matched) with
+`--identity` against `<id>-auth:3025` / the proxy — no login, no MFA. The **web UI is
+break-glass** (`cluster web` mints an invite; the browser flow still needs a password and,
+if the cluster enforces it, an MFA device).
 
 ## Invariants / gotchas (do NOT relearn)
 - **All ports = the ingress port end-to-end** (proxy `web_listen_addr`, `public_addr`, agent
@@ -80,5 +91,8 @@ skips), brings the cluster up (or reuses an existing `--id`), verifies, writes `
 - Multi-module plan files (`plans/*.yaml`); currently a "plan" == a module.
 - `--target homelab` (enterprise amd64 binary + scp/systemctl swap for the real cluster).
 - Worktree-based build isolation for arbitrary branches without touching the clone's checkout.
-- Richer `cluster web` (seeded admin password / passwordless dev login / OTP toggle) — earmarked.
+- Admin CLI via a privileged bot identity is DONE (`cluster admin/tctl/tsh`). Remaining web-UI
+  polish: optional per-cluster MFA relaxation (`second_factor: off/optional`) so break-glass
+  browser login is password-only, and/or a passwordless dev-login helper.
+- bound_keypair join for the admin bot (currently token method) as a hardening option.
 - `mkcert` offline TLS provider; cloudflare-tunnel public access provider.

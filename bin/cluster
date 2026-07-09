@@ -21,6 +21,7 @@ LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
 . "$LIB/build.sh"
 . "$LIB/doctor.sh"
 . "$LIB/cluster.sh"
+. "$LIB/admin.sh"
 [ -f "$LIB/plan.sh" ] && . "$LIB/plan.sh"
 [ -f "$LIB/report.sh" ] && . "$LIB/report.sh"
 
@@ -49,6 +50,9 @@ case "$cmd" in
   run-plan) command -v run_plan >/dev/null 2>&1 || die "plan runner not installed yet"; run_plan "$@" ;;
   ls)       cluster_ls ;;
   logs)     cluster_logs "$@" ;;
+  admin)    cluster_admin "$@" ;;
+  tctl)     cluster_tctl "$@" ;;
+  tsh)      cluster_tsh "$@" ;;
   web)      cluster_web "$@" ;;
   report)   command -v cluster_report >/dev/null 2>&1 || die "reporter not installed yet"; cluster_report "$@" ;;
   teardown) cluster_teardown "$@" ;;
