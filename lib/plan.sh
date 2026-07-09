@@ -45,19 +45,18 @@ run_plan() {
   export ID="${ID:-$(gen_id)}"
   if [ -d "$(state_dir_for "$ID")" ]; then hlog "reusing existing cluster '$ID'"; else cluster_up "$module"; fi
 
-  # ---- let agents settle, then verify ----
-  hlog "waiting for agents to settle"
-  local i n
-  for i in $(seq 1 40); do
-    n="$(docker exec "${ID}-auth" tctl get nodes --format json 2>/dev/null | grep -c '"hostname"' || echo 0)"
-    [ "${n:-0}" -ge 4 ] && break; sleep 2
+  # ---- settle, then verify (module-agnostic: retry until checks pass or timeout) ----
+  # Agents/bots take time to join and negatives take a beat to log their denial, and
+  # each module expects different things — so instead of guessing counts, just re-run
+  # the module's own checks a few times until they pass.
+  hlog "waiting for '$module' checks to pass on cluster '$ID'"
+  local res rc=1 attempt; res="$(mktemp)"
+  sleep 8
+  for attempt in $(seq 1 8); do
+    if run_verification "$ID" "$module" > "$res" 2>&1; then rc=0; break; fi
+    rc=1; sleep 8
   done
-  sleep 5   # give negative agents a beat to attempt + log their denial
-
-  local res rc; res="$(mktemp)"
-  hlog "verifying '$module' on cluster '$ID'"
-  run_verification "$ID" "$module" | tee "$res"
-  rc=${PIPESTATUS[0]}
+  cat "$res"
 
   local bundle; bundle="$(cluster_report "$ID" "$res")"
   rm -f "$res"

@@ -50,6 +50,27 @@ assert_log_contains() {   # <container-suffix> <regex...>
   else _al SKIP "$c log has no match for /$re/ yet"; fi
 }
 
+# --- bots / tbot outputs ------------------------------------------------------
+assert_bot_joined() {   # <bot-name>
+  local name="$1" logs
+  logs="$(docker logs "${ASSERT_ID}-auth" 2>&1 || true)"
+  # a successful bot.join audit event for this bot (fields on one line; avoid the
+  # pipefail+grep-q trap by matching in a single awk pass).
+  if awk -v n="$name" '/bot\.join/ && index($0,"bot_name:"n) && /success:true/{f=1} END{exit !f}' <<<"$logs"; then
+    _al PASS "bot '$name' joined"
+  else _al FAIL "bot '$name' did not join (no successful bot.join event)"; fi
+}
+assert_output_file() {    # <container-suffix> <path>  — tbot output artifact exists (non-empty)
+  local c="${ASSERT_ID}-$1" p="$2"
+  if docker exec "$c" test -s "$p" 2>/dev/null; then _al PASS "$c:$p present"
+  else _al FAIL "$c:$p missing"; fi
+}
+assert_no_output_file() { # <container-suffix> <path>  — for negatives (nothing produced)
+  local c="${ASSERT_ID}-$1" p="$2"
+  if docker exec "$c" test -s "$p" 2>/dev/null; then _al FAIL "$c:$p present but expected none"
+  else _al PASS "$c:$p absent"; fi
+}
+
 # --- usability (opt-in; needs a valid login + RBAC on the target node) --------
 assert_tsh_ssh() {   # <suffix> [login]
   local h login; h="$(_host "$1")"; login="${2:-root}"

@@ -1,0 +1,20 @@
+# tbot (Machine ID) module: a bot joins (token method) and produces an identity
+# output; a negative bot with a bad token must be denied. tbot ships in all
+# supported versions, so there's no feature gate.
+name: tbot
+description: >
+  Machine ID / tbot — a bot joins the cluster and writes an identity output whose
+  cert genuinely authenticates and is authorized (lists tokens via tctl --identity).
+  A second bot joining with a bad token must be denied and produce nothing.
+provides_feature: machine_id
+requires_features: []
+min_version: v14
+
+# Verification (source of truth). Custom identity-usability check lives in checks.sh.
+checks: |
+  # the bot joined and wrote its identity output
+  bot_joined     test-bot
+  output_file    tbot /out/id/identity
+  # the bad-token bot was denied and produced nothing
+  log_contains   tbot-deny denied|not found|failed to (join|connect)|authorization|invalid|unauthorized
+  no_output_file tbot-deny /out/id/identity

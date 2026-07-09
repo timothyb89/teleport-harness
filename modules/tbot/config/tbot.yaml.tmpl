@@ -1,0 +1,6 @@
+version: v2
+proxy_server: ${FQDN}:${PORT}
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}
