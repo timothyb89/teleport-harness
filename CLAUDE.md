@@ -111,11 +111,45 @@ if the cluster enforces it, an MFA device).
 4. Copy `modules/generic_oidc/` as the reference implementation.
 
 ## Roadmap (not yet built)
-- Multi-module plan files (`plans/*.yaml`); currently a "plan" == a module.
-- `--target homelab` (enterprise amd64 binary + scp/systemctl swap for the real cluster).
-- Worktree-based build isolation for arbitrary branches without touching the clone's checkout.
-- Admin CLI via a privileged bot identity is DONE (`cluster admin/tctl/tsh`). Remaining web-UI
-  polish: optional per-cluster MFA relaxation (`second_factor: off/optional`) so break-glass
-  browser login is password-only, and/or a passwordless dev-login helper.
-- bound_keypair join for the admin bot (currently token method) as a hardening option.
-- `mkcert` offline TLS provider; cloudflare-tunnel public access provider.
+
+### Architecture / DX
+- **Extract a shared base** (highest priority): `generic_oidc`, `tbot`, and `bound_keypair` all
+  duplicate the same auth+proxy service, "bootstrap a bot + token" step, and negative-bot
+  scaffold. Factor a base that emits the auth service + a generic bootstrap hook + negative
+  scaffold, so a new join-method module is ~just its join config + `checks:`. We now have the
+  3 examples needed to factor it correctly; do this before adding a 4th module.
+- **Multi-module plan files** (`plans/*.yaml`): currently a "plan" == a single module. A plan
+  file would list several modules (with per-module gates) run + reported together.
+
+### Coverage (new modules / deeper checks)
+- **More join methods**: `kubernetes` (in-cluster + the OIDC path that shares the caching
+  validator), `github`, `iam`/`ec2`, `azure`, etc. — each ~ a join config + `checks:` once the
+  base is extracted.
+- **Deepen `tbot`**: multiple output types (`ssh`, `kubernetes`, `database`, `application`) with
+  artifact + usability checks; and exercise the `tsh_ssh` primitive end-to-end by joining a
+  target SSH node and proving the bot identity can actually `tsh ssh` into it (needs a node +
+  login RBAC — the primitive exists but no module uses it yet).
+- **Scoped coverage** beyond generic_oidc as scoping expands (scoped agents/bots for other methods).
+
+### Build / deploy
+- `--target homelab`: enterprise amd64 binary + the scp/systemctl swap one-liner for the
+  long-lived homelab cluster (the builder already supports `ent`).
+- **Worktree-based build isolation**: build arbitrary branches in a `git worktree` without
+  touching the clone's checkout (today `build` uses the clone's currently-checked-out tree).
+
+### Access / TLS / DNS
+- Admin CLI via a privileged bot identity is **DONE** (`cluster admin/tctl/tsh`). Remaining
+  **web-UI break-glass polish**: optional per-cluster MFA relaxation
+  (`cluster_auth_preference.second_factor: off/optional`) so browser login is password-only,
+  and/or a passwordless dev-login helper. (Fully headless *web* user seeding is impossible —
+  password is only set via the invite flow — so the bot-identity CLI stays primary.)
+- `bound_keypair` join for the admin bot (currently token method) as a hardening option.
+- **TLS provider**: `mkcert` offline fallback (no domain / air-gapped).
+- **Access providers**: cloudflare-tunnel for public access; offline `.test` + dnsmasq DNS
+  provider (today relies on the public `*.lab.<domain>` → 127.0.0.1 wildcard record).
+
+### Pending acceptance goal
+- **Drive the v18 `generic_oidc` backport** through the harness (the original motivation):
+  `run-plan generic_oidc --repo <clone-on-v18-branch> --features generic_oidc --version v18`,
+  then iterate on real findings. Proven across 3 join methods on the prealpha; not yet run
+  against the actual v18 backport branch.
