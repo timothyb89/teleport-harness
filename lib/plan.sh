@@ -56,7 +56,7 @@ run_plan() {
 
   local res rc; res="$(mktemp)"
   hlog "verifying '$module' on cluster '$ID'"
-  bash "$MODULES_DIR/$module/verify.sh" "$ID" | tee "$res"
+  run_verification "$ID" "$module" | tee "$res"
   rc=${PIPESTATUS[0]}
 
   local bundle; bundle="$(cluster_report "$ID" "$res")"

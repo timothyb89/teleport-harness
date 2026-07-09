@@ -22,6 +22,7 @@ LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
 . "$LIB/doctor.sh"
 . "$LIB/cluster.sh"
 . "$LIB/admin.sh"
+. "$LIB/verify.sh"
 [ -f "$LIB/plan.sh" ] && . "$LIB/plan.sh"
 [ -f "$LIB/report.sh" ] && . "$LIB/report.sh"
 

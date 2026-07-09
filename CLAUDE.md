@@ -41,11 +41,24 @@ clone's prebuilt webassets. Keyed by `git rev-parse HEAD` → `.cache/bin/<sha>-
 and image `teleport-harness:<sha>-<variant>`. Repeat builds are instant.
 
 ### Module contract (`modules/<name>/`)
-- `module.yaml` — `provides_feature`, `requires_features`, `min_version`, `agents.{positive,negative}`.
+- `module.yaml` — gating (`provides_feature`, `requires_features`, `min_version`, grep-parsed)
+  **plus** the verification spec: a `checks: |` block of `<assert-verb> <args...>` lines
+  (the source of truth). `#` comment lines allowed.
 - `render.sh` — invoked with `CLUSTER_ID FQDN PORT IMAGE HARNESS_DOMAIN LAB_DOMAIN OUT`;
   must emit a self-contained `$OUT/docker-compose.yml` (+ configs) per the per-cluster rules above.
-- `verify.sh <id>` — asserts outcomes, prints `PASS|FAIL|SKIP <check>` + `RESULT: PASS|FAIL`, exit 1 on FAIL.
+- `checks.sh` *(optional escape hatch)* — SOURCED by the verifier; shares `$ASSERT_ID`,
+  the cached `$_assert_nodes` JSON, `$_assert_fail`, `_al`, and every `assert_*`. For checks
+  not expressible as a declarative verb. No shebang, no `exit`.
 - Plus whatever the module needs (config templates, scripts, extra service images, resource generators).
+
+### Verification (`lib/verify.sh` + `lib/assert.sh`)
+`run-plan` runs the module's declarative `checks:` through shared **assert primitives**, then
+sources `checks.sh` if present, then prints one `RESULT: PASS|FAIL`. The vocabulary is OPEN —
+any `assert_<name>` function (in `lib/assert.sh` or a module's `checks.sh`) is a usable verb.
+Current primitives: `node_present`/`node_absent`/`node_scope` (jq over `tctl get nodes`),
+`log_contains <container-suffix> <regex…>`, `tsh_ssh <suffix> [login]`. Args reference the
+nodename suffix after `<id>-`. Add primitives to `lib/assert.sh` as new areas need them
+(e.g. bot-join / identity-output asserts for tbot modules).
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `build --repo` · `up <module> --repo [--id]` · `run-plan <module> --repo [--features a,b] [--version vNN] [--id]`
@@ -72,6 +85,9 @@ if the cluster enforces it, an MFA device).
   containers, so label discovery is impossible. Route via `*.map` files + `nginx -s reload`.
 - **Never verify TLS with macOS system `curl`** (LibreSSL → bogus 000 / "bad decrypt"). Use
   `python3`/`tsh`/an in-network `curlimages/curl` container. `curl --resolve` needs an IP, not a name.
+- **`pipefail` + `grep -q`**: the harness runs `set -o pipefail`, so `docker logs X | grep -q RE`
+  returns the producer's SIGPIPE (non-zero) on an early match — looks like "no match". Always
+  capture first: `logs="$(docker logs X 2>&1)"; grep -qiE RE <<<"$logs"`. (assert_log_contains does this.)
 - **East-west agents dial the FQDN** (via docker network alias), not the service/container name —
   the wildcard cert only matches `*.lab.<domain>`. Intra-cluster gRPC to `auth:3025` is fine
   (mTLS via the identity file's cluster CA, not the proxy cert).
@@ -82,7 +98,8 @@ if the cluster enforces it, an MFA device).
   unscoped checker) — no scoped_role_assignment needed.
 
 ## Adding a module
-1. `modules/<name>/` with `module.yaml`, `render.sh` (emit `$OUT/docker-compose.yml`), `verify.sh`.
+1. `modules/<name>/` with `module.yaml` (gating + `checks:`), `render.sh` (emit `$OUT/docker-compose.yml`),
+   and optionally `checks.sh` for custom asserts. Add new `assert_*` primitives to `lib/assert.sh` if needed.
 2. Follow the per-cluster rules (auth named `${id}-auth`, wildcard cert, FQDN alias, all-ports=PORT).
 3. `cluster up <name> --repo <clone>` to iterate; `cluster run-plan <name> ...` to gate+verify+report.
 4. Copy `modules/generic_oidc/` as the reference implementation.

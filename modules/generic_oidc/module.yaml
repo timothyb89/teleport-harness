@@ -13,14 +13,21 @@ provides_feature: generic_oidc
 requires_features: [generic_oidc]
 min_version: v18                # generic_oidc lands in v18 (backport target)
 
-# Agents the cluster brings up, and their expected join outcome. The plan runner
-# / verifier assert against these.
-agents:
-  positive:                     # must join; scoped ones must be scope-pinned
-    - {name: discovery,        token: generic-oidc-agent-discovery,        scoped: false}
-    - {name: static,           token: generic-oidc-agent-static,           scoped: false}
-    - {name: scoped-discovery, token: generic-oidc-scoped-agent-discovery, scoped: true, scope: /genericoidc-test}
-    - {name: scoped-static,    token: generic-oidc-scoped-agent-static,    scoped: true, scope: /genericoidc-test}
-  negative:                     # must be denied (wrong subject claim)
-    - {name: deny,        reason: "sub != test-agent"}
-    - {name: scoped-deny, reason: "sub != test-agent (scoped token round-trips must_match_fields)"}
+# Verification cases — the SOURCE OF TRUTH, executed by lib/verify.sh through the
+# shared assertion primitives in lib/assert.sh. Each line is "<assert-verb> <args...>";
+# args reference the nodename suffix after "<id>-". Anything not expressible here goes
+# in checks.sh (a sourced bash escape hatch that shares the same asserts + node data).
+checks: |
+  # positive: agents must join (discovery + static_jwks, unscoped + scoped)
+  node_present agent-discovery
+  node_present agent-static
+  node_present agent-scoped-discovery
+  node_present agent-scoped-static
+  # scoped agents must be pinned to their assigned scope
+  node_scope   agent-scoped-discovery /genericoidc-test
+  node_scope   agent-scoped-static /genericoidc-test
+  # negative: wrong subject claim -> must be denied (absent) + a denial in the log
+  node_absent  agent-deny
+  node_absent  agent-scoped-deny
+  log_contains agent-deny unable to (join via|validate) generic_oidc|denied
+  log_contains agent-scoped-deny unable to (join via|validate) generic_oidc|denied
