@@ -1,0 +1,51 @@
+# Phase 0 spike cluster: minimal single-node auth+proxy + one agent, fronted by the
+# shared SNI ingress. Throwaway — proves the access model before the real CLI/modules
+# are built. Parameterized by CLUSTER_ID / CLUSTER_FQDN / INGRESS_PORT (exported by run.sh).
+name: teleport-harness-${CLUSTER_ID}
+
+services:
+  auth:
+    image: genericoidc-teleport:latest
+    platform: linux/amd64
+    container_name: ${CLUSTER_ID}-auth
+    command: ["teleport", "start", "--config", "/etc/teleport/teleport.yaml"]
+    volumes:
+      - harness-certs:/certs:ro                                   # shared wildcard LE cert
+      - ./gen/${CLUSTER_ID}/auth.yaml:/etc/teleport/teleport.yaml:ro
+      - auth-data:/var/lib/teleport
+    networks:
+      internal:
+        aliases: ["${CLUSTER_FQDN}"]        # east-west: agents resolve the FQDN -> this container
+      teleport-harness:
+        aliases: ["${CLUSTER_FQDN}"]        # ingress reaches the backend by name on the shared net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+
+  agent:
+    image: genericoidc-teleport:latest
+    platform: linux/amd64
+    container_name: ${CLUSTER_ID}-agent
+    command: ["teleport", "start", "--config", "/etc/teleport/teleport.yaml"]
+    volumes:
+      - ./gen/${CLUSTER_ID}/agent.yaml:/etc/teleport/teleport.yaml:ro
+    networks:
+      - internal
+    depends_on:
+      auth:
+        condition: service_healthy
+
+networks:
+  internal:
+  teleport-harness:
+    external: true
+    name: teleport-harness
+
+volumes:
+  auth-data:   # project-prefixed (teleport-harness-<id>_auth-data), unique per cluster
+  harness-certs:
+    external: true
+    name: harness-certs

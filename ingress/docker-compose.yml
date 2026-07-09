@@ -1,0 +1,55 @@
+# Shared, long-lived harness infrastructure (one per host):
+#   - certs:   acme.sh sidecar; maintains the *.lab.$HARNESS_DOMAIN wildcard LE cert
+#              (Cloudflare DNS-01) at /certs/wildcard.{crt,key} in the shared volume.
+#   - ingress: Traefik L4 SNI-passthrough router; publishes $INGRESS_PORT and routes
+#              <id>.lab.$HARNESS_DOMAIN -> the right cluster proxy (docker-label discovery).
+#
+# The `teleport-harness` network and the cert/acme volumes are shared with every
+# disposable cluster stack. Bring this up once:  cluster up-ingress  (or manually:
+#   docker compose --env-file ../targets/default.env -f docker-compose.yml up -d )
+name: teleport-harness-ingress
+
+services:
+  certs:
+    image: neilpang/acme.sh:latest
+    platform: linux/amd64
+    container_name: harness-certs
+    entrypoint: ["/scripts/certs-entrypoint.sh"]
+    environment:
+      HARNESS_DOMAIN: ${HARNESS_DOMAIN:?}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      # acme.sh dns_cf reads CF_Token for a scoped API token.
+      CF_Token: ${CF_DNS_API_TOKEN:?}
+    volumes:
+      - harness-acme:/acme.sh          # acme.sh state (account + issued certs)
+      - harness-certs:/certs           # installed cert consumed by cluster proxies
+      - ./scripts:/scripts:ro
+    restart: unless-stopped
+
+  ingress:
+    image: nginx:1.27-alpine
+    platform: linux/amd64
+    container_name: harness-ingress
+    ports:
+      - "${INGRESS_PORT:-8443}:443"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./dynamic:/etc/nginx/dynamic:ro     # per-cluster SNI routes (harness-managed)
+    networks:
+      - teleport-harness
+    restart: unless-stopped
+    depends_on:
+      - certs
+
+volumes:
+  harness-acme:
+    external: true
+    name: harness-acme
+  harness-certs:
+    external: true
+    name: harness-certs
+
+networks:
+  teleport-harness:
+    name: teleport-harness
+    external: true

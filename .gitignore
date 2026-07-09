@@ -1,0 +1,29 @@
+# Secrets: real target env files (domain + DNS API tokens). Only the example is tracked.
+targets/*.env
+!targets/*.env.example
+
+# Report bundles from runs.
+runs/
+
+# SHA-keyed build artifacts (binaries + image markers).
+.cache/
+
+# Cross-built binaries staged into module images.
+**/bin/teleport
+**/bin/tctl
+**/bin/tbot
+
+# Captured logs.
+**/logs/
+
+# macOS cruft.
+.DS_Store
+
+# Live-cluster generated artifacts.
+state/
+
+# Per-cluster ingress SNI routes (ephemeral live state).
+ingress/dynamic/*.map
+
+# Throwaway spike generated configs.
+spike/gen/

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# teleport-harness CLI: spin up disposable dockerized Teleport clusters from any
+# clone/branch, run gated test plans, and produce inspectable reports.
+#
+#   cluster doctor
+#   cluster build   --repo <clone> [--ent]
+#   cluster up      <module> --repo <clone> [--id <id>] [--ent]
+#   cluster run-plan <plan.yaml> --repo <clone> [--id <id>]
+#   cluster ls
+#   cluster logs    <id> [service]
+#   cluster web     <id>
+#   cluster report  <id>
+#   cluster teardown <id|--all>
+#
+# Global flags (before or after the subcommand): --target <name> (targets/<name>.env)
+set -euo pipefail
+
+LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
+. "$LIB/common.sh"
+. "$LIB/ingress.sh"
+. "$LIB/build.sh"
+. "$LIB/doctor.sh"
+. "$LIB/cluster.sh"
+[ -f "$LIB/plan.sh" ] && . "$LIB/plan.sh"
+[ -f "$LIB/report.sh" ] && . "$LIB/report.sh"
+
+# Parse global + passthrough flags into env; collect positionals.
+POS=()
+export REPO="${REPO:-}" ID="${ID:-}" ENT="${ENT:-0}" TARGET="${TARGET:-default}" FEATURES="${FEATURES:-}" VERSION="${VERSION:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)     REPO="$(cd "$2" && pwd)"; shift 2 ;;
+    --id)       ID="$2"; shift 2 ;;
+    --target)   TARGET="$2"; shift 2 ;;
+    --features) FEATURES="$2"; shift 2 ;;
+    --version)  VERSION="$2"; shift 2 ;;
+    --ent)      ENT=1; shift ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    *) POS+=("$1"); shift ;;
+  esac
+done
+set -- "${POS[@]:-}"
+cmd="${1:-}"; shift || true
+
+case "$cmd" in
+  doctor)   doctor ;;
+  build)    load_target; build_image "${REPO:?--repo required}" "${ENT:-0}" ;;
+  up)       cluster_up "$@" ;;
+  run-plan) command -v run_plan >/dev/null 2>&1 || die "plan runner not installed yet"; run_plan "$@" ;;
+  ls)       cluster_ls ;;
+  logs)     cluster_logs "$@" ;;
+  web)      cluster_web "$@" ;;
+  report)   command -v cluster_report >/dev/null 2>&1 || die "reporter not installed yet"; cluster_report "$@" ;;
+  teardown) cluster_teardown "$@" ;;
+  ""|help)  sed -n '2,20p' "$0" ;;
+  *) die "unknown command: $cmd (try: doctor build up run-plan ls logs web report teardown)" ;;
+esac

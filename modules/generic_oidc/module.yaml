@@ -1,0 +1,26 @@
+# Metadata for the generic_oidc test module. Consumed by the plan runner for
+# feature/version gating and by humans browsing the harness.
+name: generic_oidc
+description: >
+  generic_oidc join method — Teleport agents (Nodes) join by presenting OIDC JWTs
+  minted by a trivial in-cluster OIDC server, validated via discovery+tls_ca and
+  static_jwks, unscoped and scoped, with negative (must-be-denied) cases. Join
+  tokens are created by a tbot identity, not cluster admin.
+
+# Capability this module exercises; the plan runner gates cases on the target
+# actually providing it.
+provides_feature: generic_oidc
+requires_features: [generic_oidc]
+min_version: v18                # generic_oidc lands in v18 (backport target)
+
+# Agents the cluster brings up, and their expected join outcome. The plan runner
+# / verifier assert against these.
+agents:
+  positive:                     # must join; scoped ones must be scope-pinned
+    - {name: discovery,        token: generic-oidc-agent-discovery,        scoped: false}
+    - {name: static,           token: generic-oidc-agent-static,           scoped: false}
+    - {name: scoped-discovery, token: generic-oidc-scoped-agent-discovery, scoped: true, scope: /genericoidc-test}
+    - {name: scoped-static,    token: generic-oidc-scoped-agent-static,    scoped: true, scope: /genericoidc-test}
+  negative:                     # must be denied (wrong subject claim)
+    - {name: deny,        reason: "sub != test-agent"}
+    - {name: scoped-deny, reason: "sub != test-agent (scoped token round-trips must_match_fields)"}

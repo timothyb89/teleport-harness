@@ -1,0 +1,18 @@
+# Role granting just enough to manage provision tokens — both classic `token`
+# and `scoped_token`. Assigned to the token-manager bot so it can create the
+# generic_oidc agent tokens via its identity file (rather than baking cluster
+# admin creds into the test).
+#
+# `scoped_token` works here even though the bot identity is unscoped: the scoped
+# authorizer wraps an unscoped identity's classic checker
+# (ScopedContextFromUnscopedContext), so a classic rule covering `scoped_token`
+# is what grants create access — no scoped_role_assignment needed.
+kind: role
+version: v7
+metadata:
+  name: token-admin
+spec:
+  allow:
+    rules:
+      - resources: [token, scoped_token]
+        verbs: [create, read, update, list, delete]

@@ -1,0 +1,16 @@
+version: v3
+teleport:
+  nodename: ${CLUSTER_ID}-agent-scoped-static
+  data_dir: /var/lib/teleport
+  proxy_server: ${FQDN}:${PORT}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: generic_oidc
+    token_name: generic-oidc-scoped-agent-static
+    generic_oidc:
+      command: ["curl", "-fsSk", "https://oidc:8443/token?sub=test-agent"]
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: generic-oidc, variant: scoped-static_jwks}
