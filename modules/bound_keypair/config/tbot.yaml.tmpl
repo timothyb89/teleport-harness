@@ -1,0 +1,11 @@
+version: v2
+onboarding:
+  join_method: bound_keypair
+  token: bk-token
+  bound_keypair:
+    registration_secret: ${REGSECRET}
+proxy_server: ${FQDN}:${PORT}
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}

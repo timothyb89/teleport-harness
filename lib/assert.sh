@@ -51,14 +51,16 @@ assert_log_contains() {   # <container-suffix> <regex...>
 }
 
 # --- bots / tbot outputs ------------------------------------------------------
-assert_bot_joined() {   # <bot-name>
-  local name="$1" logs
+assert_bot_joined() {   # <bot-name> [join-method]
+  local name="$1" method="${2:-}" logs
   logs="$(docker logs "${ASSERT_ID}-auth" 2>&1 || true)"
-  # a successful bot.join audit event for this bot (fields on one line; avoid the
-  # pipefail+grep-q trap by matching in a single awk pass).
-  if awk -v n="$name" '/bot\.join/ && index($0,"bot_name:"n) && /success:true/{f=1} END{exit !f}' <<<"$logs"; then
-    _al PASS "bot '$name' joined"
-  else _al FAIL "bot '$name' did not join (no successful bot.join event)"; fi
+  # a successful bot.join audit event for this bot (+ optional method:<m>), matched
+  # in a single awk pass to avoid the pipefail+grep-q trap.
+  if awk -v n="$name" -v m="$method" '
+       /bot\.join/ && index($0,"bot_name:"n) && /success:true/ && (m=="" || index($0,"method:"m)) {f=1}
+       END{exit !f}' <<<"$logs"; then
+    _al PASS "bot '$name' joined${method:+ via $method}"
+  else _al FAIL "bot '$name' did not join${method:+ via $method} (no successful bot.join event)"; fi
 }
 assert_output_file() {    # <container-suffix> <path>  — tbot output artifact exists (non-empty)
   local c="${ASSERT_ID}-$1" p="$2"

@@ -56,9 +56,15 @@ and image `teleport-harness:<sha>-<variant>`. Repeat builds are instant.
 sources `checks.sh` if present, then prints one `RESULT: PASS|FAIL`. The vocabulary is OPEN —
 any `assert_<name>` function (in `lib/assert.sh` or a module's `checks.sh`) is a usable verb.
 Current primitives: `node_present`/`node_absent`/`node_scope` (jq over `tctl get nodes`),
-`log_contains <container-suffix> <regex…>`, `tsh_ssh <suffix> [login]`. Args reference the
-nodename suffix after `<id>-`. Add primitives to `lib/assert.sh` as new areas need them
-(e.g. bot-join / identity-output asserts for tbot modules).
+`log_contains <container-suffix> <regex…>`, `bot_joined <name> [method]` (bot.join audit event,
+optionally checking the join method), `output_file`/`no_output_file <container-suffix> <path>`
+(tbot output artifacts via `docker exec`), `tsh_ssh <suffix> [login]`. Node args reference the
+nodename suffix after `<id>-`. Add primitives to `lib/assert.sh` as new areas need them.
+
+Modules today: `generic_oidc` (agents join via OIDC JWTs), `tbot` (Machine ID bot joins +
+identity output, token method), `bound_keypair` (bot joins via bound_keypair with a preset
+registration secret). `tbot`/`bound_keypair` are near-identical except join method + bootstrap —
+a good signal that extracting a shared base (roadmap) would pay off once there's a 4th.
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `build --repo` · `up <module> --repo [--id]` · `run-plan <module> --repo [--features a,b] [--version vNN] [--id]`

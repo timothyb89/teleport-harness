@@ -1,0 +1,19 @@
+# bound_keypair join method: a bot joins via bound_keypair (proving possession of a
+# registered keypair; first join authorized by a preset registration secret) and
+# writes an identity. A negative bot with a wrong registration secret must be denied.
+name: bound_keypair
+description: >
+  bound_keypair join — tbot registers/binds a keypair using a preset registration
+  secret, joins, and writes an identity output that authenticates. A bot presenting a
+  wrong registration secret must be denied and produce nothing.
+provides_feature: bound_keypair
+requires_features: [bound_keypair]
+min_version: v17
+
+checks: |
+  # the bot joined specifically via bound_keypair, and wrote its identity
+  bot_joined     bk-bot bound_keypair
+  output_file    bkbot /out/id/identity
+  # wrong registration secret -> denied, nothing produced
+  log_contains   bkbot-deny denied|not found|failed to (join|connect)|authorization|invalid|unauthorized|registration|secret
+  no_output_file bkbot-deny /out/id/identity
