@@ -35,14 +35,15 @@ class CheckResult:
     msg: str
     verb: str = ""
     args: list[str] = field(default_factory=list)
-    evidence: list[str] = field(default_factory=list)  # concrete proof lines
+    evidence: list[str] = field(default_factory=list)  # short inline proofs (node/file/identity)
+    excerpt: list[str] = field(default_factory=list)    # line-numbered log context → code block
 
     def line(self) -> str:
         return f"  {self.status:<4} {self.msg}"
 
     def as_dict(self) -> dict:
         return {"status": self.status, "verb": self.verb, "args": self.args,
-                "msg": self.msg, "evidence": self.evidence}
+                "msg": self.msg, "evidence": self.evidence, "excerpt": self.excerpt}
 
 
 def _truncate(s: str, n: int = 240) -> str:
@@ -75,14 +76,30 @@ def _hostnames(nodes: list[dict]) -> list[str]:
     return [n.get("spec", {}).get("hostname", "?") for n in nodes]
 
 
-def _matched_lines(logs: str, pattern: str, limit: int = 3) -> list[str]:
-    rx = re.compile(pattern, re.IGNORECASE)
-    out = []
-    for ln in logs.splitlines():
-        if rx.search(ln):
-            out.append(_truncate(ln.strip()))
-            if len(out) >= limit:
-                break
+def _excerpt(lines: list[str], match_idxs: list[int], context: int = 3,
+             max_lines: int = 25, width_cap: int = 200) -> list[str]:
+    """grep -C style: line-numbered context around each match, matched lines marked `>`,
+    non-contiguous groups separated by `--`. Line numbers are 1-based positions in the
+    container log. Long lines (audit events) are truncated — the full line is in logs/."""
+    if not match_idxs:
+        return []
+    matchset = set(match_idxs)
+    show: set[int] = set()
+    for m in match_idxs:
+        show.update(range(max(0, m - context), min(len(lines), m + context + 1)))
+    ordered = sorted(show)
+    width = len(str(ordered[-1] + 1))
+    out: list[str] = []
+    prev: int | None = None
+    for j in ordered:
+        if prev is not None and j != prev + 1:
+            out.append("--")
+        mark = ">" if j in matchset else " "
+        out.append(f"{mark} [{str(j + 1).rjust(width)}] {_truncate(lines[j], width_cap)}")
+        if len(out) >= max_lines:
+            out.append("… (truncated; see logs/)")
+            break
+        prev = j
     return out
 
 
@@ -135,9 +152,11 @@ def _scoped_node_count(c, nodes, args):
 def _log_contains(c, nodes, args):
     suffix, pattern = args[0], " ".join(args[1:])
     cname = c.container(suffix)
-    matched = _matched_lines(c.logs(suffix), pattern)
-    if matched:
-        return CheckResult(PASS, f"{cname} log matches /{pattern}/", evidence=matched)
+    lines = c.logs(suffix).splitlines()
+    rx = re.compile(pattern, re.IGNORECASE)
+    idxs = [i for i, ln in enumerate(lines) if rx.search(ln)][:5]  # cap match windows
+    if idxs:
+        return CheckResult(PASS, f"{cname} log matches /{pattern}/", excerpt=_excerpt(lines, idxs))
     return CheckResult(SKIP, f"{cname} log has no match for /{pattern}/ yet")
 
 
@@ -145,10 +164,11 @@ def _bot_joined(c, nodes, args):
     name = args[0]
     method = args[1] if len(args) > 1 else ""
     suffix = f" via {method}" if method else ""
-    for ln in c.logs("auth").splitlines():
+    lines = c.logs("auth").splitlines()
+    for i, ln in enumerate(lines):
         if ("bot.join" in ln and f"bot_name:{name}" in ln and "success:true" in ln
                 and (not method or f"method:{method}" in ln)):
-            return CheckResult(PASS, f"bot '{name}' joined{suffix}", evidence=[_truncate(ln.strip())])
+            return CheckResult(PASS, f"bot '{name}' joined{suffix}", excerpt=_excerpt(lines, [i]))
     return CheckResult(FAIL, f"bot '{name}' did not join{suffix} (no successful bot.join event)")
 
 
@@ -257,6 +277,8 @@ def render(results: list[CheckResult]) -> tuple[str, bool]:
         lines.append(r.line())
         for ev in r.evidence:
             lines.append(f"       ↳ {_truncate(ev, 200)}")
+        for ex in r.excerpt:
+            lines.append(f"       {ex}")
     lines.append(f"RESULT: {'PASS' if passed else 'FAIL'}")
     return "\n".join(lines), passed
 

@@ -29,8 +29,12 @@ def _state_dir(tmp_path: Path) -> Path:
         "nodes": [{"hostname": "c1-agent-x", "scope": "/s", "labels": {"env": "test"}}],
         "results": [
             {"status": "PASS", "verb": "bot_joined", "args": ["kube-oidc-bot", "kubernetes"],
-             "msg": "bot 'kube-oidc-bot' joined via kubernetes",
-             "evidence": ["audit bot.join bot_name:kube-oidc-bot method:kubernetes success:true"]},
+             "msg": "bot 'kube-oidc-bot' joined via kubernetes", "evidence": [],
+             "excerpt": ["  [11] preceding line",
+                         "> [12] audit bot.join bot_name:kube-oidc-bot method:kubernetes success:true",
+                         "  [13] following line"]},
+            {"status": "PASS", "verb": "output_file", "args": ["kube-oidc", "/out/id/identity"],
+             "msg": "present", "evidence": ["/out/id/identity: 128 bytes"], "excerpt": []},
         ],
     }))
     return tmp_path
@@ -47,7 +51,11 @@ def test_build_markdown_has_all_sections(tmp_path):
     assert "`oidc` — image `oidc:1`" in md
     assert "kube-oidc-token" in md and "kube-oidc-bot" in md
     assert "c1-agent-x" in md
-    assert "proof: `audit bot.join bot_name:kube-oidc-bot" in md
+    # log excerpt rendered as a fenced code block (indented into the list item)
+    assert "  ```" in md
+    assert "  > [12] audit bot.join bot_name:kube-oidc-bot" in md
+    # inline proof for non-log checks stays a sub-bullet
+    assert "proof: `/out/id/identity: 128 bytes`" in md
     # bundle-relative links
     assert "(rendered/docker-compose.yml)" in md
 

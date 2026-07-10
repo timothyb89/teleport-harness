@@ -102,9 +102,12 @@ module (back-compat). Today: `plans/bots.yaml` (tbot + bound_keypair — composi
 validates the module (invalid → immediate FAIL), then runs each check against the live cluster
 and prints `  PASS|FAIL|SKIP <msg>` lines + one `RESULT: PASS|FAIL` (only FAIL fails the run;
 SKIP is a neutral not-yet-satisfied soft check), exiting non-zero on FAIL. Each check also captures
-**evidence** — the concrete proof it relied on (the matched log line, the node record, the command
-+ exit status) — shown indented (`↳`) in the console, in `state/<id>/results-<module>.json`
-(`{status,verb,args,msg,evidence}` per check, + a captured node inventory), and in the markdown report.
+**evidence** — the concrete proof it relied on: node/file/identity checks record a one-line
+`evidence` (node record, byte size, the `tctl … tokens ls` command + exit); log checks
+(`log_contains`/`bot_joined`) record an `excerpt` — a `grep -C3` line-numbered context window with
+the matched line marked `>`. Shown indented (`↳` / excerpt lines) in the console, in
+`state/<id>/results-<module>.json` (`{status,verb,args,msg,evidence,excerpt}` per check, + a captured
+node inventory), and in the markdown report (excerpts as fenced code blocks inside the check list).
 All docker interaction goes through the `Cluster` seam (`harness/cluster.py`) so asserts are
 unit-testable with a `FakeCluster` (they never were in bash). Adding a verb = an impl in
 `harness/verify.py` `IMPLS` + a `VerbSpec` in `harness/checks.py` (a test enforces they match).

@@ -74,18 +74,25 @@ def test_node_present_evidence_has_hostname():
     assert any("c1-agent-static" in e for e in res.evidence)
 
 
-def test_log_contains_evidence_is_matched_line():
-    c = FakeCluster(logs={"agent-deny": "info: starting\nerror: unable to validate generic_oidc token\ninfo: exit"})
+def test_log_contains_excerpt_has_context_and_line_numbers():
+    logs = "\n".join(f"line{i}" for i in range(1, 11))
+    logs = logs.replace("line5", "error: unable to validate generic_oidc token")
+    c = FakeCluster(logs={"agent-deny": logs})
     res = _run(c, "log_contains agent-deny unable to validate generic_oidc")
     assert res.status == "PASS"
-    assert res.evidence == ["error: unable to validate generic_oidc token"]
+    # matched line marked with '>', context lines present, 1-based line numbers
+    joined = "\n".join(res.excerpt)
+    assert "> [5] error: unable to validate generic_oidc token" in joined
+    assert "  [2] line2" in joined and "  [8] line8" in joined  # ±3 context
+    assert "line1\n" not in joined and not joined.startswith("  [1]")  # line 1 outside the C3 window
 
 
-def test_bot_joined_evidence_is_audit_line():
-    line = "2026 audit bot.join bot_name:bk-bot method:bound_keypair success:true code:TJ001I"
-    c = FakeCluster(logs={"auth": f"noise\n{line}\nmore"})
+def test_bot_joined_excerpt_marks_the_audit_line():
+    lines = ["noise", "2026 audit bot.join bot_name:bk-bot method:bound_keypair success:true code:TJ001I", "more"]
+    c = FakeCluster(logs={"auth": "\n".join(lines)})
     res = _run(c, "bot_joined bk-bot bound_keypair")
-    assert res.status == "PASS" and "bot_name:bk-bot" in res.evidence[0]
+    assert res.status == "PASS"
+    assert any(e.startswith("> ") and "bot_name:bk-bot" in e for e in res.excerpt)
 
 
 def test_output_file_evidence_has_size():

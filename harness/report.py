@@ -174,6 +174,13 @@ def build_markdown(state_dir: Path) -> str:
             L.append(f"- {_BADGE.get(r['status'], r['status'])} `{verb_args}` — {r.get('msg', '')}")
             for ev in r.get("evidence", []):
                 L.append(f"  - proof: `{ev}`")
+            excerpt = r.get("excerpt", [])
+            if excerpt:
+                # fenced code block, indented 2 spaces so GFM keeps it inside the list item
+                L.append("  ```")
+                for ex in excerpt:
+                    L.append(f"  {ex}")
+                L.append("  ```")
         L.append("")
 
     # ---- inspect ----
