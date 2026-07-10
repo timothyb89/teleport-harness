@@ -19,8 +19,8 @@ cluster_report() {
   cp "$out/meta.env" "$bundle/meta.env" 2>/dev/null || true
   cp "$out/docker-compose.yml" "$bundle/rendered/" 2>/dev/null || true
   cp -R "$out/config" "$bundle/rendered/" 2>/dev/null || true
-  # structured verification results (written by the Python verifier)
-  cp "$out/results.json" "$bundle/results.json" 2>/dev/null || true
+  # structured verification results (per-module, written by the Python verifier)
+  cp "$out"/results-*.json "$bundle/" 2>/dev/null || true
 
   # per-service logs
   local svc

@@ -138,6 +138,33 @@ def discover_modules(modules_dir: Path) -> list[Module]:
     return out
 
 
+class Plan(BaseModel):
+    """A multi-module plan (plans/<name>.yaml): several modules composed into ONE
+    cluster, each independently gated, verified + reported together."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str = ""
+    modules: list[str] = Field(min_length=1)
+
+    path: Path | None = Field(default=None, exclude=True)
+
+
+def load_plan(plan_path: Path) -> Plan:
+    """Load + parse a plans/<name>.yaml. Raises on schema errors."""
+    if not plan_path.is_file():
+        raise FileNotFoundError(f"no such plan: {plan_path}")
+    raw = yaml.safe_load(plan_path.read_text()) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{plan_path}: top level must be a mapping")
+    plan = Plan(**raw)
+    plan.path = plan_path
+    if plan.name != plan_path.stem:
+        raise ValueError(f"{plan_path}: name '{plan.name}' != file '{plan_path.stem}'")
+    return plan
+
+
 class GateResult(BaseModel):
     """Outcome of feature/version gating for a run."""
 

@@ -6,10 +6,11 @@
 # callers expect, writes a JSON report to state/<id>/results.json, and exits non-zero
 # on any FAIL (so plan.sh's retry loop still works).
 
-# run_verification <cluster-id> <module>
+# run_verification <cluster-id> <module>  — writes state/<id>/results-<module>.json
+# (per-module so a multi-module plan's results don't clobber each other).
 run_verification() {
   local id="$1" module="$2" sdir
   sdir="$(state_dir_for "$id")"
   pybrain verify "$module" --cluster-id "$id" --state-dir "$sdir" \
-    --json-out "$sdir/results.json"
+    --json-out "$sdir/results-${module}.json"
 }

@@ -8,11 +8,22 @@
 # listens on ${PORT}, mounts the shared "harness-certs" volume, joins the external
 # "teleport-harness" network with alias ${FQDN}, and sets public_addr ${FQDN}:${PORT}.
 
+# cluster_up <module>  — single-module convenience (cluster up <module>).
 cluster_up() {
   local module="${1:?usage: cluster up <module> --repo <path> [--id <id>]}"
+  cluster_up_modules "$module" "$module"
+}
+
+# cluster_up_modules <label> <module-csv>  — render+start a (possibly multi-module,
+# component-composed) cluster. <label> is what shows in `ls`/reports (module or plan name).
+cluster_up_modules() {
+  local label="${1:?}" modules_csv="${2:?}"
   load_target
   : "${REPO:?--repo <teleport-clone-path> required}"
-  [ -d "$MODULES_DIR/$module" ] || die "unknown module '$module' (see: ls $MODULES_DIR)"
+  local m
+  for m in ${modules_csv//,/ }; do
+    [ -d "$MODULES_DIR/$m" ] || die "unknown module '$m' (see: ls $MODULES_DIR)"
+  done
   require_cmd docker git openssl
 
   local id fqdn out image
@@ -28,28 +39,19 @@ CLUSTER_ID=$id
 FQDN=$fqdn
 PORT=$INGRESS_PORT
 IMAGE=$image
-MODULE=$module
+MODULE=$label
+MODULES=$modules_csv
 REPO=$REPO
 SHA=$(git -C "$REPO" rev-parse --short=12 HEAD)
 DOMAIN=$HARNESS_DOMAIN
 CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
-  hlog "rendering cluster '$id' [$module] at $fqdn"
-  if [ -f "$MODULES_DIR/$module/services.yml.j2" ]; then
-    # jinja renderer (Python brain) — the standard path.
-    pybrain render "$module" --cluster-id "$id" --fqdn "$fqdn" --port "$INGRESS_PORT" \
-      --image "$image" --harness-domain "$HARNESS_DOMAIN" --lab-domain "$LAB_DOMAIN" \
-      --out "$out" || die "module render failed"
-  elif [ -f "$MODULES_DIR/$module/render.sh" ]; then
-    # legacy escape hatch for a module that still ships a bash render.sh.
-    CLUSTER_ID="$id" FQDN="$fqdn" PORT="$INGRESS_PORT" IMAGE="$image" \
-      HARNESS_DOMAIN="$HARNESS_DOMAIN" LAB_DOMAIN="$LAB_DOMAIN" OUT="$out" \
-      bash "$MODULES_DIR/$module/render.sh" || die "module render failed (legacy render.sh)"
-  else
-    die "module '$module' has neither compose.yml.j2 nor render.sh"
-  fi
-  [ -f "$out/docker-compose.yml" ] || die "module did not produce $out/docker-compose.yml"
+  hlog "rendering cluster '$id' [$label: $modules_csv] at $fqdn"
+  pybrain render --modules "$modules_csv" --cluster-id "$id" --fqdn "$fqdn" --port "$INGRESS_PORT" \
+    --image "$image" --harness-domain "$HARNESS_DOMAIN" --lab-domain "$LAB_DOMAIN" \
+    --out "$out" || die "render failed"
+  [ -f "$out/docker-compose.yml" ] || die "render did not produce $out/docker-compose.yml"
 
   hlog "starting containers"
   compose "teleport-harness-$id" "$out/docker-compose.yml" up -d

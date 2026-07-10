@@ -1,0 +1,8 @@
+# A composition smoke-test plan: two bot join-method modules sharing ONE cluster
+# (one auth, both bootstrapped + verified together). Exercises multi-module compose
+# without a shared component.
+name: bots
+description: >
+  tbot (token join) + bound_keypair (keypair join) composed into a single cluster,
+  each verified independently.
+modules: [tbot, bound_keypair]

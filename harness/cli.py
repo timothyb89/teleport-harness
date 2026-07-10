@@ -138,13 +138,20 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_render(args: argparse.Namespace) -> int:
-    """Render a module's configs + docker-compose.yml into --out (replaces render.sh)."""
-    from .render import render_module
+    """Compose + render one or more modules (+ their shared components) into --out."""
+    from .render import render_cluster
 
-    mdir = _modules_dir(args.modules_dir) / args.module
-    if not (mdir / "services.yml.j2").is_file():
-        print(f"error: {args.module} has no services.yml.j2", file=sys.stderr)
+    mods = _csv(args.modules) or []
+    if not mods:
+        print("error: --modules is required", file=sys.stderr)
         return EXIT_ERR
+    mdirs = []
+    for m in mods:
+        d = _modules_dir(args.modules_dir) / m
+        if not (d / "services.yml.j2").is_file():
+            print(f"error: module '{m}' has no services.yml.j2", file=sys.stderr)
+            return EXIT_ERR
+        mdirs.append(d)
     ctx = {
         "cluster_id": args.cluster_id,
         "fqdn": args.fqdn,
@@ -154,8 +161,29 @@ def cmd_render(args: argparse.Namespace) -> int:
         "lab_domain": args.lab_domain,
         "out": args.out,
     }
-    compose = render_module(mdir, ctx, Path(args.out))
+    compose = render_cluster(mdirs, ctx, Path(args.out), components_dir=_root() / "components")
     print(f"[render] wrote {compose}", file=sys.stderr)
+    return EXIT_OK
+
+
+def cmd_plan_resolve(args: argparse.Namespace) -> int:
+    """Load a plan, gate each module, emit JSON {name, run:[…], skip:[{module,reason}]}."""
+    from .models import load_plan
+
+    plan = load_plan(_root() / "plans" / f"{args.plan}.yaml")
+    result: dict = {"name": plan.name, "run": [], "skip": []}
+    for m in plan.modules:
+        mod = load_module(_modules_dir(args.modules_dir) / m)
+        problems = mod.validate_semantics()
+        if problems:
+            print(f"FAIL {m}: {'; '.join(problems)}", file=sys.stderr)
+            return EXIT_ERR
+        res = gate(mod, _csv(args.features), args.version)
+        if res.skip:
+            result["skip"].append({"module": m, "reason": res.reason})
+        else:
+            result["run"].append(m)
+    print(json.dumps(result))
     return EXIT_OK
 
 
@@ -193,8 +221,8 @@ def main(argv: list[str] | None = None) -> int:
     sf.add_argument("--json-out", help="also write a JSON report to this path")
     sf.set_defaults(fn=cmd_verify)
 
-    sr = sub.add_parser("render", help="render a module's compose + configs (replaces render.sh)")
-    sr.add_argument("module")
+    sr = sub.add_parser("render", help="compose + render one or more modules into --out")
+    sr.add_argument("--modules", required=True, help="comma-separated module names")
     sr.add_argument("--cluster-id", required=True)
     sr.add_argument("--fqdn", required=True)
     sr.add_argument("--port", required=True)
@@ -203,6 +231,12 @@ def main(argv: list[str] | None = None) -> int:
     sr.add_argument("--lab-domain", default="")
     sr.add_argument("--out", required=True)
     sr.set_defaults(fn=cmd_render)
+
+    sp = sub.add_parser("plan-resolve", help="gate a plan's modules; emit run/skip JSON")
+    sp.add_argument("plan")
+    sp.add_argument("--features")
+    sp.add_argument("--version")
+    sp.set_defaults(fn=cmd_plan_resolve)
 
     sg = sub.add_parser("gate", help="feature/version gate; exit 3 == skip")
     sg.add_argument("module")
