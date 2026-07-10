@@ -32,7 +32,7 @@ build_image() {
     [ -n "$(ls -A "$repo/$assetdir" 2>/dev/null)" ] || die "prebuilt web assets missing at $repo/$assetdir — run 'make ensure-webassets' in the clone first"
 
     hlog "cross-building teleport/tctl/tbot/tsh (${variant}) from $(basename "$repo") @ $sha (first time; cached after)"
-    ( cd "$repo"
+    ( cd "$repo" || exit 1
       [ -x "$bincache/teleport" ] || GOOS=linux GOARCH=amd64 CGO_ENABLED=1 CC="$HARNESS_CC" \
         go build -buildvcs=false -tags "$tags" -ldflags "-s -w" -o "$bincache/teleport" "$target"
       for tool in tctl tbot tsh; do

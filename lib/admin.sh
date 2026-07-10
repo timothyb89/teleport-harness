@@ -50,8 +50,7 @@ EOF
   fi
 
   # 3) wait for the identity to land.
-  local i
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     docker run --rm --network "$net" -v "${vol}:/id" alpine:3 sh -c '[ -s /id/identity ]' 2>/dev/null && break
     sleep 2
   done

@@ -1,10 +1,9 @@
 # Cluster lifecycle: up / teardown / ls / logs / web.
 # shellcheck shell=bash
 #
-# Module contract: modules/<name>/render.sh is invoked with these env vars exported —
-#   CLUSTER_ID FQDN PORT IMAGE HARNESS_DOMAIN LAB_DOMAIN OUT
-# and must write a self-contained OUT/docker-compose.yml (+ any configs under OUT/)
-# describing a cluster whose auth+proxy container is named "${CLUSTER_ID}-auth",
+# Cluster rendering is done by the Python brain (`pybrain render --modules …`): it composes
+# a base auth+proxy scaffold + shared components + module `services.yml.j2` fragments into
+# OUT/docker-compose.yml (see harness/render.py). The auth+proxy container is "${CLUSTER_ID}-auth",
 # listens on ${PORT}, mounts the shared "harness-certs" volume, joins the external
 # "teleport-harness" network with alias ${FQDN}, and sets public_addr ${FQDN}:${PORT}.
 
@@ -64,9 +63,9 @@ EOF
 }
 
 cluster_wait_healthy() {
-  local id="$1" i
+  local id="$1"
   hlog "waiting for auth to become healthy"
-  for i in $(seq 1 60); do
+  for _ in $(seq 1 60); do
     case "$(docker inspect -f '{{.State.Health.Status}}' "${id}-auth" 2>/dev/null)" in
       healthy) hok "auth healthy"; return 0 ;;
       *) sleep 2 ;;

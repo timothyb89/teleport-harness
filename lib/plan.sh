@@ -42,9 +42,9 @@ run_plan_single() {
   # each module expects different things — so instead of guessing counts, just re-run
   # the module's own checks a few times until they pass.
   hlog "waiting for '$module' checks to pass on cluster '$ID'"
-  local res rc=1 attempt; res="$(mktemp)"
+  local res rc=1; res="$(mktemp)"
   sleep 8
-  for attempt in $(seq 1 8); do
+  for _ in $(seq 1 8); do
     if run_verification "$ID" "$module" > "$res" 2>&1; then rc=0; break; fi
     rc=1; sleep 8
   done
@@ -94,9 +94,9 @@ run_plan_multi() {
 
   # ---- verify every module against the shared cluster; retry until all pass ----
   hlog "waiting for plan '$plan' checks to pass on cluster '$ID'"
-  local res attempt m; res="$(mktemp)"; rc=1
+  local res m; res="$(mktemp)"; rc=1
   sleep 8
-  for attempt in $(seq 1 8); do
+  for _ in $(seq 1 8); do
     : > "$res"; rc=0
     for m in $run_mods; do
       echo "### module: $m" >> "$res"

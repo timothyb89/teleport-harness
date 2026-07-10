@@ -6,10 +6,12 @@ set -euo pipefail
 HARNESS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export HARNESS_ROOT
 STATE_DIR="$HARNESS_ROOT/state"          # per-cluster generated artifacts (gitignored)
-CACHE_DIR="$HARNESS_ROOT/.cache"         # SHA-keyed binaries (gitignored)
-RUNS_DIR="$HARNESS_ROOT/runs"            # report bundles (gitignored)
-INGRESS_DIR="$HARNESS_ROOT/ingress"
 MODULES_DIR="$HARNESS_ROOT/modules"
+# Consumed by sibling sourced lib/*.sh (build/report/ingress); exported so shellcheck's
+# per-file analysis doesn't flag them unused (and so they're visible to any child too).
+export CACHE_DIR="$HARNESS_ROOT/.cache"  # SHA-keyed binaries (gitignored)
+export RUNS_DIR="$HARNESS_ROOT/runs"     # report bundles (gitignored)
+export INGRESS_DIR="$HARNESS_ROOT/ingress"
 
 # ---- logging -----------------------------------------------------------------
 _c() { printf '\033[%sm' "$1"; }
@@ -25,7 +27,10 @@ load_target() {
   local target="${TARGET:-default}"
   local f="$HARNESS_ROOT/targets/${target}.env"
   [ -f "$f" ] || die "target env not found: $f (copy targets/default.env.example)"
-  set -a; . "$f"; set +a
+  set -a
+  # shellcheck source=/dev/null  # user-provided target env, path known only at runtime
+  . "$f"
+  set +a
   : "${HARNESS_DOMAIN:?HARNESS_DOMAIN missing in $f}"
   export INGRESS_PORT="${INGRESS_PORT:-8443}"
   export LAB_DOMAIN="lab.${HARNESS_DOMAIN}"    # clusters live at <id>.$LAB_DOMAIN

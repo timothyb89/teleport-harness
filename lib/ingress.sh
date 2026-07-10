@@ -17,8 +17,7 @@ ingress_up() {
 # Block until the wildcard cert lands in the shared volume (issued via DNS-01).
 ingress_wait_cert() {
   hlog "waiting for wildcard cert (*.$LAB_DOMAIN) via DNS-01"
-  local i
-  for i in $(seq 1 60); do
+  for _ in $(seq 1 60); do
     if docker run --rm -v harness-certs:/certs alpine:3 \
          sh -c '[ -s /certs/wildcard.crt ] && [ -s /certs/wildcard.key ]' 2>/dev/null; then
       hok "wildcard cert present"; return 0
@@ -30,7 +29,7 @@ ingress_wait_cert() {
 
 # register_route <fqdn> <backend host:port>  — add/replace an SNI route and reload.
 register_route() {
-  local fqdn="$1" backend="$2" name="${fqdn%%.*}"
+  local fqdn="$1" backend="$2"; local name="${fqdn%%.*}"
   mkdir -p "$INGRESS_DIR/dynamic"
   echo "${fqdn} ${backend};" > "$INGRESS_DIR/dynamic/${name}.map"
   ingress_reload
@@ -38,7 +37,7 @@ register_route() {
 
 # unregister_route <fqdn>
 unregister_route() {
-  local fqdn="$1" name="${fqdn%%.*}"
+  local fqdn="$1"; local name="${fqdn%%.*}"
   rm -f "$INGRESS_DIR/dynamic/${name}.map"
   ingress_reload
 }

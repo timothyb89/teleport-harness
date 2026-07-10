@@ -3,7 +3,7 @@
 
 doctor() {
   load_target
-  local fail=0 pass warn
+  local fail=0
   pass() { hok "$*"; }
   chk_warn() { hwarn "$*"; }
   chk_fail() { herr "$*"; fail=1; }

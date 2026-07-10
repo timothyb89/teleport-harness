@@ -30,6 +30,3 @@ state/
 
 # Per-cluster ingress SNI routes (ephemeral live state).
 ingress/dynamic/*.map
-
-# Throwaway spike generated configs.
-spike/gen/
