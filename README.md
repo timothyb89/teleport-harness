@@ -63,6 +63,18 @@ Test a branch: `git -C <clone> checkout <branch>`, then `--repo <clone>`.
   (today: `oidc-server`, a trivial IdP reused by `generic_oidc` + `kubernetes`).
 - `plans/<name>.yaml` — several modules composed into one cluster (today: `bots`, `oidc-caching`).
 - `harness/` — the Python brain (`models`, `checks`, `verify`, `cluster`, `render`, `report`, `cli`); `tests/`.
+- `skills/` — the Claude Code skill(s) for this harness, version-controlled with the code.
+
+## Claude Code skill
+The `teleport-cluster` skill (running plans + authoring modules) lives in `skills/` and is
+installed as a **personal** skill (available everywhere, incl. when working inside a teleport
+clone) via a symlink:
+```bash
+./bin/install-skills             # symlink skills/* into ~/.claude/skills/ (idempotent)
+./bin/install-skills --uninstall # remove the symlinks
+```
+The repo is the source of truth (edits are live). Authoring guidance for new modules/components/
+plans/verbs is in `skills/teleport-cluster/references/authoring.md`.
 
 ## Commands
 `doctor` · `validate` · `build` · `up` · `run-plan` · `ls` · `logs` · `admin` · `tctl` · `tsh` ·

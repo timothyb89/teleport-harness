@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Symlink this repo's skills/ into ~/.claude/skills/ so Claude Code picks them up as
+# PERSONAL skills — available everywhere (incl. when you're working inside a teleport
+# clone, which is where you invoke the harness from). The repo stays the single source
+# of truth; edits are live (no re-install). Idempotent; re-run after adding a skill.
+#
+#   bin/install-skills              # install / refresh symlinks
+#   bin/install-skills --uninstall  # remove symlinks that point back into this repo
+#
+# Override the destination with CLAUDE_SKILLS_DIR (defaults to ~/.claude/skills).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$ROOT/skills"
+DEST="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+# Backups go OUTSIDE the skills dir — anything left under it is loaded as a skill.
+BAKDIR="$(dirname "$DEST")/skill-backups"
+uninstall=0; [ "${1:-}" = "--uninstall" ] && uninstall=1
+
+[ -d "$SRC" ] || { echo "no skills/ dir at $SRC" >&2; exit 1; }
+mkdir -p "$DEST"
+
+# realpath-ish (bash 3.2 friendly): resolve a dir to its physical path
+_abs() { (cd "$1" 2>/dev/null && pwd -P) || return 1; }
+
+found=0
+for d in "$SRC"/*/; do
+  [ -d "$d" ] || continue
+  found=1
+  d="${d%/}"
+  name="$(basename "$d")"
+  link="$DEST/$name"
+  src_abs="$(_abs "$d")"
+
+  if [ "$uninstall" = 1 ]; then
+    if [ -L "$link" ] && [ "$(_abs "$link" || true)" = "$src_abs" ]; then
+      rm "$link"; echo "removed  $link"
+    fi
+    continue
+  fi
+
+  # already the right symlink?
+  if [ -L "$link" ] && [ "$(_abs "$link" || true)" = "$src_abs" ]; then
+    echo "ok       $name (already linked)"; continue
+  fi
+  # something else is there (a real dir — e.g. a hand-maintained skill — or a stale link)
+  if [ -e "$link" ] || [ -L "$link" ]; then
+    mkdir -p "$BAKDIR"
+    bak="$BAKDIR/${name}.$(date +%Y%m%d-%H%M%S)"
+    mv "$link" "$bak"; echo "backed up $name -> $bak"
+  fi
+  ln -s "$d" "$link"; echo "linked   $name -> $d"
+done
+
+[ "$found" = 1 ] || { echo "no skills found under $SRC" >&2; exit 1; }
+echo "done. skills dir: $DEST"

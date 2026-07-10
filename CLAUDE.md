@@ -16,6 +16,9 @@ v18 `generic_oidc` backport.
 - Per-target secrets in gitignored `targets/<name>.env` (default `default`): `HARNESS_DOMAIN`,
   `DNS_PROVIDER=cloudflare`, `CF_DNS_API_TOKEN` (Zone:DNS:Edit), `ACME_EMAIL`, `INGRESS_PORT`.
 - Requires a wildcard DNS record you control: `*.lab.<HARNESS_DOMAIN> A 127.0.0.1`.
+- The Claude Code skill lives in-repo at `skills/` (version-controlled with the code) and installs
+  as a personal skill via `bin/install-skills` (symlinks `skills/*` → `~/.claude/skills/`; backups
+  go to `~/.claude/skill-backups/`, never inside the skills dir — anything there loads as a skill).
 
 ## Architecture
 ### Shared, long-lived infra (`ingress/`, one per host)
@@ -174,6 +177,7 @@ if the cluster enforces it, an MFA device).
   + `bots:` (render.yaml), and one shared entrypoint applies them all — no per-module entrypoint.
 
 ## Adding a module
+(Full step-by-step + gotchas + checklist: `skills/teleport-cluster/references/authoring.md`.)
 1. `modules/<name>/` with `module.yaml` (gating + `checks:`), `services.yml.j2` (fragment: its
    bots/agents), `render.yaml` (`components:`, `bots:`, vars), `config/*.j2`, and `bootstrap/*.yaml[.j2]`
    (roles + tokens; NO per-module auth-entrypoint — the shared one applies them). Optionally
