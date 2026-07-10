@@ -1,0 +1,3 @@
+# Context for the oidc-server component (merged into the render when a module lists
+# it under `components:`).
+oidc_image: teleport-harness-oidc:latest

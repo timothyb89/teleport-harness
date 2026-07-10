@@ -1,8 +1,7 @@
-{% extends "base.compose.yml.j2" %}
 {# bound_keypair: a bot registers/binds a keypair using a preset registration secret,
-   joins, and writes an identity; a bot with a wrong registration secret must be denied. #}
-{% block services %}
-
+   joins, and writes an identity; a bot with a wrong registration secret must be denied.
+   Composed onto the base auth. #}
+services:
   # positive: joins via bound_keypair (correct registration secret), writes identity.
   bkbot:
     image: {{ image }}
@@ -26,4 +25,3 @@
     networks: [internal]
     depends_on:
       auth: {condition: service_healthy}
-{% endblock %}

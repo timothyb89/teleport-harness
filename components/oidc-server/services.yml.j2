@@ -1,0 +1,22 @@
+{# Shared OIDC server component: a trivial in-cluster IdP that serves OIDC discovery
+   + JWKS + a self-signed CA, mints generic_oidc JWTs (/token) and Kubernetes-style
+   service-account JWTs (/k8s/token). Reused by any join-method module that validates
+   OIDC/JWKS (generic_oidc, kubernetes). Reachable inside the cluster at oidc:8443. #}
+{% set audience = fqdn ~ '/generic-oidc' %}
+services:
+  oidc:
+    image: {{ oidc_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-oidc
+    command:
+      - -issuer=https://oidc:8443
+      - -addr=:8443
+      - -audience={{ audience }}
+      - -cluster-name={{ fqdn }}
+      - -extra-sans=oidc,localhost,127.0.0.1
+    volumes:
+      - oidc-data:/data
+    networks: [internal]
+
+volumes:
+  oidc-data:

@@ -1,0 +1,10 @@
+{# The token-manager bot's join token (token method, fixed secret = name). `bots add
+   --token` (from bots.manifest) references this existing token. #}
+kind: token
+version: v2
+metadata:
+  name: {{ bot_token }}
+spec:
+  roles: [Bot]
+  bot_name: token-manager
+  join_method: token

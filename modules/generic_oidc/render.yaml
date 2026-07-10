@@ -1,8 +1,11 @@
-# Extra template context merged into the render for this module (see harness/render.py).
+# Render context for generic_oidc (see harness/render.py).
+components: [oidc-server]              # shared IdP that mints/serves the OIDC JWTs
 auth_env:
-  BOT_TOKEN: harness-tokmgr-secret       # token-manager bot join secret (per-cluster)
-  TELEPORT_UNSTABLE_SCOPES: "yes"
-oidc_image: teleport-harness-oidc:latest
-agent_sub: test-agent                     # subject the positive agents request / rules match
+  TELEPORT_UNSTABLE_SCOPES: "yes"      # scoped tokens need this on auth
+bot_token: harness-tokmgr-secret       # token-manager bot join secret (per-cluster)
+agent_sub: test-agent                  # subject the positive agents request / rules match
 # positive (discovery/static/scoped-*) + negative (deny/scoped-deny) agents
 agents: [discovery, static, scoped-discovery, scoped-static, deny, scoped-deny]
+# bots created at bootstrap: name / roles / join token (must match a bootstrap token)
+bots:
+  - {name: token-manager, roles: token-admin, token: harness-tokmgr-secret}

@@ -1,9 +1,8 @@
-{# Shared per-cluster compose base. Modules `{% extends "base.compose.yml.j2" %}`
-   and fill {% block services %} (their bots/agents) and {% block volumes %} (extras).
-   The auth+proxy service, the shared networks, and the standard volumes live here so a
-   join-method module is ~just its extra services + config + checks. Context comes from
-   the brain (cluster_id/fqdn/port/image/out/module_dir) merged with the module's
-   render.yaml (e.g. auth_env). #}
+{# Base cluster scaffold: the auth+proxy service, shared networks, base volumes.
+   The renderer (harness/render.py) deep-merges each component/module `services.yml.j2`
+   fragment's services + volumes into this, so a cluster = base + components + modules.
+   auth_env is the union of every unit's `auth_env`; bootstrap resources + bots are
+   collected into $OUT/bootstrap and applied by the shared auth-entrypoint. #}
 name: teleport-harness-{{ cluster_id }}
 
 services:
@@ -21,8 +20,8 @@ services:
     volumes:
       - harness-certs:/certs:ro
       - {{ out }}/config/auth.yaml:/etc/teleport/auth.yaml:ro
-      - {{ module_dir }}/bootstrap:/bootstrap:ro
-      - {{ module_dir }}/scripts:/scripts:ro
+      - {{ out }}/bootstrap:/bootstrap:ro
+      - {{ shared_scripts }}/auth-entrypoint.sh:/scripts/auth-entrypoint.sh:ro
       - auth-data:/var/lib/teleport
     networks:
       internal:
@@ -30,15 +29,14 @@ services:
       teleport-harness:
         aliases: ["{{ fqdn }}"]
     # Healthy only once teleport answers /healthz AND the entrypoint has finished
-    # bootstrapping (role/token/bot). Dependent bots/agents `depends_on: service_healthy`,
-    # so this closes the race where a bot tried to join before its user existed.
+    # bootstrapping. Dependent bots/agents `depends_on: service_healthy`, so this
+    # closes the race where a bot tried to join before its user/token existed.
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/healthz && test -f /tmp/bootstrap-done"]
       interval: 5s
       timeout: 3s
       retries: 40
       start_period: 10s
-{% block services %}{% endblock %}
 
 networks:
   internal:
@@ -48,7 +46,6 @@ networks:
 
 volumes:
   auth-data:
-{% block volumes %}{% endblock %}
   harness-certs:
     external: true
     name: harness-certs

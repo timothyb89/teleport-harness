@@ -78,16 +78,37 @@ def test_shared_auth_yaml_rendered(rendered):
     assert auth["proxy_service"]["web_listen_addr"] == "0.0.0.0:8443"
 
 
-def test_auth_env_present(rendered):
+def test_auth_env_is_union_of_unit_auth_env(rendered):
+    # auth_env is now only for things auth itself needs at runtime; join secrets moved
+    # to the declarative bootstrap (tokens + bots.manifest), not auth env vars.
     mod, _, compose = rendered
     env = compose["services"]["auth"].get("environment", {})
-    if mod == "tbot":
-        assert env["BOT_TOKEN"] == "harness-tbot-secret"
-    elif mod == "bound_keypair":
-        assert env["REG_SECRET"] == "harness-bk-regsecret"
-    elif mod == "generic_oidc":
-        assert env["BOT_TOKEN"] == "harness-tokmgr-secret"
+    if mod == "generic_oidc":
         assert env["TELEPORT_UNSTABLE_SCOPES"] == "yes"
+    else:
+        assert "BOT_TOKEN" not in env and "REG_SECRET" not in env
+
+
+EXPECTED_BOTS = {
+    "tbot": {"test-bot"},
+    "bound_keypair": {"bk-bot"},
+    "generic_oidc": {"token-manager"},
+}
+
+
+def test_bootstrap_bots_manifest_and_tokens(rendered):
+    mod, out, _ = rendered
+    manifest = (out / "bootstrap" / "bots.manifest").read_text().strip().splitlines()
+    names = {line.split("\t")[0] for line in manifest if line.strip()}
+    assert names == EXPECTED_BOTS[mod]
+    # every manifest token must correspond to a rendered bootstrap token resource
+    boot = list((out / "bootstrap").glob("*.yaml"))
+    tokens = "\n".join(f.read_text() for f in boot)
+    for line in manifest:
+        _, _, token = line.split("\t")
+        assert token in tokens, f"{mod}: manifest token {token} has no bootstrap resource"
+    # no unrendered markers leaked into bootstrap
+    assert "{{" not in tokens and "${" not in tokens
 
 
 def test_generic_oidc_agent_configs_and_volumes(tmp_path):

@@ -1,0 +1,12 @@
+{# The bound_keypair join token, authorized by a preset registration secret. bots.manifest's
+   `bots add --token=bk-token` references this existing token. #}
+kind: token
+version: v2
+metadata: {name: bk-token}
+spec:
+  roles: [Bot]
+  bot_name: bk-bot
+  join_method: bound_keypair
+  bound_keypair:
+    onboarding:
+      registration_secret: {{ reg_secret }}

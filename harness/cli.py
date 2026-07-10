@@ -142,8 +142,8 @@ def cmd_render(args: argparse.Namespace) -> int:
     from .render import render_module
 
     mdir = _modules_dir(args.modules_dir) / args.module
-    if not (mdir / "compose.yml.j2").is_file():
-        print(f"error: {args.module} has no compose.yml.j2", file=sys.stderr)
+    if not (mdir / "services.yml.j2").is_file():
+        print(f"error: {args.module} has no services.yml.j2", file=sys.stderr)
         return EXIT_ERR
     ctx = {
         "cluster_id": args.cluster_id,

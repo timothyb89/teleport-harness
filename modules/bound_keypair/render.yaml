@@ -1,5 +1,6 @@
-# Extra template context merged into the render for this module (see harness/render.py).
-auth_env:
-  REG_SECRET: harness-bk-regsecret
+# Render context for bound_keypair (see harness/render.py).
 reg_secret: harness-bk-regsecret      # positive bot's registration secret
 wrong_secret: wrong-bk-secret         # negative bot's (rejected) registration secret
+# bots created at bootstrap: name / roles / join token (must match a bootstrap token)
+bots:
+  - {name: bk-bot, roles: tbot-tester, token: bk-token}

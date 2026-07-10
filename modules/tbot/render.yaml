@@ -1,3 +1,5 @@
-# Extra template context merged into the render for this module (see harness/render.py).
-auth_env:
-  BOT_TOKEN: harness-tbot-secret
+# Render context for tbot (see harness/render.py).
+bot_token: harness-tbot-secret
+# bots created at bootstrap: name / roles / join token (must match a bootstrap token)
+bots:
+  - {name: test-bot, roles: tbot-tester, token: harness-tbot-secret}

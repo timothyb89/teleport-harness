@@ -36,7 +36,7 @@ CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
   hlog "rendering cluster '$id' [$module] at $fqdn"
-  if [ -f "$MODULES_DIR/$module/compose.yml.j2" ]; then
+  if [ -f "$MODULES_DIR/$module/services.yml.j2" ]; then
     # jinja renderer (Python brain) — the standard path.
     pybrain render "$module" --cluster-id "$id" --fqdn "$fqdn" --port "$INGRESS_PORT" \
       --image "$image" --harness-domain "$HARNESS_DOMAIN" --lab-domain "$LAB_DOMAIN" \
