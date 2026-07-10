@@ -1,0 +1,9 @@
+version: v2
+onboarding:
+  join_method: kubernetes
+  token: kube-oidc-token
+proxy_server: {{ fqdn }}:{{ port }}
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}

@@ -113,9 +113,13 @@ Node/container args reference the nodename suffix after `<id>-`.
 
 Modules today: `generic_oidc` (agents join via OIDC JWTs), `tbot` (Machine ID bot joins +
 identity output, token method), `bound_keypair` (bot joins via bound_keypair with a preset
-registration secret). `tbot`/`bound_keypair` differ only in join method + bootstrap + config —
-both are ~25-line `services.yml.j2` fragments over the shared base, so a 4th join-method
-module is cheap to add.
+registration secret), `kubernetes` (bots join via k8s SA JWTs — both `oidc` and `static_jwks`
+types — minted by the shared `oidc-server` component). `tbot`/`bound_keypair` differ only in
+join method + bootstrap + config; a new join-method module is a ~25-line `services.yml.j2`
+fragment + `bootstrap/` + `checks:`.
+Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
+type — system-trusted, no custom-CA — validates it). Plans today: `bots` (tbot+bound_keypair),
+`oidc-caching` (generic_oidc+kubernetes on one shared oidc-server).
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build --repo` · `up <module> --repo [--id]` · `run-plan <plan|module> --repo [--features a,b] [--version vNN] [--id]`
@@ -192,15 +196,16 @@ if the cluster enforces it, an MFA device).
   `teleport-b`: all 3 modules pass, and `plans/bots.yaml` (tbot + bound_keypair) shares one auth.
 
 ### Coverage (new modules / deeper checks)
-- **`kubernetes` join module + `plans/oidc-caching.yaml` (NEXT, the driving case)**: a `kubernetes`
-  module joining via k8s SA JWTs from the shared `oidc-server` component (`/k8s/token`), composed
-  with `generic_oidc` in one cluster to test the shared `oidc.CachingTokenValidator`. Decision
-  point: kube `static_jwks` (JWKS embedded — easy, but needs an oidc key/JWKS pinned at render or a
-  token-manager) vs kube `oidc` (fetches discovery+JWKS at join — THE caching-validator regression
-  check, but no custom-CA support → needs the issuer system-trusted: either serve the oidc-server
-  the wildcard LE cert at an FQDN alias, or install its self-signed CA into the auth trust store
-  pre-`teleport start`; both need a `-tls-cert/-tls-key` flag on the oidc-server). **Run the final
-  plan against `~/projects/teleport-e`** (the v18 backport of the caching changes), not teleport-b.
+- **`kubernetes` module + `plans/oidc-caching.yaml` — DONE**: a `kubernetes` module joins bots via
+  k8s SA JWTs from the shared `oidc-server` (`/k8s/token`), validated BOTH ways — `oidc` (fetch
+  discovery+JWKS at join → the shared `oidc.CachingTokenValidator`, the backport's surface) and
+  `static_jwks` (embedded JWKS). The oidc-server serves the wildcard LE cert (`-tls-cert/-tls-key`)
+  at `oidc.<lab_domain>` so the kube `oidc` type (no custom-CA) trusts it with no CA install. SA
+  tokens are pointed at via `KUBERNETES_TOKEN_PATH`; the static_jwks token is built at bootstrap by
+  a hook (`bootstrap/hooks/*.sh`, JWKS fetched from the running oidc-server). Verified live: the
+  full `oidc-caching` plan (generic_oidc+kubernetes) passes on teleport-b; on **teleport-e** (the
+  actual v18 caching backport) `generic_oidc` correctly gates out (not in that backport) and the
+  **kube module passes both types** — the caching backport doesn't break kube joining.
 - **More join methods**: `github`, `iam`/`ec2`, `azure`, etc. — each ~ a `services.yml.j2` fragment
   + `bootstrap/` + `checks:` now that composition + shared components exist.
 - **Deepen `tbot`**: multiple output types (`ssh`, `kubernetes`, `database`, `application`) with
@@ -226,11 +231,11 @@ if the cluster enforces it, an MFA device).
 - **Access providers**: cloudflare-tunnel for public access; offline `.test` + dnsmasq DNS
   provider (today relies on the public `*.lab.<domain>` → 127.0.0.1 wildcard record).
 
-### Pending acceptance goal
-- **Drive the v18 caching-OIDC backport** through the harness (the original motivation):
-  build the `kubernetes` module + `plans/oidc-caching.yaml`, then
-  `run-plan oidc-caching --repo ~/projects/teleport-e --features generic_oidc,kubernetes --version v18`
-  and iterate on real findings. `~/projects/teleport-e` is the v18 backport of the caching changes;
-  `~/projects/teleport-b` (generic-oidc-impl prealpha) is for harness development. All 3 modules +
-  the `bots` composition plan are proven on teleport-b; the kube module + shared-oidc plan are the
-  remaining build.
+### Acceptance goal — DONE
+- **The v18 caching-OIDC backport** was driven through the harness (the original motivation):
+  `run-plan oidc-caching --repo ~/projects/teleport-e --features kubernetes --version v18` — the
+  kube `oidc` + `static_jwks` bots join against the backport's shared caching validator (PASS), and
+  `generic_oidc` gates out (that join method isn't in this backport — the harness surfaced it as a
+  loud `unknown join method` when `--features generic_oidc` was wrongly passed). On
+  `~/projects/teleport-b` (generic-oidc-impl prealpha) the full plan (generic_oidc+kubernetes) passes.
+  NOTE the correct `--features` per branch: teleport-e has `kubernetes` (not `generic_oidc`).

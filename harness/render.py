@@ -78,16 +78,28 @@ def _render_unit_configs(unit_dir: Path, ctx: dict, cfg_out: Path) -> None:
 
 
 def _collect_bootstrap(unit_dir: Path, ctx: dict, boot_out: Path, origin: str) -> None:
-    """Render/copy a unit's bootstrap resources into $OUT/bootstrap, prefixed by origin."""
+    """Render/copy a unit's bootstrap resources into $OUT/bootstrap, prefixed by origin.
+    A bootstrap/hooks/*.sh[.j2] subdir becomes $OUT/bootstrap/hooks/ (local-admin scripts
+    the shared auth-entrypoint runs after static resources — e.g. runtime token creation)."""
     bdir = unit_dir / "bootstrap"
     if not bdir.is_dir():
         return
-    env = _env(bdir, TEMPLATES)
+    env = _env(bdir, bdir / "hooks", TEMPLATES)
     for f in sorted(bdir.iterdir()):
         if f.name.endswith(".yaml.j2"):
             (boot_out / f"{origin}__{f.name[:-3]}").write_text(_render_str(env, f.name, ctx))
         elif f.name.endswith(".yaml"):
             (boot_out / f"{origin}__{f.name}").write_text(f.read_text())
+
+    hdir = bdir / "hooks"
+    if hdir.is_dir():
+        hooks_out = boot_out / "hooks"
+        hooks_out.mkdir(exist_ok=True)
+        for f in sorted(hdir.iterdir()):
+            if f.name.endswith(".sh.j2"):
+                (hooks_out / f"{origin}__{f.name[:-3]}").write_text(_render_str(env, f.name, ctx))
+            elif f.name.endswith(".sh"):
+                (hooks_out / f"{origin}__{f.name}").write_text(f.read_text())
 
 
 def _merge_fragment(compose: dict, env: Environment, unit_dir: Path, ctx: dict) -> None:
@@ -162,7 +174,9 @@ def render_cluster(
     for b in bots:
         roles = b["roles"]
         roles = ",".join(roles) if isinstance(roles, list) else str(roles)
-        lines.append(f"{b['name']}\t{roles}\t{b['token']}")
+        # token may be empty: the bot is created, then authorized by a separately-created
+        # join token (e.g. a kubernetes-method token whose bot_name matches).
+        lines.append(f"{b['name']}\t{roles}\t{b.get('token', '')}")
     (boot_out / "bots.manifest").write_text("\n".join(lines) + ("\n" if lines else ""))
 
     compose_path = out_dir / "docker-compose.yml"

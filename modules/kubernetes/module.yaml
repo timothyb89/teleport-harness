@@ -1,0 +1,24 @@
+# kubernetes join method: bots join by presenting a Kubernetes service-account JWT
+# (minted here by the shared oidc-server's /k8s/token, out-of-cluster) validated two
+# ways — `static_jwks` (embedded JWKS, no fetch) and `oidc` (fetch discovery+JWKS at
+# join, over the SHARED oidc.CachingTokenValidator — the code the v18 caching backport
+# touches). Composed with generic_oidc in plans/oidc-caching.yaml to prove a caching
+# change doesn't break kube joining.
+name: kubernetes
+description: >
+  Kubernetes join — a bot joins via a k8s service-account JWT validated by static_jwks
+  (embedded) and by oidc (issuer discovery, shared caching validator). SA JWTs are minted
+  by the shared oidc-server; the issuer is served over the system-trusted wildcard cert.
+provides_feature: kubernetes
+requires_features: []
+min_version: v18
+
+checks: |
+  # oidc type: exercises the shared caching OIDC validator (fetches discovery at join)
+  bot_joined          kube-oidc-bot kubernetes
+  output_file         kube-oidc /out/id/identity
+  identity_authorized kube-oidc /out/id/identity
+  # static_jwks type: embedded JWKS, no fetch at join
+  bot_joined          kube-jwks-bot kubernetes
+  output_file         kube-jwks /out/id/identity
+  identity_authorized kube-jwks /out/id/identity

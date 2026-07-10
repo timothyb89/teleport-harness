@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Bootstrap hook (runs as local-admin in the auth container): create the kube
+# static_jwks join token, embedding the JWKS fetched from the shared oidc-server.
+# static_jwks needs the JWKS at creation time (no fetch at join), so this can't be a
+# static resource file — it's built here once the oidc-server is up.
+set -euo pipefail
+OIDC_URL="https://oidc.{{ lab_domain }}:8443"
+
+echo "[kube-hook] fetching JWKS from $OIDC_URL"
+JWKS=""
+for _ in $(seq 1 60); do
+  JWKS="$(curl -fsSk "$OIDC_URL/keys")" && [ -n "$JWKS" ] && break
+  sleep 2
+done
+[ -n "$JWKS" ] || { echo "[kube-hook] failed to fetch JWKS" >&2; exit 1; }
+
+JWKS_INDENTED="$(printf '%s\n' "$JWKS" | sed 's/^/        /')"
+tctl --config "${CONFIG:-/etc/teleport/auth.yaml}" create -f - <<YAML
+kind: token
+version: v2
+metadata:
+  name: kube-jwks-token
+spec:
+  roles: [Bot]
+  bot_name: kube-jwks-bot
+  join_method: kubernetes
+  kubernetes:
+    type: static_jwks
+    static_jwks:
+      jwks: |
+${JWKS_INDENTED}
+    allow:
+      - service_account: "default:kube-jwks-sa"
+YAML
+echo "[kube-hook] created kube-jwks-token"

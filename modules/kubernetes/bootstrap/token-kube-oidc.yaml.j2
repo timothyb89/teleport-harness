@@ -1,0 +1,17 @@
+{# kube OIDC join token: teleport fetches the issuer's discovery+JWKS at join time via
+   the shared caching validator (no custom-CA support → issuer served over system-trusted
+   wildcard TLS). Authorizes bot kube-oidc-bot for SA default:kube-oidc-sa. #}
+kind: token
+version: v2
+metadata:
+  name: kube-oidc-token
+spec:
+  roles: [Bot]
+  bot_name: kube-oidc-bot
+  join_method: kubernetes
+  kubernetes:
+    type: oidc
+    oidc:
+      issuer: https://oidc.{{ lab_domain }}:8443
+    allow:
+      - service_account: "default:kube-oidc-sa"

@@ -1,22 +1,32 @@
 {# Shared OIDC server component: a trivial in-cluster IdP that serves OIDC discovery
-   + JWKS + a self-signed CA, mints generic_oidc JWTs (/token) and Kubernetes-style
-   service-account JWTs (/k8s/token). Reused by any join-method module that validates
-   OIDC/JWKS (generic_oidc, kubernetes). Reachable inside the cluster at oidc:8443. #}
+   + JWKS, mints generic_oidc JWTs (/token) and Kubernetes SA JWTs (/k8s/token).
+   Serves the harness WILDCARD LE cert (system-trusted) at oidc.<lab_domain>, so the
+   kube `oidc` join type — which validates the issuer over the shared caching validator
+   with NO custom-CA support — trusts it with no CA install. Reused by generic_oidc +
+   kubernetes. Issuer is the FQDN so the served cert matches. #}
 {% set audience = fqdn ~ '/generic-oidc' %}
+{% set oidc_host = 'oidc.' ~ lab_domain %}
 services:
   oidc:
     image: {{ oidc_image }}
     platform: linux/amd64
     container_name: {{ cluster_id }}-oidc
     command:
-      - -issuer=https://oidc:8443
+      - -issuer=https://{{ oidc_host }}:8443
       - -addr=:8443
       - -audience={{ audience }}
       - -cluster-name={{ fqdn }}
-      - -extra-sans=oidc,localhost,127.0.0.1
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
     volumes:
+      - harness-certs:/certs:ro
       - oidc-data:/data
-    networks: [internal]
+    networks:
+      internal:
+        aliases: ["{{ oidc_host }}"]
 
 volumes:
   oidc-data:
+  harness-certs:
+    external: true
+    name: harness-certs

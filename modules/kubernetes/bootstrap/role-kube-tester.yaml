@@ -1,0 +1,11 @@
+# Minimal role for the kube test bots: enough to prove the produced identity
+# authenticates + performs an authorized action (list tokens) via tctl --identity.
+kind: role
+version: v7
+metadata:
+  name: kube-tester
+spec:
+  allow:
+    rules:
+      - resources: [token]
+        verbs: [read, list]

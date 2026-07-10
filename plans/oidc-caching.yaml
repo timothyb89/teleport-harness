@@ -1,0 +1,12 @@
+# The driving acceptance plan for the v18 caching-OIDC backport: generic_oidc and
+# kubernetes composed into ONE cluster, sharing the oidc-server component. Both exercise
+# the shared oidc.CachingTokenValidator (generic_oidc discovery agents + the kube `oidc`
+# bot), so a regression in the caching library shows up as either path failing. The kube
+# `static_jwks` bot additionally proves kube joining works off the shared IdP.
+#
+#   run-plan oidc-caching --repo ~/projects/teleport-e --features generic_oidc,kubernetes --version v18
+name: oidc-caching
+description: >
+  generic_oidc + kubernetes sharing one oidc-server, exercising the shared caching OIDC
+  validator across both join paths (the v18 caching backport's regression surface).
+modules: [generic_oidc, kubernetes]

@@ -1,0 +1,7 @@
+# Render context for kubernetes (see harness/render.py).
+components: [oidc-server]              # shared IdP mints the k8s SA JWTs + serves discovery
+# bots created at bootstrap; empty token => the bot is created and its kubernetes-method
+# join token (created in bootstrap/hooks + bootstrap/*.yaml, bot_name-matched) authorizes it.
+bots:
+  - {name: kube-oidc-bot, roles: kube-tester}
+  - {name: kube-jwks-bot, roles: kube-tester}

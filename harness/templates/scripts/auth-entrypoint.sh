@@ -31,6 +31,15 @@ for f in /bootstrap/*.yaml; do
   tctl --config "$CONFIG" create -f "$f" 2>&1 | sed 's/^/[auth][bootstrap] /' || true
 done
 
+# Bootstrap hooks: local-admin scripts for resources that must be built at runtime
+# (e.g. a kube static_jwks token whose JWKS is fetched from the oidc-server). Run
+# after static resources + before bots add, with CONFIG exported for tctl.
+export CONFIG
+for h in /bootstrap/hooks/*.sh; do
+  echo "[auth][bootstrap] hook $(basename "$h")"
+  bash "$h" 2>&1 | sed 's/^/[auth][bootstrap] /' || true
+done
+
 # bots.manifest: TAB-separated  name<TAB>roles<TAB>token  (one bot per line).
 # Tokens are applied above, so `bots add --token` references an existing token.
 if [ -f /bootstrap/bots.manifest ]; then
@@ -41,8 +50,13 @@ if [ -f /bootstrap/bots.manifest ]; then
       echo "[auth][bootstrap] bot $name already exists"
     else
       echo "[auth][bootstrap] adding bot $name (roles=$roles)"
-      tctl --config "$CONFIG" bots add "$name" --roles="$roles" --token="$token" 2>&1 \
-        | sed 's/^/[auth][bootstrap] /' || true
+      # empty token => create the bot; a separately-created join token (matching bot_name)
+      # authorizes the join (e.g. a kubernetes-method token).
+      if [ -n "$token" ]; then
+        tctl --config "$CONFIG" bots add "$name" --roles="$roles" --token="$token" 2>&1 | sed 's/^/[auth][bootstrap] /' || true
+      else
+        tctl --config "$CONFIG" bots add "$name" --roles="$roles" 2>&1 | sed 's/^/[auth][bootstrap] /' || true
+      fi
     fi
   done < /bootstrap/bots.manifest
 fi

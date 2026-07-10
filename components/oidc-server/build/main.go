@@ -47,6 +47,8 @@ var (
 	clusterName = flag.String("cluster-name", "teleport.ethernet.fyi", "Teleport cluster name; default `aud` for kubernetes-style tokens (k8s join requires the cluster name as audience)")
 	ttl         = flag.Duration("ttl", 10*time.Minute, "lifetime of minted tokens (k8s join requires <= 30m)")
 	extraSANs   = flag.String("extra-sans", "", "comma-separated extra DNS/IP SANs for the TLS cert")
+	tlsCertFile = flag.String("tls-cert", "", "serve this TLS cert instead of a generated self-signed one (e.g. a wildcard LE cert); pair with -tls-key")
+	tlsKeyFile  = flag.String("tls-key", "", "private key for -tls-cert")
 )
 
 const kid = "teleport-generic-oidc-test"
@@ -265,6 +267,21 @@ func loadOrCreateRSAKey(path string) (*rsa.PrivateKey, error) {
 }
 
 func loadOrCreateTLSCert() (tls.Certificate, []byte, error) {
+	// Serve a provided cert (e.g. the harness wildcard LE cert) — system-trusted, so
+	// the kube `oidc` join type (no custom-CA support) validates the issuer. /ca then
+	// just echoes the served chain (generic_oidc relies on system trust in this mode).
+	if *tlsCertFile != "" && *tlsKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(*tlsCertFile, *tlsKeyFile)
+		if err != nil {
+			return tls.Certificate{}, nil, err
+		}
+		cb, err := os.ReadFile(*tlsCertFile)
+		if err != nil {
+			return tls.Certificate{}, nil, err
+		}
+		return cert, cb, nil
+	}
+
 	certPath := filepath.Join(*dataDir, "tls-cert.pem")
 	keyPath := filepath.Join(*dataDir, "tls-key.pem")
 

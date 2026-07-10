@@ -68,6 +68,15 @@ JWKS="$(curl -fsSk "$FETCH_URL/keys")"
 # Indent helpers for YAML block scalars.
 indent() { sed "s/^/$1/"; }
 
+# tls_ca block for the discovery tokens. When OMIT_TLS_CA=1 (the oidc-server serves a
+# system-trusted cert, e.g. the wildcard LE cert), emit no tls_ca and let discovery
+# validate over system trust — the same path the kube `oidc` join uses.
+if [[ "${OMIT_TLS_CA:-0}" == "1" ]]; then
+  TLS_CA_BLOCK=""
+else
+  TLS_CA_BLOCK="$(printf '    tls_ca: |\n%s' "$(printf '%s\n' "$CA_PEM" | indent '      ')")"
+fi
+
 DISCOVERY="$OUT_DIR/token-discovery.yaml"
 cat > "$DISCOVERY" <<EOF
 # generic_oidc token using live OIDC discovery + a custom TLS CA.
@@ -85,8 +94,7 @@ spec:
   generic_oidc:
     issuer: ${ISSUER}
     audience: ${AUDIENCE}
-    tls_ca: |
-$(printf '%s\n' "$CA_PEM" | indent '      ')
+${TLS_CA_BLOCK}
     # Global AND-matched fields. Every minted token carries org=ethernet-fyi.
     must_match_fields:
       org: ethernet-fyi
@@ -150,8 +158,7 @@ spec:
   generic_oidc:
     issuer: ${ISSUER}
     audience: ${AUDIENCE}
-    tls_ca: |
-$(printf '%s\n' "$CA_PEM" | indent '      ')
+${TLS_CA_BLOCK}
     must_match_fields:
       org: ethernet-fyi
     allow_any:
@@ -214,8 +221,7 @@ spec:
   generic_oidc:
     issuer: ${ISSUER}
     audience: ${AUDIENCE}
-    tls_ca: |
-$(printf '%s\n' "$CA_PEM" | indent '      ')
+${TLS_CA_BLOCK}
     must_match_fields:
       org: ethernet-fyi
     allow_any:
@@ -285,8 +291,7 @@ spec:
   generic_oidc:
     issuer: ${ISSUER}
     audience: ${AUDIENCE}
-    tls_ca: |
-$(printf '%s\n' "$CA_PEM" | indent '      ')
+${TLS_CA_BLOCK}
     must_match_fields:
       org: ethernet-fyi
     allow_any:

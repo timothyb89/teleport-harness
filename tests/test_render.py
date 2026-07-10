@@ -24,7 +24,7 @@ CTX = {
     "out": "/state/zz1",
 }
 
-ALL_MODULES = ["tbot", "bound_keypair", "generic_oidc"]
+ALL_MODULES = ["tbot", "bound_keypair", "generic_oidc", "kubernetes"]
 
 EXPECTED_SERVICES = {
     "tbot": {"auth", "tbot", "tbot-deny"},
@@ -34,6 +34,7 @@ EXPECTED_SERVICES = {
         "agent-discovery", "agent-static", "agent-scoped-discovery",
         "agent-scoped-static", "agent-deny", "agent-scoped-deny",
     },
+    "kubernetes": {"auth", "oidc", "kube-oidc", "kube-jwks"},  # oidc from the shared component
 }
 
 
@@ -93,6 +94,7 @@ EXPECTED_BOTS = {
     "tbot": {"test-bot"},
     "bound_keypair": {"bk-bot"},
     "generic_oidc": {"token-manager"},
+    "kubernetes": {"kube-oidc-bot", "kube-jwks-bot"},
 }
 
 
@@ -105,8 +107,10 @@ def test_bootstrap_bots_manifest_and_tokens(rendered):
     boot = list((out / "bootstrap").glob("*.yaml"))
     tokens = "\n".join(f.read_text() for f in boot)
     for line in manifest:
-        _, _, token = line.split("\t")
-        assert token in tokens, f"{mod}: manifest token {token} has no bootstrap resource"
+        parts = line.split("\t")
+        token = parts[2] if len(parts) > 2 else ""  # empty => bot authorized by a separate token (e.g. kube)
+        if token:
+            assert token in tokens, f"{mod}: manifest token {token} has no bootstrap resource"
     # no unrendered markers leaked into bootstrap
     assert "{{" not in tokens and "${" not in tokens
 

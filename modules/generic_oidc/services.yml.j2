@@ -2,6 +2,7 @@
    component). A token-manager bot mints the agent join tokens via its OWN identity
    (not cluster admin); the agents then join by presenting OIDC JWTs. #}
 {% set audience = fqdn ~ '/generic-oidc' %}
+{% set oidc_host = 'oidc.' ~ lab_domain %}
 services:
   # tbot for the token-manager bot: writes its identity to the shared `idents` volume.
   tbot:
@@ -25,8 +26,11 @@ services:
     command: ["/scripts/token-manager.sh"]
     restart: "no"
     environment:
-      ISSUER: https://oidc:8443
-      FETCH_URL: https://oidc:8443
+      # the oidc-server now serves the system-trusted wildcard cert at its FQDN, so the
+      # agent tokens use discovery over system trust (no tls_ca) — same path kube oidc uses.
+      ISSUER: https://{{ oidc_host }}:8443
+      FETCH_URL: https://{{ oidc_host }}:8443
+      OMIT_TLS_CA: "1"
       AUDIENCE: {{ audience }}
       AGENT_SUB: {{ agent_sub }}
       TELEPORT_UNSTABLE_SCOPES: "yes"
