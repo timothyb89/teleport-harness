@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Custom check (sourced): the bound_keypair-produced identity authenticates + is
 # authorized (lists tokens via tctl --identity).
 if docker exec "${ASSERT_ID}-bkbot" \

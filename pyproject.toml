@@ -1,0 +1,27 @@
+[project]
+name = "teleport-harness"
+version = "0.1.0"
+description = "Typed brain for the teleport-harness: module models, gating, verification, templating."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+harness = "harness.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["harness"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

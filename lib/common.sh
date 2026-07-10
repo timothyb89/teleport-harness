@@ -47,6 +47,14 @@ gen_id() { echo "c$(openssl rand -hex 3)"; }
 # require_cmd <cmd...>
 require_cmd() { for c in "$@"; do command -v "$c" >/dev/null 2>&1 || die "missing required command: $c"; done; }
 
+# pybrain <subcommand> [args...] — the typed Python brain (harness/ package) that
+# owns YAML parsing, gating, and checks validation (replaces grep/sed/awk). Runs
+# via uv against the harness pyproject; --modules-dir keeps it pointed at ours.
+pybrain() {
+  command -v uv >/dev/null 2>&1 || die "uv not found (install: https://docs.astral.sh/uv/) — needed for the harness brain"
+  uv run --quiet --project "$HARNESS_ROOT" harness --modules-dir "$MODULES_DIR" "$@"
+}
+
 # state_dir_for <id>
 state_dir_for() { echo "$STATE_DIR/$1"; }
 

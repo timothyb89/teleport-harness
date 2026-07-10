@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Custom check (sourced): prove the tbot-produced identity actually authenticates
 # AND is authorized — run an allowed action (tokens ls) with it via tctl --identity.
 if docker exec "${ASSERT_ID}-tbot" \

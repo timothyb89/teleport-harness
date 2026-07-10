@@ -1,4 +1,5 @@
-# Shared assertion primitives for module verification. shellcheck shell=bash
+# shellcheck shell=bash
+# Shared assertion primitives for module verification.
 #
 # Each `assert_<name>` emits a "PASS|FAIL|SKIP <msg>" line and tracks failures in
 # $_assert_fail. They read the cluster id from $ASSERT_ID (set by assert_begin).

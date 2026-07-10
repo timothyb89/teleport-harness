@@ -1,4 +1,5 @@
-# Preflight checks for the harness. shellcheck shell=bash
+# shellcheck shell=bash
+# Preflight checks for the harness.
 
 doctor() {
   load_target
@@ -32,6 +33,12 @@ doctor() {
 
   # python3 (authoritative TLS verifier; macOS curl/LibreSSL is unreliable)
   command -v python3 >/dev/null 2>&1 && pass "python3 present (TLS verification)" || chk_warn "python3 missing (used for web-UI verification)"
+
+  # uv + the Python brain (YAML parsing / gating / checks validation)
+  if command -v uv >/dev/null 2>&1; then
+    if pybrain validate >/dev/null 2>&1; then pass "harness brain ok (uv); all modules validate"
+    else chk_fail "module validation failed — run: $(basename "$0") validate"; fi
+  else chk_fail "uv missing (harness brain) — install: https://docs.astral.sh/uv/"; fi
 
   # ingress + cert
   if docker ps --format '{{.Names}}' | grep -q '^harness-ingress$'; then

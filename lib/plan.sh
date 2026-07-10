@@ -1,43 +1,29 @@
+# shellcheck shell=bash
 # Plan runner: gate a module's test cases on the target's features/version, bring
-# the cluster up (or reuse one), verify, and produce a report. shellcheck shell=bash
+# the cluster up (or reuse one), verify, and produce a report.
 #
 # Iteration 1: a "plan" is a single module (the unit of test cases). Multi-module
 # plan files are a thin future wrapper over this.
-
-module_meta() {
-  local m="$1" field="$2" f="$MODULES_DIR/$1/module.yaml"
-  case "$field" in
-    requires_features) grep -E '^requires_features:' "$f" | sed 's/.*\[//; s/\].*//; s/,/ /g' ;;
-    provides_feature)  grep -E '^provides_feature:' "$f" | awk '{print $2}' ;;
-    min_version)       grep -E '^min_version:' "$f" | awk '{print $2}' ;;
-  esac
-}
-_vnum() { local v="${1#v}"; echo "${v%%.*}"; }   # v18 / v18.2.1 -> 18
 
 run_plan() {
   load_target
   local module="${1:?usage: run-plan <module> --repo <clone> [--features a,b] [--version vNN] [--id <id>]}"
   [ -d "$MODULES_DIR/$module" ] || die "unknown module '$module'"
 
-  # ---- feature/version gating (no silent skips) ----
-  local reqf minv skip="" feat
-  reqf="$(module_meta "$module" requires_features)"
-  minv="$(module_meta "$module" min_version)"
-  if [ -n "${FEATURES:-}" ]; then
-    local have=",${FEATURES},"
-    for feat in $reqf; do case "$have" in *",$feat,"*) : ;; *) skip="target lacks feature '$feat'";; esac; done
-  else
-    hwarn "no --features given; assuming target provides required features: ${reqf:-none}"
-  fi
-  if [ -z "$skip" ] && [ -n "${VERSION:-}" ] && [ -n "$minv" ]; then
-    if [ "$(_vnum "$VERSION")" -lt "$(_vnum "$minv")" ] 2>/dev/null; then
-      skip="target version $VERSION < module min_version $minv"
-    fi
-  fi
-  if [ -n "$skip" ]; then
+  # ---- feature/version gating (no silent skips) — decided by the Python brain ----
+  local gate_args=() skip="" rc=0
+  if [ -n "${FEATURES:-}" ]; then gate_args+=(--features "$FEATURES")
+  else hwarn "no --features given; assuming target provides required features: $(pybrain meta "$module" requires_features)"; fi
+  [ -n "${VERSION:-}" ] && gate_args+=(--version "$VERSION")
+  # (guard the empty-array expansion — env bash here is 3.2, where "${a[@]}" under set -u throws)
+  if [ "${#gate_args[@]}" -gt 0 ]; then skip="$(pybrain gate "$module" "${gate_args[@]}")" || rc=$?
+  else skip="$(pybrain gate "$module")" || rc=$?; fi
+  if [ "$rc" = 3 ]; then
     hwarn "SKIP '$module' — $skip"
     echo "SKIP $module: $skip"
     return 0
+  elif [ "$rc" != 0 ]; then
+    die "gating '$module' failed: $skip"
   fi
 
   # ---- bring up (or reuse an existing cluster with the same --id) ----

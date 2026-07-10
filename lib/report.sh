@@ -1,4 +1,5 @@
-# Report bundles. shellcheck shell=bash
+# shellcheck shell=bash
+# Report bundles.
 #
 # A report captures everything needed to understand a test run AND leaves the
 # cluster running for hands-on inspection: results, per-service logs, the rendered

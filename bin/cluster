@@ -3,6 +3,7 @@
 # clone/branch, run gated test plans, and produce inspectable reports.
 #
 #   cluster doctor
+#   cluster validate [module]
 #   cluster build   --repo <clone> [--ent]
 #   cluster up      <module> --repo <clone> [--id <id>] [--ent]
 #   cluster run-plan <plan.yaml> --repo <clone> [--id <id>]
@@ -46,6 +47,7 @@ cmd="${1:-}"; shift || true
 
 case "$cmd" in
   doctor)   doctor ;;
+  validate) pybrain validate "$@" ;;
   build)    load_target; build_image "${REPO:?--repo required}" "${ENT:-0}" ;;
   up)       cluster_up "$@" ;;
   run-plan) command -v run_plan >/dev/null 2>&1 || die "plan runner not installed yet"; run_plan "$@" ;;
@@ -58,5 +60,5 @@ case "$cmd" in
   report)   command -v cluster_report >/dev/null 2>&1 || die "reporter not installed yet"; cluster_report "$@" ;;
   teardown) cluster_teardown "$@" ;;
   ""|help)  sed -n '2,20p' "$0" ;;
-  *) die "unknown command: $cmd (try: doctor build up run-plan ls logs web report teardown)" ;;
+  *) die "unknown command: $cmd (try: doctor validate build up run-plan ls logs web report teardown)" ;;
 esac

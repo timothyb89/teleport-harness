@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Custom verification escape hatch (SOURCED by lib/verify.sh — no shebang, no exit).
 # Shares: $ASSERT_ID, cached $_assert_nodes (JSON), $_assert_fail, _al, and every
 # assert_* primitive. Use this for checks not expressible as a declarative `checks:`
