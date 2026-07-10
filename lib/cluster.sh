@@ -42,6 +42,8 @@ MODULE=$label
 MODULES=$modules_csv
 REPO=$REPO
 SHA=$(git -C "$REPO" rev-parse --short=12 HEAD)
+FEATURES=${FEATURES:-}
+VERSION=${VERSION:-}
 DOMAIN=$HARNESS_DOMAIN
 CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF

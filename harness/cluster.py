@@ -28,11 +28,24 @@ class Cluster:
     def logs(self, suffix: str) -> str:  # pragma: no cover
         raise NotImplementedError
 
-    def exec_rc(self, suffix: str, argv: list[str]) -> int:  # pragma: no cover
+    def exec_out(self, suffix: str, argv: list[str]) -> tuple[int, str]:  # pragma: no cover
         raise NotImplementedError
+
+    def exec_rc(self, suffix: str, argv: list[str]) -> int:
+        return self.exec_out(suffix, argv)[0]
 
     def file_nonempty(self, suffix: str, path: str) -> bool:  # pragma: no cover
         raise NotImplementedError
+
+    def file_size(self, suffix: str, path: str) -> int | None:
+        """Byte size of a file, or None if absent/unreadable (evidence for output_file)."""
+        rc, out = self.exec_out(suffix, ["sh", "-c", f"wc -c < '{path}' 2>/dev/null"])
+        if rc != 0:
+            return None
+        try:
+            return int(out.strip())
+        except ValueError:
+            return None
 
     def tsh_ssh(self, host_suffix: str, login: str) -> bool:  # pragma: no cover
         raise NotImplementedError
@@ -68,9 +81,9 @@ class DockerCluster(Cluster):
         cp = self._run(["docker", "logs", self.container(suffix)])
         return (cp.stdout or "") + (cp.stderr or "")
 
-    def exec_rc(self, suffix: str, argv: list[str]) -> int:
+    def exec_out(self, suffix: str, argv: list[str]) -> tuple[int, str]:
         cp = self._run(["docker", "exec", self.container(suffix), *argv])
-        return cp.returncode
+        return cp.returncode, (cp.stdout or "") + (cp.stderr or "")
 
     def file_nonempty(self, suffix: str, path: str) -> bool:
         # mirrors: docker exec <c> test -s <path>

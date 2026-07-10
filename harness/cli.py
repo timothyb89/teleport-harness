@@ -110,7 +110,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     `PASS/FAIL/SKIP` + `RESULT:` text lib/verify.sh used, optionally write JSON.
     Exit 1 on any FAIL (so plan.sh's retry loop keeps working)."""
     from .cluster import DockerCluster
-    from .verify import render, verify
+    from .verify import node_summary, render, verify
 
     mdir = _modules_dir(args.modules_dir) / args.module
     m = load_module(mdir)
@@ -122,7 +122,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     state_dir = Path(args.state_dir) if args.state_dir else None
     cluster = DockerCluster(args.cluster_id, state_dir=state_dir)
-    results = verify(cluster, m.checks, module_dir=mdir)
+    nodes = cluster.get_nodes()  # captured once for both verification + the report inventory
+    results = verify(cluster, m.checks, module_dir=mdir, nodes=nodes)
     text, passed = render(results)
     print(text)
 
@@ -131,10 +132,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "module": m.name,
             "cluster_id": args.cluster_id,
             "passed": passed,
+            "nodes": node_summary(nodes),
             "results": [r.as_dict() for r in results],
         }
         Path(args.json_out).write_text(json.dumps(payload, indent=2) + "\n")
     return EXIT_OK if passed else EXIT_ERR
+
+
+def cmd_report_md(args: argparse.Namespace) -> int:
+    """Emit the rich markdown report for a cluster's state dir (to stdout)."""
+    from .report import build_markdown
+
+    print(build_markdown(Path(args.state_dir)))
+    return EXIT_OK
 
 
 def cmd_render(args: argparse.Namespace) -> int:
@@ -220,6 +230,10 @@ def main(argv: list[str] | None = None) -> int:
     sf.add_argument("--state-dir", help="state/<id>/ (for meta needed by tsh_ssh)")
     sf.add_argument("--json-out", help="also write a JSON report to this path")
     sf.set_defaults(fn=cmd_verify)
+
+    srm = sub.add_parser("report-md", help="build the rich markdown report from a state dir")
+    srm.add_argument("--state-dir", required=True)
+    srm.set_defaults(fn=cmd_report_md)
 
     sr = sub.add_parser("render", help="compose + render one or more modules into --out")
     sr.add_argument("--modules", required=True, help="comma-separated module names")

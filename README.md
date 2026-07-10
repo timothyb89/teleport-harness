@@ -62,7 +62,7 @@ Test a branch: `git -C <clone> checkout <branch>`, then `--repo <clone>`.
 - `components/<name>/` — a shared service dependency modules pull in via `components:`
   (today: `oidc-server`, a trivial IdP reused by `generic_oidc` + `kubernetes`).
 - `plans/<name>.yaml` — several modules composed into one cluster (today: `bots`, `oidc-caching`).
-- `harness/` — the Python brain (`models`, `checks`, `verify`, `cluster`, `render`, `cli`); `tests/`.
+- `harness/` — the Python brain (`models`, `checks`, `verify`, `cluster`, `render`, `report`, `cli`); `tests/`.
 
 ## Commands
 `doctor` · `validate` · `build` · `up` · `run-plan` · `ls` · `logs` · `admin` · `tctl` · `tsh` ·

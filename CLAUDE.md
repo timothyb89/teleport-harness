@@ -52,8 +52,9 @@ shell shells out via the `pybrain` helper (`lib/common.sh` → `uv run --project
 Subcommands: `validate [module]` (schema + verb/arity check — used by `doctor`),
 `gate <module> [--features] [--version]` (exit 3 == skip), `meta <module> <field>`,
 `checks <module>` (validated `verb args` lines), `verify <module> --cluster-id <id>` (run checks,
-structured JSON), `render --modules a,b,c --out <dir> …` (compose N modules + their components),
-`plan-resolve <plan> [--features] [--version]` (gate each module → run/skip JSON). All unit-tested
+structured JSON w/ evidence), `render --modules a,b,c --out <dir> …` (compose N modules + components),
+`plan-resolve <plan> [--features] [--version]` (gate each module → run/skip JSON),
+`report-md --state-dir <dir>` (rich markdown report). All unit-tested
 (`tests/`, `uv run --extra dev pytest`) — the harness's correctness bar. A bad `module.yaml`
 (typo'd verb, wrong arity, unknown key, bad version) fails fast with a clear message instead of
 deep in the verify retry loop. Docker/nginx/cert/build **plumbing stays in `lib/*.sh`** — the
@@ -100,8 +101,10 @@ module (back-compat). Today: `plans/bots.yaml` (tbot + bound_keypair — composi
 `run-plan` calls `harness verify <module> --cluster-id <id>`: the brain parses + verb/arity-
 validates the module (invalid → immediate FAIL), then runs each check against the live cluster
 and prints `  PASS|FAIL|SKIP <msg>` lines + one `RESULT: PASS|FAIL` (only FAIL fails the run;
-SKIP is a neutral not-yet-satisfied soft check), exiting non-zero on FAIL. It also writes a
-structured `state/<id>/results-<module>.json` (`{status,verb,args,msg}` per check) that `report` bundles.
+SKIP is a neutral not-yet-satisfied soft check), exiting non-zero on FAIL. Each check also captures
+**evidence** — the concrete proof it relied on (the matched log line, the node record, the command
++ exit status) — shown indented (`↳`) in the console, in `state/<id>/results-<module>.json`
+(`{status,verb,args,msg,evidence}` per check, + a captured node inventory), and in the markdown report.
 All docker interaction goes through the `Cluster` seam (`harness/cluster.py`) so asserts are
 unit-testable with a `FakeCluster` (they never were in bash). Adding a verb = an impl in
 `harness/verify.py` `IMPLS` + a `VerbSpec` in `harness/checks.py` (a test enforces they match).
@@ -126,8 +129,10 @@ type — system-trusted, no custom-CA — validates it). Plans today: `bots` (tb
 · `ls` · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` · `teardown <id|--all>`.
 `run-plan <plan|module>` gates each module on `requires_features`/`min_version` (SKIP with a
 logged reason — no silent skips), composes the cluster up (or reuses an existing `--id`), verifies
-every running module, writes `runs/<ts>-<id>/` (per-module `results-*.json` + per-service logs +
-rendered config + meta), and **leaves the cluster up**.
+every running module, and writes `runs/<ts>-<id>/`: a rich **`results.md`** (built by `harness
+report-md` from the structured data — summary table, cluster setup w/ services + bootstrapped
+roles/tokens/bots, node inventory, and per-check evidence), per-module `results-*.json`, the raw
+`console.txt`, per-service `logs/`, and `rendered/` (compose + config + bootstrap). Leaves the cluster up.
 
 ### Admin access (`lib/admin.sh`)
 Teleport's **admin-action MFA** (v15+) blocks user-minted identity files but **exempts

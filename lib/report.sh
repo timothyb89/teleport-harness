@@ -15,12 +15,16 @@ cluster_report() {
   local ts bundle; ts="$(date -u +%Y%m%d-%H%M%S)"; bundle="$RUNS_DIR/${ts}-${id}"
   mkdir -p "$bundle/logs" "$bundle/rendered"
 
-  # metadata + rendered artifacts
+  # metadata + rendered artifacts (compose, configs, and the composed bootstrap so the
+  # report can summarize + link the exact resources that were created)
   cp "$out/meta.env" "$bundle/meta.env" 2>/dev/null || true
   cp "$out/docker-compose.yml" "$bundle/rendered/" 2>/dev/null || true
   cp -R "$out/config" "$bundle/rendered/" 2>/dev/null || true
+  cp -R "$out/bootstrap" "$bundle/rendered/" 2>/dev/null || true
   # structured verification results (per-module, written by the Python verifier)
   cp "$out"/results-*.json "$bundle/" 2>/dev/null || true
+  # raw console output (the run-plan verification log), kept for reference
+  [ -n "$results" ] && [ -f "$results" ] && cp "$results" "$bundle/console.txt" 2>/dev/null || true
 
   # per-service logs
   local svc
@@ -28,27 +32,18 @@ cluster_report() {
     compose "teleport-harness-$id" "$out/docker-compose.yml" logs --no-color "$svc" > "$bundle/logs/${svc}.log" 2>&1 || true
   done
 
-  # results.md
-  {
-    echo "# Test run: ${id}"
-    echo
-    echo "- module:  $(cluster_meta "$id" MODULE)"
-    echo "- repo:    $(cluster_meta "$id" REPO) @ $(cluster_meta "$id" SHA)"
-    echo "- created: $(cluster_meta "$id" CREATED)"
-    echo "- web UI:  https://${fqdn}:${port}  (publicly-trusted LE cert; \`cluster web ${id}\` for admin login)"
-    echo
-    echo '## Results'
-    echo '```'
-    if [ -n "$results" ] && [ -f "$results" ]; then cat "$results"; else echo "(no results file provided)"; fi
-    echo '```'
-    echo
-    echo "## Inspect"
-    echo "- structured results: results.json"
-    echo "- live cluster: \`cluster logs ${id} [service]\`, or open the web UI above"
-    echo "- rendered compose/config: rendered/"
-    echo "- per-service logs: logs/"
-    echo "- teardown when done: \`cluster teardown ${id}\`"
-  } > "$bundle/results.md"
+  # results.md — rich markdown built by the brain from the structured run data
+  # (cluster setup + node inventory + per-check evidence). Falls back to a stub.
+  if ! pybrain report-md --state-dir "$out" > "$bundle/results.md" 2>/dev/null; then
+    {
+      echo "# Test run: ${id}"
+      echo "- repo: $(cluster_meta "$id" REPO) @ $(cluster_meta "$id" SHA)"
+      echo "- web UI: https://${fqdn}:${port}"
+      echo '## Results'; echo '```'
+      [ -n "$results" ] && [ -f "$results" ] && cat "$results" || echo "(no results)"
+      echo '```'
+    } > "$bundle/results.md"
+  fi
 
   hok "report bundle: $bundle"
   echo "$bundle"

@@ -35,11 +35,15 @@ class FakeCluster(Cluster):
     def logs(self, suffix):
         return self._logs.get(suffix, "")
 
-    def exec_rc(self, suffix, argv):
-        return self._execs.get((suffix, tuple(argv)), 1)
+    def exec_out(self, suffix, argv):
+        v = self._execs.get((suffix, tuple(argv)), 1)
+        return v if isinstance(v, tuple) else (v, "")
 
     def file_nonempty(self, suffix, path):
         return (suffix, path) in self._files
+
+    def file_size(self, suffix, path):
+        return 128 if (suffix, path) in self._files else None
 
     def tsh_ssh(self, host_suffix, login):
         return self._tsh_ok
@@ -60,6 +64,48 @@ def _run(cluster, line):
 # ---- drift guard ------------------------------------------------------------
 def test_impls_match_registry():
     assert verb_impls_match_registry() == []
+
+
+# ---- evidence capture (the "show your work" proof) --------------------------
+def test_node_present_evidence_has_hostname():
+    c = FakeCluster(nodes=[_node("c1-agent-static", scope="/s")])
+    res = _run(c, "node_present agent-static")
+    assert res.status == "PASS"
+    assert any("c1-agent-static" in e for e in res.evidence)
+
+
+def test_log_contains_evidence_is_matched_line():
+    c = FakeCluster(logs={"agent-deny": "info: starting\nerror: unable to validate generic_oidc token\ninfo: exit"})
+    res = _run(c, "log_contains agent-deny unable to validate generic_oidc")
+    assert res.status == "PASS"
+    assert res.evidence == ["error: unable to validate generic_oidc token"]
+
+
+def test_bot_joined_evidence_is_audit_line():
+    line = "2026 audit bot.join bot_name:bk-bot method:bound_keypair success:true code:TJ001I"
+    c = FakeCluster(logs={"auth": f"noise\n{line}\nmore"})
+    res = _run(c, "bot_joined bk-bot bound_keypair")
+    assert res.status == "PASS" and "bot_name:bk-bot" in res.evidence[0]
+
+
+def test_output_file_evidence_has_size():
+    c = FakeCluster(files=[("tbot", "/out/id/identity")])
+    res = _run(c, "output_file tbot /out/id/identity")
+    assert res.status == "PASS" and any("128 bytes" in e for e in res.evidence)
+
+
+def test_identity_authorized_evidence_has_command():
+    argv = ("tctl", "--identity", "/out/id/identity", "--auth-server", "auth:3025", "tokens", "ls")
+    c = FakeCluster(execs={("tbot", argv): (0, "token1\ntoken2\n")})
+    res = _run(c, "identity_authorized tbot /out/id/identity")
+    assert res.status == "PASS"
+    assert any("tokens ls" in e and "exit 0" in e for e in res.evidence)
+
+
+def test_render_includes_evidence_sublines():
+    c = FakeCluster(nodes=[_node("c1-a")])
+    text, _ = render([_run(c, "node_present a")])
+    assert "↳" in text and "c1-a" in text
 
 
 # ---- node verbs -------------------------------------------------------------
