@@ -36,9 +36,19 @@ CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
   hlog "rendering cluster '$id' [$module] at $fqdn"
-  CLUSTER_ID="$id" FQDN="$fqdn" PORT="$INGRESS_PORT" IMAGE="$image" \
-    HARNESS_DOMAIN="$HARNESS_DOMAIN" LAB_DOMAIN="$LAB_DOMAIN" OUT="$out" \
-    bash "$MODULES_DIR/$module/render.sh" || die "module render failed"
+  if [ -f "$MODULES_DIR/$module/compose.yml.j2" ]; then
+    # jinja renderer (Python brain) — the standard path.
+    pybrain render "$module" --cluster-id "$id" --fqdn "$fqdn" --port "$INGRESS_PORT" \
+      --image "$image" --harness-domain "$HARNESS_DOMAIN" --lab-domain "$LAB_DOMAIN" \
+      --out "$out" || die "module render failed"
+  elif [ -f "$MODULES_DIR/$module/render.sh" ]; then
+    # legacy escape hatch for a module that still ships a bash render.sh.
+    CLUSTER_ID="$id" FQDN="$fqdn" PORT="$INGRESS_PORT" IMAGE="$image" \
+      HARNESS_DOMAIN="$HARNESS_DOMAIN" LAB_DOMAIN="$LAB_DOMAIN" OUT="$out" \
+      bash "$MODULES_DIR/$module/render.sh" || die "module render failed (legacy render.sh)"
+  else
+    die "module '$module' has neither compose.yml.j2 nor render.sh"
+  fi
   [ -f "$out/docker-compose.yml" ] || die "module did not produce $out/docker-compose.yml"
 
   hlog "starting containers"

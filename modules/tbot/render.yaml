@@ -1,0 +1,3 @@
+# Extra template context merged into the render for this module (see harness/render.py).
+auth_env:
+  BOT_TOKEN: harness-tbot-secret

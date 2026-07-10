@@ -1,0 +1,8 @@
+# Extra template context merged into the render for this module (see harness/render.py).
+auth_env:
+  BOT_TOKEN: harness-tokmgr-secret       # token-manager bot join secret (per-cluster)
+  TELEPORT_UNSTABLE_SCOPES: "yes"
+oidc_image: teleport-harness-oidc:latest
+agent_sub: test-agent                     # subject the positive agents request / rules match
+# positive (discovery/static/scoped-*) + negative (deny/scoped-deny) agents
+agents: [discovery, static, scoped-discovery, scoped-static, deny, scoped-deny]

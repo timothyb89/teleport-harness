@@ -26,5 +26,6 @@ if ! tctl --config "$CONFIG" bots ls 2>/dev/null | grep -qw test-bot; then
   tctl --config "$CONFIG" bots add test-bot --roles=tbot-tester --token="$BOT_TOKEN" 2>&1 | sed 's/^/[auth] /'
 fi
 
+touch /tmp/bootstrap-done   # signal the healthcheck: dependent bots may now join
 echo "[auth] ready"
 wait "$TPID"

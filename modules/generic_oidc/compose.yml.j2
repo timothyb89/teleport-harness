@@ -1,0 +1,77 @@
+{% extends "base.compose.yml.j2" %}
+{% set audience = fqdn ~ '/generic-oidc' %}
+{# generic_oidc: agents join by presenting OIDC JWTs minted by a trivial in-cluster OIDC
+   server; the agent join tokens are created THROUGH a token-manager bot identity (not
+   cluster admin). Positive + negative (must-be-denied) agents, unscoped + scoped. #}
+{% block services %}
+
+  oidc:
+    image: {{ oidc_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-oidc
+    command:
+      - -issuer=https://oidc:8443
+      - -addr=:8443
+      - -audience={{ audience }}
+      - -cluster-name={{ fqdn }}
+      - -extra-sans=oidc,localhost,127.0.0.1
+    volumes:
+      - oidc-data:/data
+    networks: [internal]
+
+  tbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tbot
+    command: [tbot, start, -c, /etc/teleport/tbot.yaml, "--token={{ auth_env.BOT_TOKEN }}", "--join-method=token"]
+    volumes:
+      - {{ out }}/config/tbot.yaml:/etc/teleport/tbot.yaml:ro
+      - bot-data:/var/lib/tbot
+      - idents:/idents
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+
+  token-manager:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-token-manager
+    command: ["/scripts/token-manager.sh"]
+    restart: "no"
+    environment:
+      ISSUER: https://oidc:8443
+      FETCH_URL: https://oidc:8443
+      AUDIENCE: {{ audience }}
+      AGENT_SUB: {{ agent_sub }}
+      TELEPORT_UNSTABLE_SCOPES: "yes"
+    volumes:
+      - idents:/idents:ro
+      - {{ module_dir }}/scripts:/scripts:ro
+      - {{ module_dir }}/render-resources.sh:/render-resources.sh:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+      oidc: {condition: service_started}
+      tbot: {condition: service_started}
+{% for name in agents %}
+
+  agent-{{ name }}:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-agent-{{ name }}
+    command: ["teleport", "start", "--config", "/etc/teleport/teleport.yaml"]
+    environment:
+      TELEPORT_UNSTABLE_SCOPES: "yes"
+    volumes:
+      - {{ out }}/config/agent-{{ name }}.yaml:/etc/teleport/teleport.yaml:ro
+    networks: [internal]
+    depends_on:
+      token-manager: {condition: service_completed_successfully}
+      oidc: {condition: service_started}
+{% endfor %}
+{% endblock %}
+{% block volumes %}
+  bot-data:
+  idents:
+  oidc-data:
+{% endblock %}

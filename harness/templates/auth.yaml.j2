@@ -1,3 +1,5 @@
+{# Shared teleport auth+proxy config (was byte-identical auth.yaml.tmpl in every
+   module). A module can override by providing its own config/auth.yaml.j2. #}
 version: v3
 teleport:
   nodename: auth
@@ -6,13 +8,13 @@ teleport:
   log: {output: stderr, severity: INFO}
 auth_service:
   enabled: "yes"
-  cluster_name: ${FQDN}
+  cluster_name: {{ fqdn }}
   listen_addr: 0.0.0.0:3025
   proxy_listener_mode: multiplex
 proxy_service:
   enabled: "yes"
-  web_listen_addr: 0.0.0.0:${PORT}
-  public_addr: ["${FQDN}:${PORT}"]
+  web_listen_addr: 0.0.0.0:{{ port }}
+  public_addr: ["{{ fqdn }}:{{ port }}"]
   https_keypairs:
     - key_file: /certs/wildcard.key
       cert_file: /certs/wildcard.crt

@@ -1,0 +1,29 @@
+{% extends "base.compose.yml.j2" %}
+{# tbot (Machine ID): a bot joins via the token method and writes an identity output;
+   a negative bot with a bad token must be denied and produce nothing. #}
+{% block services %}
+
+  # positive: joins with the real token, writes an identity output to /out/id.
+  tbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tbot
+    command: [tbot, start, -c, /etc/tbot.yaml, "--token={{ auth_env.BOT_TOKEN }}", "--join-method=token"]
+    volumes:
+      - {{ out }}/config/tbot.yaml:/etc/tbot.yaml:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+
+  # negative: wrong token -> must be denied, produces no identity.
+  tbot-deny:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tbot-deny
+    command: [tbot, start, -c, /etc/tbot.yaml, "--token=wrong-secret-nope", "--join-method=token"]
+    volumes:
+      - {{ out }}/config/tbot.yaml:/etc/tbot.yaml:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+{% endblock %}

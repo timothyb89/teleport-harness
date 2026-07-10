@@ -137,6 +137,28 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return EXIT_OK if passed else EXIT_ERR
 
 
+def cmd_render(args: argparse.Namespace) -> int:
+    """Render a module's configs + docker-compose.yml into --out (replaces render.sh)."""
+    from .render import render_module
+
+    mdir = _modules_dir(args.modules_dir) / args.module
+    if not (mdir / "compose.yml.j2").is_file():
+        print(f"error: {args.module} has no compose.yml.j2", file=sys.stderr)
+        return EXIT_ERR
+    ctx = {
+        "cluster_id": args.cluster_id,
+        "fqdn": args.fqdn,
+        "port": args.port,
+        "image": args.image,
+        "harness_domain": args.harness_domain,
+        "lab_domain": args.lab_domain,
+        "out": args.out,
+    }
+    compose = render_module(mdir, ctx, Path(args.out))
+    print(f"[render] wrote {compose}", file=sys.stderr)
+    return EXIT_OK
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     m = load_module(_modules_dir(args.modules_dir) / args.module)
     res = gate(m, _csv(args.features), args.version)
@@ -170,6 +192,17 @@ def main(argv: list[str] | None = None) -> int:
     sf.add_argument("--state-dir", help="state/<id>/ (for meta needed by tsh_ssh)")
     sf.add_argument("--json-out", help="also write a JSON report to this path")
     sf.set_defaults(fn=cmd_verify)
+
+    sr = sub.add_parser("render", help="render a module's compose + configs (replaces render.sh)")
+    sr.add_argument("module")
+    sr.add_argument("--cluster-id", required=True)
+    sr.add_argument("--fqdn", required=True)
+    sr.add_argument("--port", required=True)
+    sr.add_argument("--image", required=True)
+    sr.add_argument("--harness-domain", default="")
+    sr.add_argument("--lab-domain", default="")
+    sr.add_argument("--out", required=True)
+    sr.set_defaults(fn=cmd_render)
 
     sg = sub.add_parser("gate", help="feature/version gate; exit 3 == skip")
     sg.add_argument("module")

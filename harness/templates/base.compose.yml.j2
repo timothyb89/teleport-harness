@@ -1,0 +1,54 @@
+{# Shared per-cluster compose base. Modules `{% extends "base.compose.yml.j2" %}`
+   and fill {% block services %} (their bots/agents) and {% block volumes %} (extras).
+   The auth+proxy service, the shared networks, and the standard volumes live here so a
+   join-method module is ~just its extra services + config + checks. Context comes from
+   the brain (cluster_id/fqdn/port/image/out/module_dir) merged with the module's
+   render.yaml (e.g. auth_env). #}
+name: teleport-harness-{{ cluster_id }}
+
+services:
+  auth:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-auth
+    entrypoint: ["/scripts/auth-entrypoint.sh"]
+    {% if auth_env is defined and auth_env %}
+    environment:
+      {% for k, v in auth_env.items() %}
+      {{ k }}: "{{ v }}"
+      {% endfor %}
+    {% endif %}
+    volumes:
+      - harness-certs:/certs:ro
+      - {{ out }}/config/auth.yaml:/etc/teleport/auth.yaml:ro
+      - {{ module_dir }}/bootstrap:/bootstrap:ro
+      - {{ module_dir }}/scripts:/scripts:ro
+      - auth-data:/var/lib/teleport
+    networks:
+      internal:
+        aliases: ["{{ fqdn }}"]
+      teleport-harness:
+        aliases: ["{{ fqdn }}"]
+    # Healthy only once teleport answers /healthz AND the entrypoint has finished
+    # bootstrapping (role/token/bot). Dependent bots/agents `depends_on: service_healthy`,
+    # so this closes the race where a bot tried to join before its user existed.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/healthz && test -f /tmp/bootstrap-done"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+{% block services %}{% endblock %}
+
+networks:
+  internal:
+  teleport-harness:
+    external: true
+    name: teleport-harness
+
+volumes:
+  auth-data:
+{% block volumes %}{% endblock %}
+  harness-certs:
+    external: true
+    name: harness-certs

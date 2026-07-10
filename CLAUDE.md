@@ -29,7 +29,8 @@ v18 `generic_oidc` backport.
 - Shared external docker network `teleport-harness` + volumes `harness-certs`/`harness-acme`.
 
 ### Per-cluster stack (`teleport-harness-<id>`, disposable)
-Rendered into `state/<id>/` by a module's `render.sh`, then `docker compose up`. The
+Rendered into `state/<id>/` by the brain from a module's `compose.yml.j2` (jinja), then
+`docker compose up`. The
 auth+proxy container is `${id}-auth`, listens on `${PORT}`, mounts the wildcard cert,
 joins `teleport-harness` with network alias `<id>.lab.<domain>` (east-west agents dial the
 FQDN so TLS matches; the ingress reaches it by container name), `public_addr = <fqdn>:<port>`.
@@ -41,25 +42,33 @@ clone's prebuilt webassets. Keyed by `git rev-parse HEAD` → `.cache/bin/<sha>-
 and image `teleport-harness:<sha>-<variant>`. Repeat builds are instant.
 
 ### Python brain (`harness/`, run via `uv`)
-The data + decision layer — YAML parsing, feature/version gating, and `checks:`
-validation — lives in the typed `harness/` Python package (pydantic models, real
-YAML parser), NOT in grep/sed/awk. The shell layer shells out to it via the
-`pybrain` helper (`lib/common.sh` → `uv run --project $HARNESS_ROOT harness …`).
+The data + decision layer — YAML parsing, feature/version gating, `checks:` validation,
+the verifier, AND compose rendering — lives in the typed `harness/` Python package (pydantic
+models, real YAML parser, jinja2, a docker `Cluster` seam), NOT in grep/sed/awk/heredocs. The
+shell shells out via the `pybrain` helper (`lib/common.sh` → `uv run --project $HARNESS_ROOT harness …`).
 Subcommands: `validate [module]` (schema + verb/arity check — used by `doctor`),
 `gate <module> [--features] [--version]` (exit 3 == skip), `meta <module> <field>`,
-`checks <module>` (emit validated `verb args` lines). Models + gating are unit-tested
-(`tests/`, `uv run --extra dev pytest`) — the harness's minimum correctness bar.
-A bad `module.yaml` (typo'd verb, wrong arity, unknown key, bad version) now fails
-fast with a clear message instead of deep in the verify retry loop. Docker/nginx/
-cert/build **plumbing stays in `lib/*.sh`** — the brain owns decisions, not orchestration.
+`checks <module>` (validated `verb args` lines), `verify <module> --cluster-id <id>` (run checks,
+structured JSON), `render <module> --out <dir> …` (jinja compose + configs). All unit-tested
+(`tests/`, `uv run --extra dev pytest`) — the harness's correctness bar. A bad `module.yaml`
+(typo'd verb, wrong arity, unknown key, bad version) fails fast with a clear message instead of
+deep in the verify retry loop. Docker/nginx/cert/build **plumbing stays in `lib/*.sh`** — the
+brain owns decisions + rendering, the shell owns orchestration.
 
 ### Module contract (`modules/<name>/`)
 - `module.yaml` — gating (`provides_feature`, `requires_features`, `min_version`)
   **plus** the verification spec: a `checks: |` block of `<assert-verb> <args...>` lines
   (the source of truth). `#` comment lines allowed. Parsed + validated by the Python
   brain (`harness/models.py`); run `cluster validate <name>` to check it.
-- `render.sh` — invoked with `CLUSTER_ID FQDN PORT IMAGE HARNESS_DOMAIN LAB_DOMAIN OUT`;
-  must emit a self-contained `$OUT/docker-compose.yml` (+ configs) per the per-cluster rules above.
+- `compose.yml.j2` — jinja template that `{% extends "base.compose.yml.j2" %}` (the shared
+  auth+proxy service, networks, volumes) and fills `{% block services %}` (its bots/agents) +
+  `{% block volumes %}` (extras). Rendered by the brain (`harness/render.py`) into
+  `$OUT/docker-compose.yml`. Context = cluster vars (`cluster_id`/`fqdn`/`port`/`image`/`out`/
+  `module_dir`) merged with the module's `render.yaml` (e.g. `auth_env`, agent lists).
+- `config/*.j2` — teleport/tbot configs (jinja; shared `auth.yaml` comes from the base unless a
+  module ships its own `config/auth.yaml.j2`). `render.yaml` *(optional)* — extra template context.
+  `prebuild.sh` *(optional)* — imperative pre-step (e.g. build a side image), run with the context
+  as `UPPER_CASE` env. (A legacy bash `render.sh` still works as a fallback if no `compose.yml.j2`.)
 - `checks.py` *(optional escape hatch)* — Python: define `def checks(cluster, nodes) ->
   list[CheckResult]` for checks not expressible as a declarative verb. Gets the same
   `Cluster` seam (`cluster.exec_rc/logs/file_nonempty/get_nodes`) the built-in asserts use,
@@ -85,8 +94,9 @@ Node/container args reference the nodename suffix after `<id>-`.
 
 Modules today: `generic_oidc` (agents join via OIDC JWTs), `tbot` (Machine ID bot joins +
 identity output, token method), `bound_keypair` (bot joins via bound_keypair with a preset
-registration secret). `tbot`/`bound_keypair` are near-identical except join method + bootstrap —
-a good signal that extracting a shared base (Phase 4) would pay off once there's a 4th.
+registration secret). `tbot`/`bound_keypair` differ only in join method + bootstrap + config —
+both are ~30-line `compose.yml.j2`s over the shared `base.compose.yml.j2`, so a 4th join-method
+module is cheap to add.
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build --repo` · `up <module> --repo [--id]` · `run-plan <module> --repo [--features a,b] [--version vNN] [--id]`
@@ -124,34 +134,40 @@ if the cluster enforces it, an MFA device).
 - Scoped tokens need `TELEPORT_UNSTABLE_SCOPES=yes` on auth + tctl. An **unscoped** bot can create
   scoped tokens if its **classic** role grants `scoped_token` (the scoped authorizer wraps the
   unscoped checker) — no scoped_role_assignment needed.
+- **Bootstrap race**: the auth healthcheck requires BOTH `/healthz` AND `/tmp/bootstrap-done`
+  (touched by each `auth-entrypoint.sh` after creating its role/token/bot). Without it, a bot
+  `depends_on: auth service_healthy` would start the instant teleport answers `/healthz` — before
+  its user exists — and `tbot start` exits 1 on a failed initial join (no retry). Every module's
+  auth-entrypoint MUST `touch /tmp/bootstrap-done` after bootstrap or the cluster never goes healthy.
 
 ## Adding a module
-1. `modules/<name>/` with `module.yaml` (gating + `checks:`), `render.sh` (emit `$OUT/docker-compose.yml`),
-   and optionally `checks.py` for custom asserts. To add a new declarative verb: add an impl to
-   `harness/verify.py` `IMPLS` AND a `VerbSpec` to `harness/checks.py` (unit-test it with a `FakeCluster`).
+1. `modules/<name>/` with `module.yaml` (gating + `checks:`), `compose.yml.j2` (extends
+   `base.compose.yml.j2`), `config/*.j2`, a `scripts/auth-entrypoint.sh` (must `touch
+   /tmp/bootstrap-done` after bootstrap), and optionally `render.yaml`/`prebuild.sh`/`checks.py`.
+   For a bot-join module this is ~just the join config + `checks:` — copy `modules/tbot/`.
+   To add a declarative verb: an impl in `harness/verify.py` `IMPLS` AND a `VerbSpec` in
+   `harness/checks.py` (unit-test with a `FakeCluster`).
 2. `cluster validate <name>` — catches typo'd verbs / bad arity / schema errors before you spin anything up.
 3. Follow the per-cluster rules (auth named `${id}-auth`, wildcard cert, FQDN alias, all-ports=PORT).
 4. `cluster up <name> --repo <clone>` to iterate; `cluster run-plan <name> ...` to gate+verify+report.
-5. Copy `modules/generic_oidc/` as the reference implementation.
+5. Copy `modules/tbot/` (simplest) or `modules/generic_oidc/` (agents + side services) as a template.
 
 ## Roadmap (not yet built)
 
 ### Architecture / DX
-- **Python brain — DONE (phases 1–3)**: YAML parsing, gating, `checks:` validation, AND the
-  verifier all moved from grep/sed/awk/`lib/assert.sh` into the typed `harness/` package
-  (pydantic + real YAML + a docker `Cluster` seam + pytest), called by the shell via `pybrain`.
-  Asserts are structured (`{status,verb,args,msg}`) → JSON report; `lib/verify.sh` is a 6-line
-  shim; all three modules are fully declarative (bash `checks.sh` retired for a Python `checks.py`
-  escape hatch). Remaining phase of the migration:
-  - **Phase 4 — jinja2 templating + shared compose base**: replace the per-module `envsubst` +
-    heredoc `render.sh` (which is why the three modules duplicate ~90% of their compose) with a
-    jinja2 base template rendered by the brain. This subsumes "extract a shared base" below —
-    a new join-method module becomes ~just its join config + `checks:`.
-- **Extract a shared base** (folded into Phase 4 above): `generic_oidc`, `tbot`, and `bound_keypair`
-  duplicate the same auth+proxy service, "bootstrap a bot + token" step, and negative-bot scaffold.
-  We now have the 3 examples needed to factor it correctly; do this via the jinja2 base before adding a 4th module.
+- **Python brain — DONE (phases 1–4)**: YAML parsing, gating, `checks:` validation, the verifier,
+  AND compose rendering all moved from grep/sed/awk/`lib/assert.sh`/heredoc-`render.sh` into the
+  typed `harness/` package (pydantic + real YAML + jinja2 + a docker `Cluster` seam + pytest),
+  called by the shell via `pybrain`. Asserts are structured (`{status,verb,args,msg}`) → JSON
+  report; `lib/verify.sh` is a 6-line shim; all three modules are fully declarative (bash
+  `checks.sh`/`render.sh` retired). The shared `base.compose.yml.j2` emits the auth+proxy service +
+  networks + volumes, so a bot-join module (`modules/tbot/`) is ~just its `compose.yml.j2` services
+  block + config + `checks:`. **Extract-a-shared-base is DONE** (was a separate roadmap item).
+  Verified end-to-end on the v18 `generic-oidc-impl` branch: all 3 modules render byte-identical to
+  the old `render.sh` output and pass live.
 - **Multi-module plan files** (`plans/*.yaml`): currently a "plan" == a single module. A plan
-  file would list several modules (with per-module gates) run + reported together.
+  file would list several modules (with per-module gates) run + reported together. **This is now
+  the top DX item** — the brain (pydantic models) makes a `plans/*.yaml` schema straightforward.
 
 ### Coverage (new modules / deeper checks)
 - **More join methods**: `kubernetes` (in-cluster + the OIDC path that shares the caching

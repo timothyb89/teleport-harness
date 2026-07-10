@@ -1,0 +1,29 @@
+{% extends "base.compose.yml.j2" %}
+{# bound_keypair: a bot registers/binds a keypair using a preset registration secret,
+   joins, and writes an identity; a bot with a wrong registration secret must be denied. #}
+{% block services %}
+
+  # positive: joins via bound_keypair (correct registration secret), writes identity.
+  bkbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-bkbot
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    volumes:
+      - {{ out }}/config/tbot.yaml:/etc/tbot.yaml:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+
+  # negative: wrong registration secret -> registration denied, no identity.
+  bkbot-deny:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-bkbot-deny
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    volumes:
+      - {{ out }}/config/tbot-deny.yaml:/etc/tbot.yaml:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+{% endblock %}

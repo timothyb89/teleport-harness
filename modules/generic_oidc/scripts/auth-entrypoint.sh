@@ -54,5 +54,6 @@ else
     | sed 's/^/[auth][bootstrap] /'
 fi
 
+touch /tmp/bootstrap-done   # signal the healthcheck: dependent bots/agents may now join
 echo "[auth] bootstrap complete; teleport running (pid $TPID)"
 wait "$TPID"

@@ -75,6 +75,7 @@ class Module(BaseModel):
     path: Path | None = Field(default=None, exclude=True)
     has_checks_sh: bool = Field(default=False, exclude=True)
     has_render_sh: bool = Field(default=False, exclude=True)
+    has_compose_template: bool = Field(default=False, exclude=True)
 
     @field_validator("min_version")
     @classmethod
@@ -89,8 +90,8 @@ class Module(BaseModel):
         for chk in self.checks:
             for msg in chk.validate_against_registry():
                 problems.append(f"checks[{chk.lineno}] {msg}: '{chk.raw}'")
-        if not self.has_render_sh:
-            problems.append("missing render.sh (required by the module contract)")
+        if not (self.has_compose_template or self.has_render_sh):
+            problems.append("missing compose.yml.j2 (or a legacy render.sh)")
         return problems
 
 
@@ -119,6 +120,7 @@ def load_module(module_dir: Path) -> Module:
     mod.path = module_dir
     mod.has_checks_sh = (module_dir / "checks.sh").is_file()
     mod.has_render_sh = (module_dir / "render.sh").is_file()
+    mod.has_compose_template = (module_dir / "compose.yml.j2").is_file()
     # keep the declared name aligned with the directory name
     if mod.name != module_dir.name:
         raise ValueError(
