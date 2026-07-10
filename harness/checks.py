@@ -27,15 +27,22 @@ class VerbSpec:
         return self.max_args is None or n <= self.max_args
 
 
-# Keep in sync with lib/assert.sh. arity = number of args AFTER the verb.
+# The declarative vocabulary. arity = number of args AFTER the verb. Every verb here
+# must have an impl in harness/verify.py IMPLS (a test enforces both directions).
 _SPECS: list[VerbSpec] = [
     VerbSpec("node_present", 1, 1, "node_present <suffix>"),
     VerbSpec("node_absent", 1, 1, "node_absent <suffix>"),
     VerbSpec("node_scope", 2, 2, "node_scope <suffix> <scope>"),
+    VerbSpec("node_count", 1, 1, "node_count <n>"),
+    VerbSpec("scoped_node_count", 2, 2, "scoped_node_count <scope> <n>"),
     VerbSpec("log_contains", 2, None, "log_contains <container-suffix> <regex...>"),
     VerbSpec("bot_joined", 1, 2, "bot_joined <bot-name> [join-method]"),
     VerbSpec("output_file", 2, 2, "output_file <container-suffix> <path>"),
     VerbSpec("no_output_file", 2, 2, "no_output_file <container-suffix> <path>"),
+    VerbSpec(
+        "identity_authorized", 2, 3,
+        "identity_authorized <container-suffix> <identity-path> [auth-server]",
+    ),
     VerbSpec("tsh_ssh", 1, 2, "tsh_ssh <suffix> [login]"),
 ]
 

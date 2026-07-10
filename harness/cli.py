@@ -11,6 +11,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -104,6 +105,38 @@ def cmd_checks(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Run a module's checks against a live cluster; print the same
+    `PASS/FAIL/SKIP` + `RESULT:` text lib/verify.sh used, optionally write JSON.
+    Exit 1 on any FAIL (so plan.sh's retry loop keeps working)."""
+    from .cluster import DockerCluster
+    from .verify import render, verify
+
+    mdir = _modules_dir(args.modules_dir) / args.module
+    m = load_module(mdir)
+    problems = m.validate_semantics()
+    if problems:
+        for p in problems:
+            print(f"FAIL {m.name}: {p}", file=sys.stderr)
+        return EXIT_ERR
+
+    state_dir = Path(args.state_dir) if args.state_dir else None
+    cluster = DockerCluster(args.cluster_id, state_dir=state_dir)
+    results = verify(cluster, m.checks, module_dir=mdir)
+    text, passed = render(results)
+    print(text)
+
+    if args.json_out:
+        payload = {
+            "module": m.name,
+            "cluster_id": args.cluster_id,
+            "passed": passed,
+            "results": [r.as_dict() for r in results],
+        }
+        Path(args.json_out).write_text(json.dumps(payload, indent=2) + "\n")
+    return EXIT_OK if passed else EXIT_ERR
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     m = load_module(_modules_dir(args.modules_dir) / args.module)
     res = gate(m, _csv(args.features), args.version)
@@ -130,6 +163,13 @@ def main(argv: list[str] | None = None) -> int:
     sc = sub.add_parser("checks", help="emit validated `verb args` check lines")
     sc.add_argument("module")
     sc.set_defaults(fn=cmd_checks)
+
+    sf = sub.add_parser("verify", help="run a module's checks against a live cluster")
+    sf.add_argument("module")
+    sf.add_argument("--cluster-id", required=True)
+    sf.add_argument("--state-dir", help="state/<id>/ (for meta needed by tsh_ssh)")
+    sf.add_argument("--json-out", help="also write a JSON report to this path")
+    sf.set_defaults(fn=cmd_verify)
 
     sg = sub.add_parser("gate", help="feature/version gate; exit 3 == skip")
     sg.add_argument("module")

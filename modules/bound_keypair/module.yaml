@@ -12,8 +12,10 @@ min_version: v17
 
 checks: |
   # the bot joined specifically via bound_keypair, and wrote its identity
-  bot_joined     bk-bot bound_keypair
-  output_file    bkbot /out/id/identity
+  bot_joined          bk-bot bound_keypair
+  output_file         bkbot /out/id/identity
+  # the identity authenticates + is authorized (lists tokens via tctl --identity)
+  identity_authorized bkbot /out/id/identity
   # wrong registration secret -> denied, nothing produced
-  log_contains   bkbot-deny denied|not found|failed to (join|connect)|authorization|invalid|unauthorized|registration|secret
-  no_output_file bkbot-deny /out/id/identity
+  log_contains        bkbot-deny denied|not found|failed to (join|connect)|authorization|invalid|unauthorized|registration|secret
+  no_output_file      bkbot-deny /out/id/identity

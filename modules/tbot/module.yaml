@@ -10,11 +10,13 @@ provides_feature: machine_id
 requires_features: []
 min_version: v14
 
-# Verification (source of truth). Custom identity-usability check lives in checks.sh.
+# Verification — the source of truth, all declarative (verified by harness/verify.py).
 checks: |
   # the bot joined and wrote its identity output
-  bot_joined     test-bot
-  output_file    tbot /out/id/identity
+  bot_joined          test-bot
+  output_file         tbot /out/id/identity
+  # the identity actually authenticates AND is authorized (lists tokens via tctl --identity)
+  identity_authorized tbot /out/id/identity
   # the bad-token bot was denied and produced nothing
-  log_contains   tbot-deny denied|not found|failed to (join|connect)|authorization|invalid|unauthorized
-  no_output_file tbot-deny /out/id/identity
+  log_contains        tbot-deny denied|not found|failed to (join|connect)|authorization|invalid|unauthorized
+  no_output_file      tbot-deny /out/id/identity

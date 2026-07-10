@@ -13,10 +13,9 @@ provides_feature: generic_oidc
 requires_features: [generic_oidc]
 min_version: v18                # generic_oidc lands in v18 (backport target)
 
-# Verification cases — the SOURCE OF TRUTH, executed by lib/verify.sh through the
-# shared assertion primitives in lib/assert.sh. Each line is "<assert-verb> <args...>";
-# args reference the nodename suffix after "<id>-". Anything not expressible here goes
-# in checks.sh (a sourced bash escape hatch that shares the same asserts + node data).
+# Verification cases — the SOURCE OF TRUTH, run by the Python verifier (harness/verify.py).
+# Each line is "<verb> <args...>"; args reference the nodename suffix after "<id>-".
+# Anything not expressible here goes in an optional Python checks.py escape hatch.
 checks: |
   # positive: agents must join (discovery + static_jwks, unscoped + scoped)
   node_present agent-discovery
@@ -31,3 +30,9 @@ checks: |
   node_absent  agent-scoped-deny
   log_contains agent-deny unable to (join via|validate) generic_oidc|denied
   log_contains agent-scoped-deny unable to (join via|validate) generic_oidc|denied
+  # exact totals: the four expected agents joined (nothing extra), two of them scoped
+  node_count         4
+  scoped_node_count  /genericoidc-test 2
+  # the agent tokens were created THROUGH the token-manager bot identity, not cluster
+  # admin (the audit event records the impersonator). SKIPs until the line appears.
+  log_contains       auth join_token\.create.*impersonator:bot-token-manager

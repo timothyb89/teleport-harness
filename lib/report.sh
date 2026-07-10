@@ -19,6 +19,8 @@ cluster_report() {
   cp "$out/meta.env" "$bundle/meta.env" 2>/dev/null || true
   cp "$out/docker-compose.yml" "$bundle/rendered/" 2>/dev/null || true
   cp -R "$out/config" "$bundle/rendered/" 2>/dev/null || true
+  # structured verification results (written by the Python verifier)
+  cp "$out/results.json" "$bundle/results.json" 2>/dev/null || true
 
   # per-service logs
   local svc
@@ -41,6 +43,7 @@ cluster_report() {
     echo '```'
     echo
     echo "## Inspect"
+    echo "- structured results: results.json"
     echo "- live cluster: \`cluster logs ${id} [service]\`, or open the web UI above"
     echo "- rendered compose/config: rendered/"
     echo "- per-service logs: logs/"

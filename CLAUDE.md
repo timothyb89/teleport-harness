@@ -60,29 +60,33 @@ cert/build **plumbing stays in `lib/*.sh`** — the brain owns decisions, not or
   brain (`harness/models.py`); run `cluster validate <name>` to check it.
 - `render.sh` — invoked with `CLUSTER_ID FQDN PORT IMAGE HARNESS_DOMAIN LAB_DOMAIN OUT`;
   must emit a self-contained `$OUT/docker-compose.yml` (+ configs) per the per-cluster rules above.
-- `checks.sh` *(optional escape hatch)* — SOURCED by the verifier; shares `$ASSERT_ID`,
-  the cached `$_assert_nodes` JSON, `$_assert_fail`, `_al`, and every `assert_*`. For checks
-  not expressible as a declarative verb. No shebang, no `exit`.
+- `checks.py` *(optional escape hatch)* — Python: define `def checks(cluster, nodes) ->
+  list[CheckResult]` for checks not expressible as a declarative verb. Gets the same
+  `Cluster` seam (`cluster.exec_rc/logs/file_nonempty/get_nodes`) the built-in asserts use,
+  so it's consistent + testable. (The old bash `checks.sh` is gone — all three modules are
+  now fully declarative; add a verb to `harness/verify.py` + `harness/checks.py` before
+  reaching for the escape hatch.)
 - Plus whatever the module needs (config templates, scripts, extra service images, resource generators).
 
-### Verification (`lib/verify.sh` + `lib/assert.sh`)
-`run-plan` gets the module's declarative `checks:` from the Python brain (parsed + verb/arity-
-validated up front — an invalid module FAILs immediately), dispatches each line to its shared
-**assert primitive**, then sources `checks.sh` if present, then prints one `RESULT: PASS|FAIL`.
-The declarative vocabulary is the registry in `harness/checks.py` (mirrors `lib/assert.sh`);
-adding a verb means adding both an `assert_<name>` in `lib/assert.sh` AND a `VerbSpec` in
-`harness/checks.py`. A module's `checks.sh` escape hatch stays free-form bash (runs after the
-declarative block, so it can define/call any `assert_*` without registry entry).
-Current primitives: `node_present`/`node_absent`/`node_scope` (jq over `tctl get nodes`),
-`log_contains <container-suffix> <regex…>`, `bot_joined <name> [method]` (bot.join audit event,
-optionally checking the join method), `output_file`/`no_output_file <container-suffix> <path>`
-(tbot output artifacts via `docker exec`), `tsh_ssh <suffix> [login]`. Node args reference the
-nodename suffix after `<id>-`. Add primitives to `lib/assert.sh` as new areas need them.
+### Verification (`harness/verify.py`, `harness/cluster.py`; `lib/verify.sh` is a 6-line shim)
+`run-plan` calls `harness verify <module> --cluster-id <id>`: the brain parses + verb/arity-
+validates the module (invalid → immediate FAIL), then runs each check against the live cluster
+and prints `  PASS|FAIL|SKIP <msg>` lines + one `RESULT: PASS|FAIL` (only FAIL fails the run;
+SKIP is a neutral not-yet-satisfied soft check), exiting non-zero on FAIL. It also writes a
+structured `state/<id>/results.json` (`{status,verb,args,msg}` per check) that `report` bundles.
+All docker interaction goes through the `Cluster` seam (`harness/cluster.py`) so asserts are
+unit-testable with a `FakeCluster` (they never were in bash). Adding a verb = an impl in
+`harness/verify.py` `IMPLS` + a `VerbSpec` in `harness/checks.py` (a test enforces they match).
+Current verbs: `node_present`/`node_absent`/`node_scope`/`node_count`/`scoped_node_count`,
+`log_contains <suffix> <regex…>` (case-insensitive; SKIP on no match), `bot_joined <name>
+[method]`, `output_file`/`no_output_file <suffix> <path>`, `identity_authorized <suffix>
+<identity-path> [auth-server]` (runs `tctl --identity … tokens ls`), `tsh_ssh <suffix> [login]`.
+Node/container args reference the nodename suffix after `<id>-`.
 
 Modules today: `generic_oidc` (agents join via OIDC JWTs), `tbot` (Machine ID bot joins +
 identity output, token method), `bound_keypair` (bot joins via bound_keypair with a preset
 registration secret). `tbot`/`bound_keypair` are near-identical except join method + bootstrap —
-a good signal that extracting a shared base (roadmap) would pay off once there's a 4th.
+a good signal that extracting a shared base (Phase 4) would pay off once there's a 4th.
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build --repo` · `up <module> --repo [--id]` · `run-plan <module> --repo [--features a,b] [--version vNN] [--id]`
@@ -123,8 +127,8 @@ if the cluster enforces it, an MFA device).
 
 ## Adding a module
 1. `modules/<name>/` with `module.yaml` (gating + `checks:`), `render.sh` (emit `$OUT/docker-compose.yml`),
-   and optionally `checks.sh` for custom asserts. Add new `assert_*` primitives to `lib/assert.sh` if needed
-   (and a matching `VerbSpec` in `harness/checks.py` so `validate` knows the new verb).
+   and optionally `checks.py` for custom asserts. To add a new declarative verb: add an impl to
+   `harness/verify.py` `IMPLS` AND a `VerbSpec` to `harness/checks.py` (unit-test it with a `FakeCluster`).
 2. `cluster validate <name>` — catches typo'd verbs / bad arity / schema errors before you spin anything up.
 3. Follow the per-cluster rules (auth named `${id}-auth`, wildcard cert, FQDN alias, all-ports=PORT).
 4. `cluster up <name> --repo <clone>` to iterate; `cluster run-plan <name> ...` to gate+verify+report.
@@ -133,13 +137,12 @@ if the cluster enforces it, an MFA device).
 ## Roadmap (not yet built)
 
 ### Architecture / DX
-- **Python brain — DONE (phases 1–2)**: YAML parsing, gating, and `checks:` validation moved
-  from grep/sed/awk into the typed `harness/` package (pydantic + real YAML + pytest), called
-  by the shell via `pybrain`. Remaining phases of the same migration:
-  - **Phase 3 — port the verifier + assert library to Python**: `assert_*` become typed,
-    registered functions returning structured results (list of `{verb,args,status,msg}`),
-    enabling a real JSON report alongside the markdown one and unit-testable asserts. `lib/verify.sh`
-    shrinks to "collect containers + hand off"; `harness/checks.py` becomes the single source of truth.
+- **Python brain — DONE (phases 1–3)**: YAML parsing, gating, `checks:` validation, AND the
+  verifier all moved from grep/sed/awk/`lib/assert.sh` into the typed `harness/` package
+  (pydantic + real YAML + a docker `Cluster` seam + pytest), called by the shell via `pybrain`.
+  Asserts are structured (`{status,verb,args,msg}`) → JSON report; `lib/verify.sh` is a 6-line
+  shim; all three modules are fully declarative (bash `checks.sh` retired for a Python `checks.py`
+  escape hatch). Remaining phase of the migration:
   - **Phase 4 — jinja2 templating + shared compose base**: replace the per-module `envsubst` +
     heredoc `render.sh` (which is why the three modules duplicate ~90% of their compose) with a
     jinja2 base template rendered by the brain. This subsumes "extract a shared base" below —
