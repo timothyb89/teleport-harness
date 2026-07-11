@@ -1,0 +1,14 @@
+# Links the scoped discovery bot to the scoped role within /genericoidc-test, so the
+# joined identity actually carries permissions (and scope pins).
+kind: scoped_role_assignment
+sub_kind: dynamic
+version: v1
+metadata:
+  name: gobot-scoped-disc-assignment
+scope: /genericoidc-test
+spec:
+  # scope-qualified bot name (<scope>::<bot-name>).
+  bot: /genericoidc-test::gobot-scoped-disc
+  assignments:
+    - role: generic-oidc-scoped-role
+      scope: /genericoidc-test

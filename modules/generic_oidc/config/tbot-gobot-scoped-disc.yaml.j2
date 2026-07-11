@@ -1,0 +1,16 @@
+{# SCOPED bot joining via generic_oidc using DISCOVERY over a CUSTOM CA. Same as
+   tbot-gobot-disc but `scoped: true` and a scoped_token (gobot-scoped-disc-token),
+   so the resulting identity is pinned to /genericoidc-test. Requires the scopes
+   feature (TELEPORT_UNSTABLE_SCOPES=yes) on both auth and this tbot. #}
+version: v2
+scoped: true
+proxy_server: {{ fqdn }}:{{ port }}
+onboarding:
+  join_method: generic_oidc
+  token: gobot-scoped-disc-token
+  generic_oidc:
+    command: ["curl", "-fsSk", "https://oidc-ca:8443/token?sub=test-bot"]
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}

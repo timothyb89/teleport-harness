@@ -2,10 +2,11 @@
 # feature/version gating and by humans browsing the harness.
 name: generic_oidc
 description: >
-  generic_oidc join method — Teleport agents (Nodes) join by presenting OIDC JWTs
-  minted by a trivial in-cluster OIDC server, validated via discovery+tls_ca and
-  static_jwks, unscoped and scoped, with negative (must-be-denied) cases. Join
-  tokens are created by a tbot identity, not cluster admin.
+  generic_oidc join method — Teleport agents (Nodes) AND bots (tbot) join by
+  presenting OIDC JWTs minted by trivial in-cluster OIDC servers, validated via
+  discovery (over a custom CA and over system trust) and static_jwks, unscoped and
+  scoped, with negative (must-be-denied) cases. Join tokens are created by a tbot
+  identity, not cluster admin.
 
 # Capability this module exercises; the plan runner gates cases on the target
 # actually providing it.
@@ -36,3 +37,24 @@ checks: |
   # the agent tokens were created THROUGH the token-manager bot identity, not cluster
   # admin (the audit event records the impersonator). SKIPs until the line appears.
   log_contains       auth join_token\.create.*impersonator:bot-token-manager
+  # --- BOTS: tbot joins via generic_oidc (custom-CA discovery + static_jwks) -------
+  # positive: each bot's join emits a successful bot.join audit event on auth...
+  bot_joined         gobot-disc generic_oidc
+  bot_joined         gobot-static generic_oidc
+  bot_joined         gobot-scoped-disc generic_oidc
+  bot_joined         gobot-scoped-static generic_oidc
+  # ...and tbot wrote an identity artifact (only happens after a successful join).
+  output_file        gobot-disc /out/id/identity
+  output_file        gobot-static /out/id/identity
+  output_file        gobot-scoped-disc /out/id/identity
+  output_file        gobot-scoped-static /out/id/identity
+  # the unscoped bot identities can perform an authorized action (list tokens).
+  identity_authorized gobot-disc /out/id/identity
+  identity_authorized gobot-static /out/id/identity
+  # the scoped bot identities are pinned to their scope (via `tsh status`)...
+  identity_scope     gobot-scoped-disc /out/id/identity /genericoidc-test
+  identity_scope     gobot-scoped-static /out/id/identity /genericoidc-test
+  # ...and are practically usable: each scoped bot can `tsh ssh` (as root) into a
+  # scoped agent within its scope, running a real command end-to-end.
+  tsh_ssh_as         gobot-scoped-disc /out/id/identity agent-scoped-discovery root
+  tsh_ssh_as         gobot-scoped-static /out/id/identity agent-scoped-static root

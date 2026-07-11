@@ -1,0 +1,19 @@
+# Shared scoped role within /genericoidc-test, assigned to both scoped generic_oidc
+# bots via the scoped_role_assignments below. Numeric prefix orders bootstrap creation:
+# role (1) -> bots (2) -> assignments (3), since an assignment references both.
+# Requires the scopes feature (auth has TELEPORT_UNSTABLE_SCOPES=yes via auth_env).
+kind: scoped_role
+version: v1
+metadata:
+  name: generic-oidc-scoped-role
+scope: /genericoidc-test
+spec:
+  assignable_scopes:
+    - /genericoidc-test
+  ssh:
+    # root exists in the agent containers, so the scoped bot can open a real session
+    # (echo harness-ok) into a scoped node — a practical end-to-end identity test.
+    logins: ["root", "ubuntu"]
+    labels:
+      - name: "*"
+        values: ["*"]

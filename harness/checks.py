@@ -43,7 +43,15 @@ _SPECS: list[VerbSpec] = [
         "identity_authorized", 2, 3,
         "identity_authorized <container-suffix> <identity-path> [auth-server]",
     ),
+    VerbSpec(
+        "identity_scope", 3, 3,
+        "identity_scope <container-suffix> <identity-path> <scope>",
+    ),
     VerbSpec("tsh_ssh", 1, 2, "tsh_ssh <suffix> [login]"),
+    VerbSpec(
+        "tsh_ssh_as", 3, 4,
+        "tsh_ssh_as <container-suffix> <identity-path> <node-suffix> [login]",
+    ),
 ]
 
 REGISTRY: dict[str, VerbSpec] = {s.name: s for s in _SPECS}

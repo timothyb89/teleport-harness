@@ -30,9 +30,10 @@ EXPECTED_SERVICES = {
     "tbot": {"auth", "tbot", "tbot-deny"},
     "bound_keypair": {"auth", "bkbot", "bkbot-deny"},
     "generic_oidc": {
-        "auth", "oidc", "tbot", "token-manager",
+        "auth", "oidc", "oidc-ca", "tbot", "token-manager",
         "agent-discovery", "agent-static", "agent-scoped-discovery",
         "agent-scoped-static", "agent-deny", "agent-scoped-deny",
+        "gobot-disc", "gobot-static", "gobot-scoped-disc", "gobot-scoped-static",
     },
     "kubernetes": {"auth", "oidc", "kube-oidc", "kube-jwks"},  # oidc from the shared component
 }
@@ -93,7 +94,10 @@ def test_auth_env_is_union_of_unit_auth_env(rendered):
 EXPECTED_BOTS = {
     "tbot": {"test-bot"},
     "bound_keypair": {"bk-bot"},
-    "generic_oidc": {"token-manager"},
+    # token-manager (token method) + the two unscoped generic_oidc bots (empty token,
+    # authorized by runtime-created provision tokens). Scoped bots are scoped_bot
+    # bootstrap resources, not `bots add` manifest entries.
+    "generic_oidc": {"token-manager", "gobot-disc", "gobot-static"},
     "kubernetes": {"kube-oidc-bot", "kube-jwks-bot"},
 }
 

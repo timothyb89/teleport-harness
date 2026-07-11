@@ -1,0 +1,16 @@
+{# Unscoped bot joining via generic_oidc using OIDC DISCOVERY over a CUSTOM CA.
+   The provision token (gobot-disc-discovery, minted at runtime by the token-manager
+   from the self-signed oidc-ca server) embeds that server's CA as tls_ca, so at join
+   time auth fetches oidc-ca's discovery+JWKS and validates its cert against tls_ca —
+   NOT system trust. The command fetches a fresh JWT (sub=test-bot) from oidc-ca. #}
+version: v2
+proxy_server: {{ fqdn }}:{{ port }}
+onboarding:
+  join_method: generic_oidc
+  token: gobot-disc-discovery
+  generic_oidc:
+    command: ["curl", "-fsSk", "https://oidc-ca:8443/token?sub=test-bot"]
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}

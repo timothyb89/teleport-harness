@@ -1,0 +1,12 @@
+# Minimal role for the unscoped generic_oidc bots (gobot-disc, gobot-static): just
+# enough for the produced identity to perform an authorized action (list tokens) via
+# `tctl --identity`, proving the join yielded a usable identity.
+kind: role
+version: v7
+metadata:
+  name: go-bot-tester
+spec:
+  allow:
+    rules:
+      - resources: [token]
+        verbs: [read, list]

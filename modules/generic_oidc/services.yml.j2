@@ -1,9 +1,37 @@
 {# generic_oidc services fragment (composed onto the base auth + the oidc-server
-   component). A token-manager bot mints the agent join tokens via its OWN identity
-   (not cluster admin); the agents then join by presenting OIDC JWTs. #}
+   component). A token-manager bot mints the agent + bot join tokens via its OWN
+   identity (not cluster admin); agents then join by presenting OIDC JWTs, and four
+   tbot bots join via generic_oidc (custom-CA discovery + static_jwks, scoped +
+   unscoped). #}
 {% set audience = fqdn ~ '/generic-oidc' %}
 {% set oidc_host = 'oidc.' ~ lab_domain %}
+{# Per-bot wiring: which OIDC server each bot fetches its JWT from + depends on.
+   The two DISCOVERY bots use the self-signed `oidc-ca` (custom CA); the two
+   STATIC_JWKS bots use the main system-trusted `oidc` server. #}
+{% set bot_oidc = {
+     'gobot-disc': 'oidc-ca',
+     'gobot-static': 'oidc',
+     'gobot-scoped-disc': 'oidc-ca',
+     'gobot-scoped-static': 'oidc',
+   } %}
 services:
+  # A SECOND, self-signed OIDC issuer (reusing the oidc-server image but WITHOUT the
+  # wildcard cert) so the discovery bots exercise generic_oidc's custom `tls_ca` path:
+  # auth validates this issuer's cert against the CA embedded in the token, NOT system
+  # trust. Reachable in-cluster as `oidc-ca` (the self-signed cert's SAN).
+  oidc-ca:
+    image: {{ oidc_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-oidc-ca
+    command:
+      - -issuer=https://oidc-ca:8443
+      - -addr=:8443
+      - -audience={{ audience }}
+      - -cluster-name={{ fqdn }}
+    volumes:
+      - oidc-ca-data:/data
+    networks: [internal]
+
   # tbot for the token-manager bot: writes its identity to the shared `idents` volume.
   tbot:
     image: {{ image }}
@@ -18,7 +46,9 @@ services:
     depends_on:
       auth: {condition: service_healthy}
 
-  # creates the agent join tokens from the running OIDC server, using the bot identity.
+  # creates the agent + bot join tokens from the running OIDC servers, using the bot
+  # identity. Renders one token set from the main (system-trust) issuer and one from
+  # the self-signed oidc-ca issuer (custom CA); see scripts/token-manager.sh.
   token-manager:
     image: {{ image }}
     platform: linux/amd64
@@ -26,11 +56,13 @@ services:
     command: ["/scripts/token-manager.sh"]
     restart: "no"
     environment:
-      # the oidc-server now serves the system-trusted wildcard cert at its FQDN, so the
-      # agent tokens use discovery over system trust (no tls_ca) — same path kube oidc uses.
+      # main issuer: serves the system-trusted wildcard cert, so agent discovery +
+      # the static_jwks tokens use system trust (no tls_ca) — same path kube oidc uses.
       ISSUER: https://{{ oidc_host }}:8443
       FETCH_URL: https://{{ oidc_host }}:8443
-      OMIT_TLS_CA: "1"
+      # custom-CA issuer: self-signed, so the discovery BOT tokens embed its CA (tls_ca).
+      CA_ISSUER: https://oidc-ca:8443
+      CA_FETCH_URL: https://oidc-ca:8443
       AUDIENCE: {{ audience }}
       AGENT_SUB: {{ agent_sub }}
       TELEPORT_UNSTABLE_SCOPES: "yes"
@@ -42,6 +74,7 @@ services:
     depends_on:
       auth: {condition: service_healthy}
       oidc: {condition: service_started}
+      oidc-ca: {condition: service_started}
       tbot: {condition: service_started}
 {% for name in agents %}
 
@@ -59,7 +92,25 @@ services:
       token-manager: {condition: service_completed_successfully}
       oidc: {condition: service_started}
 {% endfor %}
+{% for name in oidc_bots %}
+
+  # generic_oidc BOT ({{ name }}): joins via tbot, writes an identity to /out/id.
+  {{ name }}:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-{{ name }}
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    environment:
+      TELEPORT_UNSTABLE_SCOPES: "yes"
+    volumes:
+      - {{ out }}/config/tbot-{{ name }}.yaml:/etc/tbot.yaml:ro
+    networks: [internal]
+    depends_on:
+      token-manager: {condition: service_completed_successfully}
+      {{ bot_oidc[name] }}: {condition: service_started}
+{% endfor %}
 
 volumes:
   bot-data:
   idents:
+  oidc-ca-data:

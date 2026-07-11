@@ -1,0 +1,9 @@
+# Scoped bot for the discovery+custom-CA scoped case. A scoped bot carries only a
+# `scope` (roles/traits come from the scoped_role_assignment). The token-manager mints
+# its scoped_token (gobot-scoped-disc-token) at runtime; tbot (scoped: true) then joins.
+kind: bot
+version: v1
+metadata:
+  name: gobot-scoped-disc
+spec: {}
+scope: /genericoidc-test

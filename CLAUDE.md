@@ -117,10 +117,15 @@ unit-testable with a `FakeCluster` (they never were in bash). Adding a verb = an
 Current verbs: `node_present`/`node_absent`/`node_scope`/`node_count`/`scoped_node_count`,
 `log_contains <suffix> <regex…>` (case-insensitive; SKIP on no match), `bot_joined <name>
 [method]`, `output_file`/`no_output_file <suffix> <path>`, `identity_authorized <suffix>
-<identity-path> [auth-server]` (runs `tctl --identity … tokens ls`), `tsh_ssh <suffix> [login]`.
+<identity-path> [auth-server]` (runs `tctl --identity … tokens ls`), `identity_scope <suffix>
+<identity-path> <scope>` (asserts `tsh status --identity` shows the scope — scope-pin proof),
+`tsh_ssh <suffix> [login]` (admin identity), `tsh_ssh_as <suffix> <identity-path> <node-suffix>
+[login]` (tsh ssh from a container using ITS OWN identity → `echo harness-ok`; a bot's practical
+end-to-end access test).
 Node/container args reference the nodename suffix after `<id>-`.
 
-Modules today: `generic_oidc` (agents join via OIDC JWTs), `tbot` (Machine ID bot joins +
+Modules today: `generic_oidc` (agents AND bots join via OIDC JWTs — discovery over a
+custom CA via a self-signed `oidc-ca` server + static_jwks, unscoped + scoped), `tbot` (Machine ID bot joins +
 identity output, token method), `bound_keypair` (bot joins via bound_keypair with a preset
 registration secret), `kubernetes` (bots join via k8s SA JWTs — both `oidc` and `static_jwks`
 types — minted by the shared `oidc-server` component). `tbot`/`bound_keypair` differ only in

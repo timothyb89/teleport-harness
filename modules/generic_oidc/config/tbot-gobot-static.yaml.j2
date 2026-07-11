@@ -1,0 +1,15 @@
+{# Unscoped bot joining via generic_oidc using STATIC_JWKS (no discovery / no network
+   fetch at join time). The provision token (gobot-static-static) embeds the JWKS of
+   the main oidc server; the JWT (sub=test-bot) is fetched from that same server so the
+   iss claim matches. Signature is verified against the embedded JWKS. #}
+version: v2
+proxy_server: {{ fqdn }}:{{ port }}
+onboarding:
+  join_method: generic_oidc
+  token: gobot-static-static
+  generic_oidc:
+    command: ["curl", "-fsSk", "https://oidc:8443/token?sub=test-bot"]
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}

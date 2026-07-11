@@ -216,6 +216,39 @@ def _tsh_ssh(c, nodes, args):
     return CheckResult(FAIL, f"tsh ssh {login}@{h} failed")
 
 
+def _identity_scope(c, nodes, args):
+    """Inspect a written identity's scope via `tsh status --identity`. Proves a scoped
+    bot's identity is pinned to the expected scope (not just that it joined)."""
+    suffix, ident, scope = args[0], args[1], args[2]
+    cname = c.container(suffix)
+    argv = ["tsh", "status", "--identity", ident, "--proxy", c.proxy_addr()]
+    rc, out = c.exec_out(suffix, argv)
+    # tsh status prints a line like:  "  Scope:              /genericoidc-test"
+    line = next((ln.strip() for ln in out.splitlines() if ln.strip().lower().startswith("scope:")), "")
+    if rc == 0 and line and scope in line:
+        return CheckResult(PASS, f"{cname} identity is scope-pinned to {scope}", evidence=[line])
+    return CheckResult(FAIL, f"{cname} identity is not scope-pinned to {scope} (exit {rc})",
+                       evidence=[line or _truncate(out, 140)])
+
+
+def _tsh_ssh_as(c, nodes, args):
+    """Practical identity test: run `tsh ssh` from inside <suffix>'s container using its
+    OWN identity file into <node>, executing `echo harness-ok`. Proves the identity
+    actually grants session access to that node (for a scoped bot, within its scope)."""
+    suffix, ident, node_suffix = args[0], args[1], args[2]
+    login = args[3] if len(args) > 3 else "root"
+    node = c.container(node_suffix)
+    argv = ["tsh", "ssh", "--identity", ident, "--proxy", c.proxy_addr(),
+            f"{login}@{node}", "--", "echo", "harness-ok"]
+    rc, out = c.exec_out(suffix, argv)
+    cmd = f"$ tsh ssh {login}@{node} (identity {ident}) → exit {rc}"
+    if rc == 0 and "harness-ok" in out:
+        return CheckResult(PASS, f"{c.container(suffix)} identity can tsh ssh {login}@{node}",
+                           evidence=[cmd, "stdout: harness-ok"])
+    return CheckResult(FAIL, f"{c.container(suffix)} identity could NOT tsh ssh {login}@{node}",
+                       evidence=[cmd, _truncate(out, 160)])
+
+
 # verb -> impl. Kept in lockstep with harness/checks.REGISTRY (test enforces it).
 Impl = Callable[[Cluster, list[dict], list[str]], CheckResult]
 IMPLS: dict[str, Impl] = {
@@ -229,7 +262,9 @@ IMPLS: dict[str, Impl] = {
     "output_file": _output_file,
     "no_output_file": _no_output_file,
     "identity_authorized": _identity_authorized,
+    "identity_scope": _identity_scope,
     "tsh_ssh": _tsh_ssh,
+    "tsh_ssh_as": _tsh_ssh_as,
 }
 
 

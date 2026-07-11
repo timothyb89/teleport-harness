@@ -50,6 +50,10 @@ class Cluster:
     def tsh_ssh(self, host_suffix: str, login: str) -> bool:  # pragma: no cover
         raise NotImplementedError
 
+    def proxy_addr(self) -> str:  # pragma: no cover
+        """`<fqdn>:<port>` for tsh --proxy from inside a cluster container."""
+        raise NotImplementedError
+
 
 class DockerCluster(Cluster):
     """Real cluster backed by docker. `state_dir` (state/<id>/) is read for meta
@@ -115,3 +119,6 @@ class DockerCluster(Cluster):
             "ssh", f"{login}@{host}", "--", "echo", "harness-ok",
         ])
         return cp.returncode == 0 and "harness-ok" in (cp.stdout or "")
+
+    def proxy_addr(self) -> str:
+        return f"{self._meta('FQDN')}:{self._meta('PORT')}"

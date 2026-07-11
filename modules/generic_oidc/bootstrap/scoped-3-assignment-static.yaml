@@ -1,0 +1,13 @@
+# Links the scoped static_jwks bot to the scoped role within /genericoidc-test.
+kind: scoped_role_assignment
+sub_kind: dynamic
+version: v1
+metadata:
+  name: gobot-scoped-static-assignment
+scope: /genericoidc-test
+spec:
+  # scope-qualified bot name (<scope>::<bot-name>).
+  bot: /genericoidc-test::gobot-scoped-static
+  assignments:
+    - role: generic-oidc-scoped-role
+      scope: /genericoidc-test

@@ -216,8 +216,9 @@ spec:
   roles: [Bot]
   join_method: generic_oidc
   usage_mode: bot
-  bot_name: ${SCOPED_BOT_NAME}
-  bot_scope: ${SCOPE}
+  # The scoped bot is referenced by its scope-qualified name (<scope>::<bot-name>);
+  # see api/proto/.../scopes/joining/v1/token.proto (ScopedTokenSpec.bot).
+  bot: ${SCOPE}::${SCOPED_BOT_NAME}
   generic_oidc:
     issuer: ${ISSUER}
     audience: ${AUDIENCE}
@@ -251,8 +252,9 @@ spec:
   roles: [Bot]
   join_method: generic_oidc
   usage_mode: bot
-  bot_name: ${SCOPED_BOT_NAME}
-  bot_scope: ${SCOPE}
+  # The scoped bot is referenced by its scope-qualified name (<scope>::<bot-name>);
+  # see api/proto/.../scopes/joining/v1/token.proto (ScopedTokenSpec.bot).
+  bot: ${SCOPE}::${SCOPED_BOT_NAME}
   generic_oidc:
     issuer: ${ISSUER}
     audience: ${AUDIENCE}

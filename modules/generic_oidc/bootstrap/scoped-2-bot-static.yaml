@@ -1,0 +1,7 @@
+# Scoped bot for the static_jwks scoped case. See scoped-2-bot-disc.yaml.
+kind: bot
+version: v1
+metadata:
+  name: gobot-scoped-static
+spec: {}
+scope: /genericoidc-test

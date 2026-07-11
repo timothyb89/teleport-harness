@@ -48,6 +48,9 @@ class FakeCluster(Cluster):
     def tsh_ssh(self, host_suffix, login):
         return self._tsh_ok
 
+    def proxy_addr(self):
+        return "c1.lab.example.com:8443"
+
 
 def _node(hostname, scope=None):
     n = {"spec": {"hostname": hostname}}
@@ -196,6 +199,36 @@ def test_tsh_ssh():
     assert _run(FakeCluster(tsh_ok=False), "tsh_ssh node1 ubuntu").status == "FAIL"
 
 
+# ---- identity_scope ---------------------------------------------------------
+def _status_argv(ident):
+    return ("tsh", "status", "--identity", ident, "--proxy", "c1.lab.example.com:8443")
+
+
+def test_identity_scope_pass_and_fail():
+    argv = _status_argv("/out/id/identity")
+    ok = FakeCluster(execs={("gobot", argv): (0, "  Logged in as: bot\n  Scope:  /genericoidc-test\n")})
+    res = _run(ok, "identity_scope gobot /out/id/identity /genericoidc-test")
+    assert res.status == "PASS" and any("/genericoidc-test" in e for e in res.evidence)
+    # wrong/absent scope -> FAIL (an unscoped identity prints no Scope line)
+    bad = FakeCluster(execs={("gobot", argv): (0, "  Logged in as: bot\n")})
+    assert _run(bad, "identity_scope gobot /out/id/identity /genericoidc-test").status == "FAIL"
+
+
+# ---- tsh_ssh_as -------------------------------------------------------------
+def _ssh_as_argv(ident, node, login):
+    return ("tsh", "ssh", "--identity", ident, "--proxy", "c1.lab.example.com:8443",
+            f"{login}@{node}", "--", "echo", "harness-ok")
+
+
+def test_tsh_ssh_as_pass_and_fail():
+    argv = _ssh_as_argv("/out/id/identity", "c1-agent-scoped-discovery", "root")
+    ok = FakeCluster(execs={("gobot", argv): (0, "harness-ok\n")})
+    assert _run(ok, "tsh_ssh_as gobot /out/id/identity agent-scoped-discovery root").status == "PASS"
+    # access denied / no OS user -> nonzero + no marker -> FAIL
+    bad = FakeCluster(execs={("gobot", argv): (255, "access denied to root\n")})
+    assert _run(bad, "tsh_ssh_as gobot /out/id/identity agent-scoped-discovery root").status == "FAIL"
+
+
 # ---- render / RESULT --------------------------------------------------------
 def test_render_fail_and_pass():
     text, passed = render([CheckResult("PASS", "ok"), CheckResult("SKIP", "later")])
@@ -219,12 +252,31 @@ def test_generic_oidc_all_pass_simulated():
         _node("c1-agent-scoped-discovery", scope=scope),
         _node("c1-agent-scoped-static", scope=scope),
     ]
+    bots = ["gobot-disc", "gobot-static", "gobot-scoped-disc", "gobot-scoped-static"]
+    auth_log = "\n".join(
+        ["audit join_token.create ... impersonator:bot-token-manager ..."]
+        + [f"event_type:bot.join bot_name:{b} method:generic_oidc success:true" for b in bots]
+    )
     logs = {
         "agent-deny": "unable to validate generic_oidc token",
         "agent-scoped-deny": "denied: unable to join via generic_oidc",
-        "auth": "audit join_token.create ... impersonator:bot-token-manager ...",
+        "auth": auth_log,
     }
-    c = FakeCluster(nodes=nodes, logs=logs)
+    # every bot wrote an identity; the two unscoped bots can list tokens.
+    files = [(b, "/out/id/identity") for b in bots]
+    id_argv = ("tctl", "--identity", "/out/id/identity", "--auth-server", "auth:3025", "tokens", "ls")
+    execs = {("gobot-disc", id_argv): 0, ("gobot-static", id_argv): 0}
+    # scoped bots: tsh status shows the scope, and tsh ssh (as root) into their scoped
+    # agent works. proxy_addr() is the FakeCluster default (c1.lab.example.com:8443).
+    proxy = "c1.lab.example.com:8443"
+    for b, node in [("gobot-scoped-disc", "c1-agent-scoped-discovery"),
+                    ("gobot-scoped-static", "c1-agent-scoped-static")]:
+        status_argv = ("tsh", "status", "--identity", "/out/id/identity", "--proxy", proxy)
+        execs[(b, status_argv)] = (0, f"  Scope:  {scope}\n")
+        ssh_argv = ("tsh", "ssh", "--identity", "/out/id/identity", "--proxy", proxy,
+                    f"root@{node}", "--", "echo", "harness-ok")
+        execs[(b, ssh_argv)] = (0, "harness-ok\n")
+    c = FakeCluster(nodes=nodes, logs=logs, files=files, execs=execs)
     results = verify(c, m.checks, module_dir=MODULES / "generic_oidc")
     text, passed = render(results)
     assert passed, text
