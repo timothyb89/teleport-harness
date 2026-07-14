@@ -48,6 +48,7 @@ shared component + bootstrap hook). A module directory:
   min_version: v18             # gated on --version
   checks: |                    # declarative; verified by harness/verify.py (see verbs below)
     bot_joined          my-bot <method>
+    audit_event         bot.join bot_name=my-bot method=<method> success=true  # structured proof
     output_file         my-bot /out/id/identity
     identity_authorized my-bot /out/id/identity
     log_contains        my-bot-deny denied|not found|unauthorized   # negative case
@@ -103,18 +104,24 @@ manifest token just creates the bot. See `modules/kubernetes/`.
 1. Implement it in `harness/verify.py` — add to `IMPLS`:
    ```python
    def _my_verb(c, nodes, args):
-       # c: the Cluster seam (get_nodes/logs/exec_out/file_nonempty/file_size/tsh_ssh)
+       # c: the Cluster seam (get_nodes/logs/exec_out/file_nonempty/file_size/tsh_ssh/audit_events)
        ok = ...
-       return CheckResult(PASS if ok else FAIL, "<message>", evidence=["<one-line proof>"])
-       # for log-based proof use excerpt=_excerpt(lines, match_idxs) instead of evidence
+       return CheckResult(PASS if ok else FAIL, "<message>",
+                          proofs=[ProofItem("text", "<title>", "<full content>")])
    ```
 2. Register it in `harness/checks.py` — add a `VerbSpec(name, min_args, max_args, usage)`.
    A test (`verb_impls_match_registry`) enforces IMPLS ↔ REGISTRY parity.
-3. Capture **evidence**: node/file/identity checks set `evidence=[...]` (a short proof line);
-   log checks set `excerpt=_excerpt(...)` (a grep -C3 line-numbered window). It shows in the
-   console, `results-*.json`, and `results.md`.
+3. Attach **proof(s)** — evidence is a first-class `ProofItem{kind,title,content,lang,source}`,
+   decoupled from the check so several checks can cite ONE proof (proof `id` is a content hash →
+   identical proofs dedup). `content` is kept in FULL (never truncated). Pick a `kind`:
+   `node-record`/`file`/`command`/`text` for short proofs; `log-excerpt` via
+   `_log_proof(cname, suffix, title, _excerpt(lines, idxs))` (grep -C3 window + a `logs/<svc>.log`
+   link); `audit-event` via `_audit_proof(ev)` (the FULL event as pretty JSON, `lang="json"`).
+   For a structured audit assertion, prefer the `audit_event` verb over scraping text logs.
+   The report renders each proof once as a linkable, anchored section; the check table links to it.
 4. Unit-test it in `tests/test_verify.py` with a `FakeCluster` (no docker) — assert status +
-   evidence. This is the fast, reliable way to get a verb right.
+   `res.proofs`. `FakeCluster(events=[...])` feeds structured audit events. This is the fast,
+   reliable way to get a verb right.
 
 ## Add a shared component
 `components/<name>/` has the same shape as a module minus `module.yaml`/`checks:` — a

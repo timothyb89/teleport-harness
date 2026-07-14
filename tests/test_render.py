@@ -78,6 +78,8 @@ def test_shared_auth_yaml_rendered(rendered):
     auth = yaml.safe_load((out / "config" / "auth.yaml").read_text())
     assert auth["auth_service"]["cluster_name"] == "zz1.lab.example.com"
     assert auth["proxy_service"]["web_listen_addr"] == "0.0.0.0:8443"
+    # JSON audit backend so audit_event checks can read structured events off disk
+    assert auth["teleport"]["storage"]["audit_events_uri"] == ["file:///var/lib/teleport/audit/events"]
 
 
 def test_auth_env_is_union_of_unit_auth_env(rendered):
@@ -117,6 +119,37 @@ def test_bootstrap_bots_manifest_and_tokens(rendered):
             assert token in tokens, f"{mod}: manifest token {token} has no bootstrap resource"
     # no unrendered markers leaked into bootstrap
     assert "{{" not in tokens and "${" not in tokens
+
+
+def test_setup_json_provenance(rendered):
+    """setup.json (Foundation B): the renderer publishes what it created + source links,
+    so the report renders tables instead of re-scraping bootstrap YAML."""
+    import json
+    mod, out, compose = rendered
+    setup = json.loads((out / "setup.json").read_text())
+    # services carry provenance; every compose service is accounted for
+    svc_names = {s["name"] for s in setup["services"]}
+    assert svc_names == set(compose["services"])
+    assert next(s for s in setup["services"] if s["name"] == "auth")["origin"] == "base"
+    # bots the renderer created appear with a source link
+    bot_names = {b["name"] for b in setup["bots"]}
+    assert EXPECTED_BOTS[mod] <= bot_names
+    for b in setup["bots"]:
+        assert b["source"].startswith("rendered/") or b["source"] == ""
+    # roles/tokens link to the rendered resource that defined them
+    for r in setup["roles"] + setup["tokens"]:
+        assert r["source"].startswith("rendered/bootstrap/")
+
+
+def test_setup_json_token_join_methods(tmp_path):
+    import json
+    render_module(MODULES / "generic_oidc", CTX, tmp_path, run_prebuild=False)
+    setup = json.loads((tmp_path / "setup.json").read_text())
+    tok = next(t for t in setup["tokens"] if t["join_method"])
+    assert tok["join_method"]  # e.g. token / generic_oidc
+    # the token-manager bot resolves its join method from its bootstrap token
+    tm = next(b for b in setup["bots"] if b["name"] == "token-manager")
+    assert tm["join_method"] == "token"
 
 
 def test_generic_oidc_agent_configs_and_volumes(tmp_path):

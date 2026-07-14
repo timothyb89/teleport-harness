@@ -10,30 +10,42 @@ from harness.models import load_module, parse_checks
 from harness.verify import (
     IMPLS,
     CheckResult,
+    ProofItem,
+    collect_proofs,
     render,
     run_check,
     verb_impls_match_registry,
     verify,
 )
 
+
+def _proof_text(res) -> str:
+    """All proof titles + content of a result, joined (proofs replaced inline evidence)."""
+    return "\n".join(p.title + "\n" + p.content for p in res.proofs)
+
 REPO = Path(__file__).resolve().parent.parent
 MODULES = REPO / "modules"
 
 
 class FakeCluster(Cluster):
-    def __init__(self, cid="c1", nodes=None, logs=None, files=None, execs=None, tsh_ok=False):
+    def __init__(self, cid="c1", nodes=None, logs=None, files=None, execs=None,
+                 tsh_ok=False, events=None):
         super().__init__(cid)
         self._nodes = nodes or []
         self._logs = logs or {}
         self._files = set(files or [])
         self._execs = execs or {}
         self._tsh_ok = tsh_ok
+        self._events = events or []
 
     def get_nodes(self):
         return self._nodes
 
     def logs(self, suffix):
         return self._logs.get(suffix, "")
+
+    def audit_events(self):
+        return self._events
 
     def exec_out(self, suffix, argv):
         v = self._execs.get((suffix, tuple(argv)), 1)
@@ -69,50 +81,71 @@ def test_impls_match_registry():
     assert verb_impls_match_registry() == []
 
 
-# ---- evidence capture (the "show your work" proof) --------------------------
-def test_node_present_evidence_has_hostname():
+# ---- proof capture (the "show your work" evidence, decoupled from the check) -----
+def test_node_present_proof_is_a_node_record_with_hostname():
     c = FakeCluster(nodes=[_node("c1-agent-static", scope="/s")])
     res = _run(c, "node_present agent-static")
     assert res.status == "PASS"
-    assert any("c1-agent-static" in e for e in res.evidence)
+    assert res.proofs and res.proofs[0].kind == "node-record"
+    assert "c1-agent-static" in _proof_text(res)
 
 
-def test_log_contains_excerpt_has_context_and_line_numbers():
+def test_log_contains_proof_has_context_line_numbers_and_source():
     logs = "\n".join(f"line{i}" for i in range(1, 11))
     logs = logs.replace("line5", "error: unable to validate generic_oidc token")
     c = FakeCluster(logs={"agent-deny": logs})
     res = _run(c, "log_contains agent-deny unable to validate generic_oidc")
     assert res.status == "PASS"
-    # matched line marked with '>', context lines present, 1-based line numbers
-    joined = "\n".join(res.excerpt)
-    assert "> [5] error: unable to validate generic_oidc token" in joined
-    assert "  [2] line2" in joined and "  [8] line8" in joined  # ±3 context
-    assert "line1\n" not in joined and not joined.startswith("  [1]")  # line 1 outside the C3 window
+    (proof,) = res.proofs
+    assert proof.kind == "log-excerpt" and proof.source == "logs/agent-deny.log"
+    body = proof.content
+    assert "> [5] error: unable to validate generic_oidc token" in body
+    assert "  [2] line2" in body and "  [8] line8" in body  # ±3 context
+    assert not body.startswith("  [1]")  # line 1 outside the C3 window
 
 
-def test_bot_joined_excerpt_marks_the_audit_line():
+def test_bot_joined_proof_marks_the_audit_line():
     lines = ["noise", "2026 audit bot.join bot_name:bk-bot method:bound_keypair success:true code:TJ001I", "more"]
     c = FakeCluster(logs={"auth": "\n".join(lines)})
     res = _run(c, "bot_joined bk-bot bound_keypair")
     assert res.status == "PASS"
-    assert any(e.startswith("> ") and "bot_name:bk-bot" in e for e in res.excerpt)
+    body = _proof_text(res)
+    assert "> " in body and "bot_name:bk-bot" in body
+    assert res.proofs[0].source == "logs/auth.log"
 
 
-def test_output_file_evidence_has_size():
+def test_output_file_proof_has_size():
     c = FakeCluster(files=[("tbot", "/out/id/identity")])
     res = _run(c, "output_file tbot /out/id/identity")
-    assert res.status == "PASS" and any("128 bytes" in e for e in res.evidence)
+    assert res.status == "PASS" and "128 bytes" in _proof_text(res)
 
 
-def test_identity_authorized_evidence_has_command():
+def test_identity_authorized_proof_has_command():
     argv = ("tctl", "--identity", "/out/id/identity", "--auth-server", "auth:3025", "tokens", "ls")
     c = FakeCluster(execs={("tbot", argv): (0, "token1\ntoken2\n")})
     res = _run(c, "identity_authorized tbot /out/id/identity")
     assert res.status == "PASS"
-    assert any("tokens ls" in e and "exit 0" in e for e in res.evidence)
+    body = _proof_text(res)
+    assert "tokens ls" in body and "exit 0" in body
 
 
-def test_render_includes_evidence_sublines():
+def test_proofitem_id_is_stable_and_dedupes():
+    a = ProofItem("text", "t", "same content")
+    b = ProofItem("text", "t", "same content")
+    c = ProofItem("text", "t", "different")
+    assert a.id == b.id and a.id != c.id
+    assert a.id.startswith("text-")
+
+
+def test_collect_proofs_dedupes_shared_proofs():
+    shared = ProofItem("audit-event", "bot.join", "{...}")
+    r1 = CheckResult("PASS", "a", proofs=[shared])
+    r2 = CheckResult("PASS", "b", proofs=[ProofItem("audit-event", "bot.join", "{...}")])
+    proofs = collect_proofs([r1, r2])
+    assert len(proofs) == 1  # identical content -> one registry entry, cited by both
+
+
+def test_render_includes_proof_sublines():
     c = FakeCluster(nodes=[_node("c1-a")])
     text, _ = render([_run(c, "node_present a")])
     assert "↳" in text and "c1-a" in text
@@ -169,6 +202,66 @@ def test_bot_joined_requires_success():
     assert _run(c, "bot_joined x").status == "FAIL"
 
 
+# ---- audit_event (structured event inspection) ------------------------------
+_BOT_JOIN_EV = {"event": "bot.join", "code": "TJ001I", "bot_name": "gobot-disc",
+                "method": "generic_oidc", "success": True, "time": "2026-07-13T00:00:00Z"}
+
+
+def test_audit_event_matches_and_renders_full_json_proof():
+    c = FakeCluster(events=[{"event": "noise"}, _BOT_JOIN_EV])
+    res = _run(c, "audit_event bot.join bot_name=gobot-disc method=generic_oidc")
+    assert res.status == "PASS"
+    (p,) = res.proofs
+    assert p.kind == "audit-event" and p.lang == "json"
+    # the FULL event is preserved, pretty-printed
+    assert '"bot_name": "gobot-disc"' in p.content and '"code": "TJ001I"' in p.content
+    # the verb publishes the individual field assertions it made (shown under the proof)
+    assert res.assertions == ["event = bot.join", "bot_name = gobot-disc", "method = generic_oidc"]
+
+
+def test_audit_event_bool_and_case_insensitive_match():
+    c = FakeCluster(events=[_BOT_JOIN_EV])
+    assert _run(c, "audit_event bot.join success=true").status == "PASS"  # bool True -> "true"
+    assert _run(c, "audit_event bot.join method=Generic_OIDC").status == "PASS"  # value case-insensitive
+
+
+def test_audit_event_no_match_fails_with_candidate_proof():
+    c = FakeCluster(events=[_BOT_JOIN_EV])
+    res = _run(c, "audit_event bot.join bot_name=other")
+    assert res.status == "FAIL"
+    # surfaces the closest same-type event so a reader can see what WAS emitted
+    assert res.proofs and "gobot-disc" in res.proofs[0].content
+
+
+def test_audit_event_absent_type_fails_cleanly():
+    res = _run(FakeCluster(events=[]), "audit_event bot.join bot_name=x")
+    assert res.status == "FAIL" and not res.proofs
+
+
+def test_two_audit_event_checks_share_one_proof():
+    """The proof is the whole event, so two lines selecting it dedup to ONE proof
+    that both checks cite — 'multiple checks against a given proof-item'."""
+    c = FakeCluster(events=[_BOT_JOIN_EV])
+    r1 = _run(c, "audit_event bot.join bot_name=gobot-disc")
+    r2 = _run(c, "audit_event bot.join success=true")
+    assert r1.status == r2.status == "PASS"
+    assert len(collect_proofs([r1, r2])) == 1
+
+
+def test_bot_joined_prefers_audit_event_json_over_text_log():
+    c = FakeCluster(events=[_BOT_JOIN_EV],
+                    logs={"auth": "bot.join bot_name:gobot-disc method:generic_oidc success:true"})
+    res = _run(c, "bot_joined gobot-disc generic_oidc")
+    assert res.status == "PASS"
+    assert res.proofs[0].kind == "audit-event"  # structured proof wins
+
+
+def test_bot_joined_falls_back_to_text_log_without_events():
+    c = FakeCluster(logs={"auth": "bot.join bot_name:bk-bot method:token success:true"})
+    res = _run(c, "bot_joined bk-bot token")
+    assert res.status == "PASS" and res.proofs[0].kind == "log-excerpt"
+
+
 # ---- file verbs -------------------------------------------------------------
 def test_output_file_verbs():
     c = FakeCluster(files=[("tbot", "/out/id/identity")])
@@ -208,7 +301,7 @@ def test_identity_scope_pass_and_fail():
     argv = _status_argv("/out/id/identity")
     ok = FakeCluster(execs={("gobot", argv): (0, "  Logged in as: bot\n  Scope:  /genericoidc-test\n")})
     res = _run(ok, "identity_scope gobot /out/id/identity /genericoidc-test")
-    assert res.status == "PASS" and any("/genericoidc-test" in e for e in res.evidence)
+    assert res.status == "PASS" and "/genericoidc-test" in _proof_text(res)
     # wrong/absent scope -> FAIL (an unscoped identity prints no Scope line)
     bad = FakeCluster(execs={("gobot", argv): (0, "  Logged in as: bot\n")})
     assert _run(bad, "identity_scope gobot /out/id/identity /genericoidc-test").status == "FAIL"
@@ -254,14 +347,16 @@ def test_generic_oidc_all_pass_simulated():
     ]
     bots = ["gobot-disc", "gobot-static", "gobot-scoped-disc", "gobot-scoped-static"]
     auth_log = "\n".join(
-        ["audit join_token.create ... impersonator:bot-token-manager ..."]
-        + [f"event_type:bot.join bot_name:{b} method:generic_oidc success:true" for b in bots]
+        f"event_type:bot.join bot_name:{b} method:generic_oidc success:true" for b in bots
     )
     logs = {
         "agent-deny": "unable to validate generic_oidc token",
         "agent-scoped-deny": "denied: unable to join via generic_oidc",
         "auth": auth_log,
     }
+    # structured audit events: the join_token.create the impersonator check now inspects
+    events = [{"event": "join_token.create", "code": "TJ002I", "name": "agent-token",
+               "impersonator": "bot-token-manager", "success": True}]
     # every bot wrote an identity; the two unscoped bots can list tokens.
     files = [(b, "/out/id/identity") for b in bots]
     id_argv = ("tctl", "--identity", "/out/id/identity", "--auth-server", "auth:3025", "tokens", "ls")
@@ -276,7 +371,7 @@ def test_generic_oidc_all_pass_simulated():
         ssh_argv = ("tsh", "ssh", "--identity", "/out/id/identity", "--proxy", proxy,
                     f"root@{node}", "--", "echo", "harness-ok")
         execs[(b, ssh_argv)] = (0, "harness-ok\n")
-    c = FakeCluster(nodes=nodes, logs=logs, files=files, execs=execs)
+    c = FakeCluster(nodes=nodes, logs=logs, files=files, execs=execs, events=events)
     results = verify(c, m.checks, module_dir=MODULES / "generic_oidc")
     text, passed = render(results)
     assert passed, text

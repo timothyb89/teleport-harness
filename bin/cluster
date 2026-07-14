@@ -11,6 +11,7 @@
 #   cluster logs    <id> [service]
 #   cluster web     <id>
 #   cluster report  <id>
+#   cluster share   <run-bundle|id> [--public]
 #   cluster teardown <id|--all>
 #
 # Global flags (before or after the subcommand): --target <name> (targets/<name>.env)
@@ -35,6 +36,7 @@ LIB="$(cd "$(dirname "$SELF")/../lib" && pwd)"
 . "$LIB/verify.sh"
 [ -f "$LIB/plan.sh" ] && . "$LIB/plan.sh"
 [ -f "$LIB/report.sh" ] && . "$LIB/report.sh"
+[ -f "$LIB/share.sh" ] && . "$LIB/share.sh"
 
 # Parse global + passthrough flags into env; collect positionals.
 POS=()
@@ -67,7 +69,8 @@ case "$cmd" in
   tsh)      cluster_tsh "$@" ;;
   web)      cluster_web "$@" ;;
   report)   command -v cluster_report >/dev/null 2>&1 || die "reporter not installed yet"; cluster_report "$@" ;;
+  share)    command -v cluster_share >/dev/null 2>&1 || die "sharer not installed yet"; cluster_share "$@" ;;
   teardown) cluster_teardown "$@" ;;
   ""|help)  sed -n '2,20p' "$0" ;;
-  *) die "unknown command: $cmd (try: doctor validate build up run-plan ls logs web report teardown)" ;;
+  *) die "unknown command: $cmd (try: doctor validate build up run-plan ls logs web report share teardown)" ;;
 esac

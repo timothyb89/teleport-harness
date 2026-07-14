@@ -6,6 +6,13 @@ teleport:
   data_dir: /var/lib/teleport
   diag_addr: 0.0.0.0:3000
   log: {output: stderr, severity: INFO}
+  # Emit audit events as newline-delimited JSON on disk (in addition to the text log),
+  # so checks can inspect the FULL structured event (the `audit_event` verb renders it
+  # as pretty JSON proof) instead of scraping the text logger. One file per day under
+  # the dir; each line is one event.
+  storage:
+    type: sqlite
+    audit_events_uri: ["file:///var/lib/teleport/audit/events"]
 auth_service:
   enabled: "yes"
   cluster_name: {{ fqdn }}

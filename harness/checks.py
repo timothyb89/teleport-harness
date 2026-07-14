@@ -36,6 +36,10 @@ _SPECS: list[VerbSpec] = [
     VerbSpec("node_count", 1, 1, "node_count <n>"),
     VerbSpec("scoped_node_count", 2, 2, "scoped_node_count <scope> <n>"),
     VerbSpec("log_contains", 2, None, "log_contains <container-suffix> <regex...>"),
+    VerbSpec(
+        "audit_event", 1, None,
+        "audit_event <event-type> [field=value ...]  (inspect a structured audit event)",
+    ),
     VerbSpec("bot_joined", 1, 2, "bot_joined <bot-name> [join-method]"),
     VerbSpec("output_file", 2, 2, "output_file <container-suffix> <path>"),
     VerbSpec("no_output_file", 2, 2, "no_output_file <container-suffix> <path>"),

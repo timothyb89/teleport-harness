@@ -23,6 +23,8 @@ cluster_report() {
   cp -R "$out/bootstrap" "$bundle/rendered/" 2>/dev/null || true
   # structured verification results (per-module, written by the Python verifier)
   cp "$out"/results-*.json "$bundle/" 2>/dev/null || true
+  # setup provenance manifest (roles/tokens/bots/services + source links), for inspection
+  cp "$out/setup.json" "$bundle/" 2>/dev/null || true
   # raw console output (the run-plan verification log), kept for reference
   [ -n "$results" ] && [ -f "$results" ] && cp "$results" "$bundle/console.txt" 2>/dev/null || true
 

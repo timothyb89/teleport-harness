@@ -20,6 +20,7 @@ $OUT/bootstrap (a bots.manifest) which the shared auth-entrypoint applies.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -102,13 +103,15 @@ def _collect_bootstrap(unit_dir: Path, ctx: dict, boot_out: Path, origin: str) -
                 (hooks_out / f"{origin}__{f.name}").write_text(f.read_text())
 
 
-def _merge_fragment(compose: dict, env: Environment, unit_dir: Path, ctx: dict) -> None:
+def _merge_fragment(compose: dict, env: Environment, unit_dir: Path, ctx: dict,
+                    origins: dict[str, str], label: str) -> None:
     frag_text = _render_str(env, "services.yml.j2", ctx)
     frag = yaml.safe_load(frag_text) or {}
     for svc, spec in (frag.get("services") or {}).items():
         if svc in compose["services"]:
             raise ValueError(f"service '{svc}' defined twice (from {unit_dir.name})")
         compose["services"][svc] = spec
+        origins[svc] = label
     for vol, spec in (frag.get("volumes") or {}).items():
         compose["volumes"].setdefault(vol, spec)
 
@@ -141,6 +144,9 @@ def render_cluster(
             raise ValueError(f"unknown component '{c}' (no {d})")
     comp_rv = {d: _load_render_yaml(d) for d in component_dirs}
 
+    # label each unit for provenance in setup.json ("proof = the source that made it").
+    unit_labels = {d: f"component:{d.name}" for d in component_dirs}
+    unit_labels.update({m: f"module:{m.name}" for m in module_dirs})
     units = [(d, comp_rv[d]) for d in component_dirs] + [(m, module_rv[m]) for m in module_dirs]
 
     # Merge auth_env across every unit; render the base with it.
@@ -152,16 +158,18 @@ def render_cluster(
     compose.setdefault("services", {})
     compose.setdefault("volumes", {})
 
+    origins: dict[str, str] = {svc: "base" for svc in compose["services"]}
     bots: list[dict] = []
     for unit_dir, rv in units:
         ctx = {**base_ctx, **rv, "module_dir": str(unit_dir)}
         if run_prebuild:
             _run_prebuild(unit_dir, ctx)
         env = _env(unit_dir, unit_dir / "config", TEMPLATES)
-        _merge_fragment(compose, env, unit_dir, ctx)
+        _merge_fragment(compose, env, unit_dir, ctx, origins, unit_labels[unit_dir])
         _render_unit_configs(unit_dir, ctx, out_dir / "config")
         _collect_bootstrap(unit_dir, ctx, boot_out, unit_dir.name)
-        bots.extend(rv.get("bots", []) or [])
+        for b in (rv.get("bots", []) or []):
+            bots.append({**b, "_origin": unit_labels[unit_dir]})
 
     # Shared teleport auth config (a unit may override via its own config/auth.yaml.j2).
     if not (out_dir / "config" / "auth.yaml").is_file():
@@ -181,7 +189,122 @@ def render_cluster(
 
     compose_path = out_dir / "docker-compose.yml"
     compose_path.write_text(yaml.safe_dump(compose, sort_keys=False, default_flow_style=False))
+
+    # setup.json — provenance manifest the report renders directly (no retroactive
+    # scraping). Each entry links to the rendered source that produced it.
+    _write_setup(out_dir, boot_out, compose, origins, bots,
+                 [c.name for c in component_dirs], [m.name for m in module_dirs])
     return compose_path
+
+
+def _compact(v) -> str:
+    """One-line human summary of an RBAC allow value (list/dict/scalar)."""
+    if isinstance(v, list):
+        return "[" + ", ".join(_compact(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"{k}: {_compact(val)}" for k, val in v.items()) + "}"
+    return str(v)
+
+
+def _summarize_allow(spec: dict) -> str:
+    """Compact one-line summary of a role's `spec.allow` — the 'special permissions'."""
+    allow = (spec or {}).get("allow") or {}
+    if not allow:
+        return ""
+    return "; ".join(f"{k}={_compact(v)}" for k, v in allow.items())
+
+
+def _summarize_role(doc: dict) -> str:
+    """Permissions summary for either a classic `role` (grants under `spec.allow`) or a
+    `scoped_role` (grants under `spec.ssh`/`spec.kubernetes`/… + `assignable_scopes`, with
+    no `allow` block). Falls back to compacting the whole spec so nothing is lost."""
+    spec = doc.get("spec") or {}
+    if spec.get("allow"):
+        return _summarize_allow(spec)
+    return "; ".join(f"{k}={_compact(v)}" for k, v in spec.items()) if spec else ""
+
+
+def _docs(path: Path):
+    """Yield each YAML document in a bootstrap file (resources may be multi-doc)."""
+    try:
+        for doc in yaml.safe_load_all(path.read_text()):
+            if isinstance(doc, dict):
+                yield doc
+    except yaml.YAMLError:
+        return
+
+
+def _write_setup(out_dir: Path, boot_out: Path, compose: dict, origins: dict[str, str],
+                 bots: list[dict], components: list[str], modules: list[str]) -> None:
+    services = [
+        {"name": name, "image": (spec or {}).get("image", "?"), "origin": origins.get(name, "")}
+        for name, spec in (compose.get("services") or {}).items()
+    ]
+
+    roles, tokens, token_idx, boot_bots = [], [], {}, {}
+    for f in sorted(boot_out.glob("*.yaml")):
+        origin = f.name.split("__", 1)[0] if "__" in f.name else ""
+        src = f"rendered/bootstrap/{f.name}"
+        for doc in _docs(f):
+            kind = doc.get("kind", "")
+            meta = doc.get("metadata") or {}
+            name = meta.get("name", "?")
+            spec = doc.get("spec") or {}
+            if kind in ("role", "scoped_role"):
+                roles.append({"name": name, "kind": kind, "description": meta.get("description", ""),
+                              "allow": _summarize_role(doc), "scope": doc.get("scope", ""),
+                              "origin": origin, "source": src})
+            elif kind in ("token", "scoped_token"):
+                jm = spec.get("join_method", "")
+                tokens.append({"name": name, "kind": kind, "join_method": jm,
+                               "origin": origin, "source": src})
+                token_idx[name] = (jm, src)
+            elif kind in ("bot", "scoped_bot"):
+                boot_bots[name] = {"roles": spec.get("roles") or [], "source": src, "origin": origin}
+
+    # tbot outputs/services parsed from rendered configs (what a bot is configured to produce).
+    configs = []
+    for f in sorted((out_dir / "config").glob("*.yaml")):
+        try:
+            doc = yaml.safe_load(f.read_text()) or {}
+        except yaml.YAMLError:
+            continue
+        if not isinstance(doc, dict) or not ("onboarding" in doc or "outputs" in doc):
+            continue  # not a tbot config
+        configs.append({
+            "file": f.name, "source": f"rendered/config/{f.name}",
+            "join_method": (doc.get("onboarding") or {}).get("join_method", ""),
+            "outputs": [o.get("type", "output") for o in (doc.get("outputs") or []) if isinstance(o, dict)],
+        })
+
+    def _config_join_method(bot_name: str) -> str:
+        """A bot's join method may live in its tbot config's onboarding (when the
+        bootstrap token is empty, e.g. a runtime-created generic_oidc provision token)."""
+        for cfg in configs:
+            if bot_name in cfg["file"] and cfg["join_method"]:
+                return cfg["join_method"]
+        return ""
+
+    bot_entries, seen = [], set()
+    for b in bots:
+        r = b["roles"]
+        r = r if isinstance(r, list) else [x for x in str(r).split(",") if x]
+        tok = b.get("token", "")
+        jm, tsrc = token_idx.get(tok, ("token" if tok else "", ""))
+        jm = jm or _config_join_method(b["name"])
+        boot = boot_bots.get(b["name"], {})
+        bot_entries.append({"name": b["name"], "roles": r, "token": tok, "join_method": jm,
+                            "origin": b.get("_origin", ""), "source": boot.get("source", tsrc)})
+        seen.add(b["name"])
+    for name, boot in boot_bots.items():  # scoped_bot resources aren't in the bots manifest
+        if name not in seen:
+            bot_entries.append({"name": name, "roles": boot["roles"], "token": "",
+                                "join_method": _config_join_method(name),
+                                "origin": f"module:{boot['origin']}", "source": boot["source"]})
+
+    setup = {"modules": modules, "components": components, "services": services,
+             "roles": roles, "tokens": tokens, "bots": bot_entries, "configs": configs}
+    (out_dir / "setup.json").write_text(json.dumps(setup, indent=2) + "\n")
 
 
 def render_module(module_dir: Path, ctx: dict, out_dir: Path, run_prebuild: bool = True) -> Path:

@@ -55,7 +55,9 @@ shell shells out via the `pybrain` helper (`lib/common.sh` → `uv run --project
 Subcommands: `validate [module]` (schema + verb/arity check — used by `doctor`),
 `gate <module> [--features] [--version]` (exit 3 == skip), `meta <module> <field>`,
 `checks <module>` (validated `verb args` lines), `verify <module> --cluster-id <id>` (run checks,
-structured JSON w/ evidence), `render --modules a,b,c --out <dir> …` (compose N modules + components),
+structured JSON w/ a proof registry), `render --modules a,b,c --out <dir> …` (compose N modules +
+components; also emits `setup.json` — a provenance manifest of the roles/tokens/bots/services it
+created, each with a source link, that the report renders directly),
 `plan-resolve <plan> [--features] [--version]` (gate each module → run/skip JSON),
 `report-md --state-dir <dir>` (rich markdown report). All unit-tested
 (`tests/`, `uv run --extra dev pytest`) — the harness's correctness bar. A bad `module.yaml`
@@ -104,19 +106,31 @@ module (back-compat). Today: `plans/bots.yaml` (tbot + bound_keypair — composi
 `run-plan` calls `harness verify <module> --cluster-id <id>`: the brain parses + verb/arity-
 validates the module (invalid → immediate FAIL), then runs each check against the live cluster
 and prints `  PASS|FAIL|SKIP <msg>` lines + one `RESULT: PASS|FAIL` (only FAIL fails the run;
-SKIP is a neutral not-yet-satisfied soft check), exiting non-zero on FAIL. Each check also captures
-**evidence** — the concrete proof it relied on: node/file/identity checks record a one-line
-`evidence` (node record, byte size, the `tctl … tokens ls` command + exit); log checks
-(`log_contains`/`bot_joined`) record an `excerpt` — a `grep -C3` line-numbered context window with
-the matched line marked `>`. Shown indented (`↳` / excerpt lines) in the console, in
-`state/<id>/results-<module>.json` (`{status,verb,args,msg,evidence,excerpt}` per check, + a captured
-node inventory), and in the markdown report (excerpts as fenced code blocks inside the check list).
+SKIP is a neutral not-yet-satisfied soft check), exiting non-zero on FAIL. Evidence is a
+first-class **`ProofItem`** (Foundation A): a check no longer welds its proof inline — it
+references one or more shared, run-level proof items by id, so several checks can cite ONE proof
+and the FULL (untruncated) content is preserved for review. A ProofItem is
+`{id (content-hash), kind (log-excerpt|audit-event|node-record|command|file|text), title,
+content, lang, source}`, where `source` is a bundle-relative link to the artifact (a per-service
+`logs/<svc>.log`, a rendered resource). `collect_proofs` hoists+dedups them. Shown indented
+(`↳ <title>` + content) in the console, in `state/<id>/results-<module>.json`
+(`{status,verb,args,msg,proof_refs,assertions}` per check — `assertions` are the individual
+conditions the verb published, e.g. audit-event `field = value` pairs, rendered as a "Checks
+against this proof" list under each proof — + a top-level `proofs` registry + a captured node
+inventory), and in the markdown report as a check TABLE linking to per-proof anchored sections
+(untruncated, fenced). The report reader falls back to the legacy inline evidence/excerpt shape
+for older bundles.
 All docker interaction goes through the `Cluster` seam (`harness/cluster.py`) so asserts are
 unit-testable with a `FakeCluster` (they never were in bash). Adding a verb = an impl in
 `harness/verify.py` `IMPLS` + a `VerbSpec` in `harness/checks.py` (a test enforces they match).
 Current verbs: `node_present`/`node_absent`/`node_scope`/`node_count`/`scoped_node_count`,
-`log_contains <suffix> <regex…>` (case-insensitive; SKIP on no match), `bot_joined <name>
-[method]`, `output_file`/`no_output_file <suffix> <path>`, `identity_authorized <suffix>
+`log_contains <suffix> <regex…>` (case-insensitive; SKIP on no match),
+`audit_event <event-type> [field=value…]` (inspect a STRUCTURED audit event from the JSON file
+backend — matches one event of that type where every `field=value` holds, value-compare
+case-insensitive; renders the FULL event as pretty-JSON proof. Two lines selecting the same event
+dedup to one proof both checks cite. FAIL if none matches), `bot_joined <name>
+[method]` (prefers the structured `bot.join` audit event → JSON proof; falls back to scraping the
+text log), `output_file`/`no_output_file <suffix> <path>`, `identity_authorized <suffix>
 <identity-path> [auth-server]` (runs `tctl --identity … tokens ls`), `identity_scope <suffix>
 <identity-path> <scope>` (asserts `tsh status --identity` shows the scope — scope-pin proof),
 `tsh_ssh <suffix> [login]` (admin identity), `tsh_ssh_as <suffix> <identity-path> <node-suffix>
@@ -137,13 +151,21 @@ type — system-trusted, no custom-CA — validates it). Plans today: `bots` (tb
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build --repo` · `up <module> --repo [--id]` · `run-plan <plan|module> --repo [--features a,b] [--version vNN] [--id]`
-· `ls` · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` · `teardown <id|--all>`.
+· `ls` · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` ·
+`share <run-bundle|id> [--public]` · `teardown <id|--all>`.
 `run-plan <plan|module>` gates each module on `requires_features`/`min_version` (SKIP with a
 logged reason — no silent skips), composes the cluster up (or reuses an existing `--id`), verifies
 every running module, and writes `runs/<ts>-<id>/`: a rich **`results.md`** (built by `harness
-report-md` from the structured data — summary table, cluster setup w/ services + bootstrapped
-roles/tokens/bots, node inventory, and per-check evidence), per-module `results-*.json`, the raw
-`console.txt`, per-service `logs/`, and `rendered/` (compose + config + bootstrap). Leaves the cluster up.
+report-md` from the structured data — summary table; a cluster-setup section rendered from
+`setup.json` as services/roles/tokens/bots TABLES with source links; node inventory; and a
+per-module check TABLE linking to anchored, untruncated proof sections), per-module
+`results-*.json`, the renderer's `setup.json` provenance manifest, the raw `console.txt`,
+per-service `logs/`, and `rendered/` (compose + config + bootstrap). Leaves the cluster up.
+`share <run-bundle|id>` publishes a bundle as a GitHub gist (`gh gist create`, secret by default;
+`--public` opts in with a secrets warning): the brain (`harness gist-stage` → `harness/share.py`)
+flattens the bundle (gists are flat — `rendered/config/x.yaml` → `rendered--config--x.yaml`) and
+rewrites `results.md`'s relative links to gist per-file anchors (`#file-<slug>`; dir links demoted
+to text), so the shared report stays navigable. Given a bare id it makes a fresh bundle first.
 
 ### Admin access (`lib/admin.sh`)
 Teleport's **admin-action MFA** (v15+) blocks user-minted identity files but **exempts
@@ -180,6 +202,14 @@ if the cluster enforces it, an MFA device).
   `/healthz` — before its user exists — and `tbot start` exits 1 on a failed initial join (no retry).
   Bootstrap is now declarative + shared: modules contribute `bootstrap/*.yaml[.j2]` (roles/tokens)
   + `bots:` (render.yaml), and one shared entrypoint applies them all — no per-module entrypoint.
+- **Audit events are JSON on disk**: the shared `auth.yaml.j2` sets
+  `teleport.storage.audit_events_uri: file:///var/lib/teleport/audit/events`, so the file audit
+  backend writes NDJSON (one event per line) IN ADDITION to the text log. The `audit_event` verb
+  reads it via `Cluster.audit_events()` (`find … -exec cat`, parse each line as JSON). Event field
+  names are the JSON tags from `api/proto/.../events.proto` (source of truth): type=`event`,
+  `code`, `success` (bool), `bot_name`, `method`, `token_name`, `impersonator`, `scope`, …. If the
+  backend ever isn't emitting, `bot_joined` still works (text-log fallback), but a raw `audit_event`
+  line FAILs — validate a new event's field names against a live run.
 
 ## Adding a module
 (Full step-by-step + gotchas + checklist: `skills/teleport-cluster/references/authoring.md`.)

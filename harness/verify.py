@@ -4,10 +4,13 @@ check's args and returns a structured CheckResult; the dispatcher renders the sa
 `  PASS|FAIL|SKIP <msg>` / `RESULT:` text the shell contract expects AND a JSON
 report. Impls are thin over the `Cluster` seam, so they're unit-testable with a fake.
 
-Each result also carries `evidence` — the concrete proof the check relied on (the
-matched log line, the node record, the command + exit status). It's shown indented in
-the console, in the JSON, and in the markdown report, so a reader can see WHY a check
-passed, not just that it did.
+Evidence is a first-class `ProofItem` (Foundation A): a check no longer welds its
+proof inline — it references one or more shared, run-level proof items (the matched
+audit/log window, the node record, the command + its output, a file). Decoupling the
+proof from the assertion lets several checks cite ONE proof, preserves the FULL
+(untruncated) content for review, and gives each proof a stable id the markdown report
+turns into a linkable heading. `collect_proofs` hoists every check's proofs into a
+deduped registry for the report.
 
 Behavior mirrors the old bash asserts exactly:
   - only FAIL fails the run; SKIP is neutral (a not-yet-satisfied soft check).
@@ -16,7 +19,9 @@ Behavior mirrors the old bash asserts exactly:
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,23 +35,62 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
 
 @dataclass
+class ProofItem:
+    """A concrete piece of evidence a check relied on, decoupled from the check.
+
+    `content` is kept in FULL (never truncated) so audit events / log windows can be
+    reviewed in their entirety. `id` is a stable content hash so identical proofs from
+    different checks collapse to one (enabling "N checks against one proof") and the
+    report can mint a deterministic anchor. `source` is an optional bundle-relative
+    link to the artifact that produced it (a per-service log, a rendered resource)."""
+
+    kind: str            # log-excerpt | audit-event | node-record | command | file | text
+    title: str
+    content: str = ""    # FULL, untruncated
+    lang: str = ""       # markdown code-fence hint: "json" or "" (plain)
+    source: str = ""     # optional bundle-relative link (logs/<svc>.log, rendered/…)
+
+    @property
+    def id(self) -> str:
+        h = hashlib.sha1(f"{self.kind}\0{self.title}\0{self.content}".encode()).hexdigest()[:10]
+        return f"{self.kind}-{h}"
+
+    def as_dict(self) -> dict:
+        return {"id": self.id, "kind": self.kind, "title": self.title,
+                "content": self.content, "lang": self.lang, "source": self.source}
+
+
+@dataclass
 class CheckResult:
     status: str
     msg: str
     verb: str = ""
     args: list[str] = field(default_factory=list)
-    evidence: list[str] = field(default_factory=list)  # short inline proofs (node/file/identity)
-    excerpt: list[str] = field(default_factory=list)    # line-numbered log context → code block
+    proofs: list[ProofItem] = field(default_factory=list)  # proof items this check cites
+    assertions: list[str] = field(default_factory=list)     # the individual conditions asserted
+    # (e.g. audit-event `field = value` pairs) — published by the verb, shown under the proof.
 
     def line(self) -> str:
         return f"  {self.status:<4} {self.msg}"
 
     def as_dict(self) -> dict:
         return {"status": self.status, "verb": self.verb, "args": self.args,
-                "msg": self.msg, "evidence": self.evidence, "excerpt": self.excerpt}
+                "msg": self.msg, "proof_refs": [p.id for p in self.proofs],
+                "assertions": self.assertions}
+
+
+def collect_proofs(results: list[CheckResult]) -> list[ProofItem]:
+    """Hoist every check's proofs into a deduped, run-level registry (first-seen wins).
+    Identical proofs (same content hash) referenced by multiple checks collapse to one."""
+    reg: dict[str, ProofItem] = {}
+    for r in results:
+        for p in r.proofs:
+            reg.setdefault(p.id, p)
+    return list(reg.values())
 
 
 def _truncate(s: str, n: int = 240) -> str:
+    """Console-display truncation ONLY. Proof `content` is always stored in full."""
     s = s.rstrip()
     return s if len(s) <= n else s[: n - 1] + "…"
 
@@ -77,10 +121,11 @@ def _hostnames(nodes: list[dict]) -> list[str]:
 
 
 def _excerpt(lines: list[str], match_idxs: list[int], context: int = 3,
-             max_lines: int = 25, width_cap: int = 200) -> list[str]:
+             max_lines: int = 60) -> list[str]:
     """grep -C style: line-numbered context around each match, matched lines marked `>`,
     non-contiguous groups separated by `--`. Line numbers are 1-based positions in the
-    container log. Long lines (audit events) are truncated — the full line is in logs/."""
+    container log. Lines are kept at FULL width (the whole point of a proof); only the
+    number of context lines is bounded, and the full log is linked as the proof source."""
     if not match_idxs:
         return []
     matchset = set(match_idxs)
@@ -95,12 +140,16 @@ def _excerpt(lines: list[str], match_idxs: list[int], context: int = 3,
         if prev is not None and j != prev + 1:
             out.append("--")
         mark = ">" if j in matchset else " "
-        out.append(f"{mark} [{str(j + 1).rjust(width)}] {_truncate(lines[j], width_cap)}")
+        out.append(f"{mark} [{str(j + 1).rjust(width)}] {lines[j].rstrip()}")
         if len(out) >= max_lines:
-            out.append("… (truncated; see logs/)")
+            out.append("… (truncated; see the linked full log)")
             break
         prev = j
     return out
+
+
+def _log_proof(cname: str, suffix: str, title: str, excerpt: list[str]) -> ProofItem:
+    return ProofItem("log-excerpt", title, "\n".join(excerpt), source=f"logs/{suffix}.log")
 
 
 # --- node join outcomes -------------------------------------------------------
@@ -108,9 +157,11 @@ def _node_present(c, nodes, args):
     h = _hostname(c, args[0])
     node = _find_node(nodes, h)
     if node:
-        return CheckResult(PASS, f"node {h} joined", evidence=[_node_desc(node)])
+        return CheckResult(PASS, f"node {h} joined",
+                           proofs=[ProofItem("node-record", f"node {h} (tctl get nodes)", _node_desc(node))])
     return CheckResult(FAIL, f"node {h} did not join",
-                       evidence=[f"present nodes: {', '.join(_hostnames(nodes)) or 'none'}"])
+                       proofs=[ProofItem("text", f"nodes present when {h} expected",
+                                         f"present nodes: {', '.join(_hostnames(nodes)) or 'none'}")])
 
 
 def _node_absent(c, nodes, args):
@@ -119,7 +170,8 @@ def _node_absent(c, nodes, args):
     if _find_node(nodes, h):
         return CheckResult(FAIL, f"node {h} present but expected absent (denied)")
     return CheckResult(PASS, f"node {h} absent (denied)",
-                       evidence=[f"{len(nodes)} node(s) joined, none named {h}: {present}"])
+                       proofs=[ProofItem("text", f"node {h} correctly absent",
+                                         f"{len(nodes)} node(s) joined, none named {h}: {present}")])
 
 
 def _node_scope(c, nodes, args):
@@ -127,25 +179,28 @@ def _node_scope(c, nodes, args):
     node = _find_node(nodes, h)
     got = (node or {}).get("scope", "")
     if got == scope:
-        return CheckResult(PASS, f"node {h} scope={scope}", evidence=[_node_desc(node)])
+        return CheckResult(PASS, f"node {h} scope={scope}",
+                           proofs=[ProofItem("node-record", f"node {h} (tctl get nodes)", _node_desc(node))])
     return CheckResult(FAIL, f"node {h} scope='{got}' expected '{scope}'")
 
 
 def _node_count(c, nodes, args):
     want, got = int(args[0]), len(nodes)
-    ev = [f"{got} node(s): {', '.join(_hostnames(nodes)) or 'none'}"]
+    proof = ProofItem("text", f"node inventory ({got})",
+                      f"{got} node(s): {', '.join(_hostnames(nodes)) or 'none'}")
     if got == want:
-        return CheckResult(PASS, f"exactly {want} node(s) joined", evidence=ev)
-    return CheckResult(FAIL, f"expected {want} node(s), got {got}", evidence=ev)
+        return CheckResult(PASS, f"exactly {want} node(s) joined", proofs=[proof])
+    return CheckResult(FAIL, f"expected {want} node(s), got {got}", proofs=[proof])
 
 
 def _scoped_node_count(c, nodes, args):
     scope, want = args[0], int(args[1])
     scoped = [n.get("spec", {}).get("hostname", "?") for n in nodes if n.get("scope") == scope]
-    ev = [f"in scope {scope}: {', '.join(scoped) or 'none'}"]
+    proof = ProofItem("text", f"nodes in scope {scope} ({len(scoped)})",
+                      f"in scope {scope}: {', '.join(scoped) or 'none'}")
     if len(scoped) == want:
-        return CheckResult(PASS, f"exactly {want} node(s) in scope {scope}", evidence=ev)
-    return CheckResult(FAIL, f"expected {want} node(s) in scope {scope}, got {len(scoped)}", evidence=ev)
+        return CheckResult(PASS, f"exactly {want} node(s) in scope {scope}", proofs=[proof])
+    return CheckResult(FAIL, f"expected {want} node(s) in scope {scope}, got {len(scoped)}", proofs=[proof])
 
 
 # --- log / audit --------------------------------------------------------------
@@ -156,19 +211,71 @@ def _log_contains(c, nodes, args):
     rx = re.compile(pattern, re.IGNORECASE)
     idxs = [i for i, ln in enumerate(lines) if rx.search(ln)][:5]  # cap match windows
     if idxs:
-        return CheckResult(PASS, f"{cname} log matches /{pattern}/", excerpt=_excerpt(lines, idxs))
+        proof = _log_proof(cname, suffix, f"{cname} log matches /{pattern}/", _excerpt(lines, idxs))
+        return CheckResult(PASS, f"{cname} log matches /{pattern}/", proofs=[proof])
     return CheckResult(SKIP, f"{cname} log has no match for /{pattern}/ yet")
+
+
+def _parse_conds(args: list[str]) -> list[tuple[str, str]]:
+    """`field=value` selectors from an audit_event line (non-`k=v` args are ignored)."""
+    return [(a.split("=", 1)[0], a.split("=", 1)[1]) for a in args if "=" in a]
+
+
+def _event_matches(ev: dict, etype: str, conds: list[tuple[str, str]]) -> bool:
+    if ev.get("event") != etype:
+        return False
+    return all(str(ev.get(k, "")).lower() == v.lower() for k, v in conds)
+
+
+def _audit_proof(ev: dict) -> ProofItem:
+    """The FULL audit event as pretty JSON — the untruncated proof a reader inspects."""
+    title = f"{ev.get('event', 'event')} audit event"
+    if ev.get("code"):
+        title += f" ({ev['code']})"
+    return ProofItem("audit-event", title, json.dumps(ev, indent=2, sort_keys=True), lang="json")
+
+
+def _audit_event(c, nodes, args):
+    """Inspect a structured audit event: find one of <event-type> matching every
+    field=value selector, and render its FULL JSON as proof. Because the proof is the
+    whole event (independent of which fields a line asserts), two audit_event lines
+    selecting the same event dedup to ONE proof section that both checks link to."""
+    etype = args[0]
+    conds = _parse_conds(args[1:])
+    sel = " ".join(args[1:])
+    asserts = [f"event = {etype}"] + [f"{k} = {v}" for k, v in conds]
+    events = c.audit_events()
+    for ev in events:
+        if _event_matches(ev, etype, conds):
+            return CheckResult(PASS, f"audit event '{etype}' present" + (f" ({sel})" if sel else ""),
+                               proofs=[_audit_proof(ev)], assertions=asserts)
+    # no full match: surface the closest same-type event (if any) to aid debugging
+    candidates = [ev for ev in events if ev.get("event") == etype]
+    if candidates:
+        return CheckResult(FAIL, f"no '{etype}' audit event matched {sel}",
+                           proofs=[_audit_proof(candidates[0])], assertions=asserts)
+    return CheckResult(FAIL, f"no '{etype}' audit event found", assertions=asserts)
 
 
 def _bot_joined(c, nodes, args):
     name = args[0]
     method = args[1] if len(args) > 1 else ""
     suffix = f" via {method}" if method else ""
+    # prefer the structured audit event (full JSON proof); fall back to the text log
+    # for clusters without the JSON audit backend (older bundles).
+    conds = [("bot_name", name), ("success", "true")] + ([("method", method)] if method else [])
+    asserts = ["event = bot.join"] + [f"{k} = {v}" for k, v in conds]
+    for ev in c.audit_events():
+        if _event_matches(ev, "bot.join", conds):
+            return CheckResult(PASS, f"bot '{name}' joined{suffix}",
+                               proofs=[_audit_proof(ev)], assertions=asserts)
     lines = c.logs("auth").splitlines()
     for i, ln in enumerate(lines):
         if ("bot.join" in ln and f"bot_name:{name}" in ln and "success:true" in ln
                 and (not method or f"method:{method}" in ln)):
-            return CheckResult(PASS, f"bot '{name}' joined{suffix}", excerpt=_excerpt(lines, [i]))
+            proof = _log_proof(c.container("auth"), "auth",
+                               f"bot.join audit event for '{name}'", _excerpt(lines, [i]))
+            return CheckResult(PASS, f"bot '{name}' joined{suffix}", proofs=[proof], assertions=asserts)
     return CheckResult(FAIL, f"bot '{name}' did not join{suffix} (no successful bot.join event)")
 
 
@@ -178,8 +285,9 @@ def _output_file(c, nodes, args):
     cname = c.container(suffix)
     if c.file_nonempty(suffix, path):
         size = c.file_size(suffix, path)
-        ev = [f"{path}: {size} bytes"] if size is not None else [f"{path}: present"]
-        return CheckResult(PASS, f"{cname}:{path} present", evidence=ev)
+        detail = f"{path}: {size} bytes" if size is not None else f"{path}: present"
+        return CheckResult(PASS, f"{cname}:{path} present",
+                           proofs=[ProofItem("file", f"{cname}:{path}", detail)])
     return CheckResult(FAIL, f"{cname}:{path} missing")
 
 
@@ -188,7 +296,8 @@ def _no_output_file(c, nodes, args):
     cname = c.container(suffix)
     if c.file_nonempty(suffix, path):
         return CheckResult(FAIL, f"{cname}:{path} present but expected none")
-    return CheckResult(PASS, f"{cname}:{path} absent", evidence=[f"{path} not present (as expected)"])
+    return CheckResult(PASS, f"{cname}:{path} absent",
+                       proofs=[ProofItem("file", f"{cname}:{path} (absent)", f"{path} not present (as expected)")])
 
 
 # --- identity usability -------------------------------------------------------
@@ -197,13 +306,14 @@ def _identity_authorized(c, nodes, args):
     auth_server = args[2] if len(args) > 2 else "auth:3025"
     argv = ["tctl", "--identity", ident, "--auth-server", auth_server, "tokens", "ls"]
     rc, out = c.exec_out(suffix, argv)
-    cmd = f"$ {' '.join(argv)}  → exit {rc}"
+    cmd = f"$ {' '.join(argv)}\nexit {rc}"
     if rc == 0:
         first = next((ln for ln in out.splitlines() if ln.strip()), "")
-        ev = [cmd] + ([_truncate(first, 120)] if first else [])
-        return CheckResult(PASS, f"{c.container(suffix)} identity authenticates + is authorized", evidence=ev)
+        content = cmd + (f"\n{first}" if first else "")
+        return CheckResult(PASS, f"{c.container(suffix)} identity authenticates + is authorized",
+                           proofs=[ProofItem("command", f"{c.container(suffix)}: authorized tctl call", content)])
     return CheckResult(FAIL, f"{c.container(suffix)} identity could not perform an authorized action",
-                       evidence=[cmd])
+                       proofs=[ProofItem("command", f"{c.container(suffix)}: failed tctl call", cmd)])
 
 
 def _tsh_ssh(c, nodes, args):
@@ -212,7 +322,8 @@ def _tsh_ssh(c, nodes, args):
     h = _hostname(c, suffix)
     if c.tsh_ssh(suffix, login):
         return CheckResult(PASS, f"tsh ssh {login}@{h} works",
-                           evidence=[f"tsh ssh {login}@{h} -- echo harness-ok → harness-ok"])
+                           proofs=[ProofItem("command", f"tsh ssh {login}@{h}",
+                                             f"$ tsh ssh {login}@{h} -- echo harness-ok\nharness-ok")])
     return CheckResult(FAIL, f"tsh ssh {login}@{h} failed")
 
 
@@ -226,9 +337,10 @@ def _identity_scope(c, nodes, args):
     # tsh status prints a line like:  "  Scope:              /genericoidc-test"
     line = next((ln.strip() for ln in out.splitlines() if ln.strip().lower().startswith("scope:")), "")
     if rc == 0 and line and scope in line:
-        return CheckResult(PASS, f"{cname} identity is scope-pinned to {scope}", evidence=[line])
+        return CheckResult(PASS, f"{cname} identity is scope-pinned to {scope}",
+                           proofs=[ProofItem("command", f"{cname}: tsh status --identity", line)])
     return CheckResult(FAIL, f"{cname} identity is not scope-pinned to {scope} (exit {rc})",
-                       evidence=[line or _truncate(out, 140)])
+                       proofs=[ProofItem("command", f"{cname}: tsh status --identity", line or _truncate(out, 140))])
 
 
 def _tsh_ssh_as(c, nodes, args):
@@ -241,12 +353,14 @@ def _tsh_ssh_as(c, nodes, args):
     argv = ["tsh", "ssh", "--identity", ident, "--proxy", c.proxy_addr(),
             f"{login}@{node}", "--", "echo", "harness-ok"]
     rc, out = c.exec_out(suffix, argv)
-    cmd = f"$ tsh ssh {login}@{node} (identity {ident}) → exit {rc}"
+    cmd = f"$ tsh ssh {login}@{node} (identity {ident})\nexit {rc}"
     if rc == 0 and "harness-ok" in out:
         return CheckResult(PASS, f"{c.container(suffix)} identity can tsh ssh {login}@{node}",
-                           evidence=[cmd, "stdout: harness-ok"])
+                           proofs=[ProofItem("command", f"{c.container(suffix)} → tsh ssh {login}@{node}",
+                                             cmd + "\nstdout: harness-ok")])
     return CheckResult(FAIL, f"{c.container(suffix)} identity could NOT tsh ssh {login}@{node}",
-                       evidence=[cmd, _truncate(out, 160)])
+                       proofs=[ProofItem("command", f"{c.container(suffix)} → tsh ssh {login}@{node} (failed)",
+                                         cmd + f"\n{_truncate(out, 160)}")])
 
 
 # verb -> impl. Kept in lockstep with harness/checks.REGISTRY (test enforces it).
@@ -258,6 +372,7 @@ IMPLS: dict[str, Impl] = {
     "node_count": _node_count,
     "scoped_node_count": _scoped_node_count,
     "log_contains": _log_contains,
+    "audit_event": _audit_event,
     "bot_joined": _bot_joined,
     "output_file": _output_file,
     "no_output_file": _no_output_file,
@@ -305,15 +420,15 @@ def verify(cluster: Cluster, checks: list[Check], module_dir: Path | None = None
 
 
 def render(results: list[CheckResult]) -> tuple[str, bool]:
-    """Return (human text incl. evidence sub-lines + RESULT line, passed?)."""
+    """Return (human text incl. proof sub-lines + RESULT line, passed?)."""
     passed = not any(r.status == FAIL for r in results)
     lines: list[str] = []
     for r in results:
         lines.append(r.line())
-        for ev in r.evidence:
-            lines.append(f"       ↳ {_truncate(ev, 200)}")
-        for ex in r.excerpt:
-            lines.append(f"       {ex}")
+        for p in r.proofs:
+            lines.append(f"       ↳ {p.title}")
+            for cl in p.content.splitlines():
+                lines.append(f"         {_truncate(cl, 200)}")
     lines.append(f"RESULT: {'PASS' if passed else 'FAIL'}")
     return "\n".join(lines), passed
 

@@ -110,7 +110,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     `PASS/FAIL/SKIP` + `RESULT:` text lib/verify.sh used, optionally write JSON.
     Exit 1 on any FAIL (so plan.sh's retry loop keeps working)."""
     from .cluster import DockerCluster
-    from .verify import node_summary, render, verify
+    from .verify import collect_proofs, node_summary, render, verify
 
     mdir = _modules_dir(args.modules_dir) / args.module
     m = load_module(mdir)
@@ -134,6 +134,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "passed": passed,
             "nodes": node_summary(nodes),
             "results": [r.as_dict() for r in results],
+            "proofs": [p.as_dict() for p in collect_proofs(results)],
         }
         Path(args.json_out).write_text(json.dumps(payload, indent=2) + "\n")
     return EXIT_OK if passed else EXIT_ERR
@@ -144,6 +145,16 @@ def cmd_report_md(args: argparse.Namespace) -> int:
     from .report import build_markdown
 
     print(build_markdown(Path(args.state_dir)))
+    return EXIT_OK
+
+
+def cmd_gist_stage(args: argparse.Namespace) -> int:
+    """Stage a report bundle for `gh gist create` (flatten paths, rewrite links to
+    gist anchors). Prints the staged filenames, results.md first."""
+    from .share import stage_gist
+
+    for name in stage_gist(Path(args.bundle), Path(args.out)):
+        print(name)
     return EXIT_OK
 
 
@@ -234,6 +245,11 @@ def main(argv: list[str] | None = None) -> int:
     srm = sub.add_parser("report-md", help="build the rich markdown report from a state dir")
     srm.add_argument("--state-dir", required=True)
     srm.set_defaults(fn=cmd_report_md)
+
+    sgs = sub.add_parser("gist-stage", help="stage a report bundle for `gh gist create`")
+    sgs.add_argument("--bundle", required=True, help="a runs/<ts>-<id>/ report bundle")
+    sgs.add_argument("--out", required=True, help="staging dir to write flattened files into")
+    sgs.set_defaults(fn=cmd_gist_stage)
 
     sr = sub.add_parser("render", help="compose + render one or more modules into --out")
     sr.add_argument("--modules", required=True, help="comma-separated module names")

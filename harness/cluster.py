@@ -28,6 +28,12 @@ class Cluster:
     def logs(self, suffix: str) -> str:  # pragma: no cover
         raise NotImplementedError
 
+    def audit_events(self) -> list[dict]:
+        """Structured audit events emitted to the JSON file backend (see auth.yaml.j2).
+        Default empty so checks/fakes that don't provide events degrade gracefully
+        (e.g. bot_joined falls back to scraping the text log)."""
+        return []
+
     def exec_out(self, suffix: str, argv: list[str]) -> tuple[int, str]:  # pragma: no cover
         raise NotImplementedError
 
@@ -84,6 +90,26 @@ class DockerCluster(Cluster):
         # mirrors: docker logs <id>-<suffix> 2>&1  (capture first — no pipefail trap)
         cp = self._run(["docker", "logs", self.container(suffix)])
         return (cp.stdout or "") + (cp.stderr or "")
+
+    def audit_events(self) -> list[dict]:
+        # cat every file the file audit backend wrote (NDJSON, one event per line);
+        # parse defensively so non-JSON lines / index files are skipped.
+        cp = self._run([
+            "docker", "exec", self.container("auth"),
+            "sh", "-c", "find /var/lib/teleport/audit/events -type f -exec cat {} + 2>/dev/null",
+        ])
+        events: list[dict] = []
+        for line in (cp.stdout or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(ev, dict):
+                events.append(ev)
+        return events
 
     def exec_out(self, suffix: str, argv: list[str]) -> tuple[int, str]:
         cp = self._run(["docker", "exec", self.container(suffix), *argv])

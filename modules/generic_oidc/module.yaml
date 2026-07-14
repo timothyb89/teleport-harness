@@ -35,8 +35,9 @@ checks: |
   node_count         4
   scoped_node_count  /genericoidc-test 2
   # the agent tokens were created THROUGH the token-manager bot identity, not cluster
-  # admin (the audit event records the impersonator). SKIPs until the line appears.
-  log_contains       auth join_token\.create.*impersonator:bot-token-manager
+  # admin: inspect the structured join_token.create audit event and assert its
+  # impersonator field (renders the FULL event as pretty-JSON proof).
+  audit_event        join_token.create impersonator=bot-token-manager
   # --- BOTS: tbot joins via generic_oidc (custom-CA discovery + static_jwks) -------
   # positive: each bot's join emits a successful bot.join audit event on auth...
   bot_joined         gobot-disc generic_oidc
