@@ -216,6 +216,49 @@ def _log_contains(c, nodes, args):
     return CheckResult(SKIP, f"{cname} log has no match for /{pattern}/ yet")
 
 
+# count comparators for log_count (test(1)-style, so no shell/markdown-special chars)
+_OPS: dict[str, tuple[Callable[[int, int], bool], str]] = {
+    "eq": (lambda a, b: a == b, "=="),
+    "ne": (lambda a, b: a != b, "!="),
+    "lt": (lambda a, b: a < b, "<"),
+    "le": (lambda a, b: a <= b, "<="),
+    "gt": (lambda a, b: a > b, ">"),
+    "ge": (lambda a, b: a >= b, ">="),
+}
+
+
+def _log_count(c, nodes, args):
+    """Count log lines matching a regex and assert the tally against <op> <n>.
+
+    The workhorse for caching-style proofs: e.g. "≥3 joins drove traffic" and, on the
+    SAME IdP log, "discovery was fetched ≤1×" — together they show the validator reused
+    a cached provider instead of re-fetching per join. The proof lists the matched lines
+    (line-numbered, bounded) so the tally is inspectable."""
+    suffix, op = args[0], args[1]
+    if op not in _OPS:
+        return CheckResult(FAIL, f"log_count: unknown operator '{op}' (want {'/'.join(_OPS)})")
+    try:
+        want = int(args[2])
+    except ValueError:
+        return CheckResult(FAIL, f"log_count: threshold '{args[2]}' is not an integer")
+    pattern = " ".join(args[3:])
+    cname = c.container(suffix)
+    lines = c.logs(suffix).splitlines()
+    rx = re.compile(pattern, re.IGNORECASE)
+    idxs = [i for i, ln in enumerate(lines) if rx.search(ln)]
+    count = len(idxs)
+    fn, sym = _OPS[op]
+    shown = [f"[{i + 1}] {lines[i].rstrip()}" for i in idxs[:20]]
+    if count > 20:
+        shown.append(f"… (+{count - 20} more matching line(s); see the linked full log)")
+    proof = ProofItem("log-excerpt", f"{cname} log: {count}× /{pattern}/",
+                      "\n".join(shown) if shown else "(no matching lines)",
+                      source=f"logs/{suffix}.log")
+    status = PASS if fn(count, want) else FAIL
+    return CheckResult(status, f"{cname} log has {count} match(es) for /{pattern}/ ({sym} {want})",
+                       proofs=[proof], assertions=[f"count(/{pattern}/) {sym} {want}"])
+
+
 def _parse_conds(args: list[str]) -> list[tuple[str, str]]:
     """`field=value` selectors from an audit_event line (non-`k=v` args are ignored)."""
     return [(a.split("=", 1)[0], a.split("=", 1)[1]) for a in args if "=" in a]
@@ -372,6 +415,7 @@ IMPLS: dict[str, Impl] = {
     "node_count": _node_count,
     "scoped_node_count": _scoped_node_count,
     "log_contains": _log_contains,
+    "log_count": _log_count,
     "audit_event": _audit_event,
     "bot_joined": _bot_joined,
     "output_file": _output_file,

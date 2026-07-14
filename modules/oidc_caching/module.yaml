@@ -1,0 +1,27 @@
+# oidc_caching: prove the auth server's shared oidc.CachingTokenValidator actually
+# CACHES the OIDC provider (discovery doc + JWKS) across joins, instead of re-fetching
+# per join. A dedicated in-cluster IdP (cache-idp) is the only OIDC consumer here, so its
+# request log is an unambiguous ledger: a repeated-join probe drives N fresh kube-`oidc`
+# joins (each re-validates the SA JWT via the caching validator), yet the IdP should serve
+# discovery + JWKS only ONCE. Composed into plans/oidc-caching.yaml alongside generic_oidc
+# + kubernetes so the caching backport's behavior is asserted directly, not just "doesn't
+# break joining". Gates like the kubernetes module (same feature/version surface).
+name: oidc_caching
+description: >
+  OIDC provider caching — a probe bot performs many fresh kube `oidc`-type joins against a
+  dedicated in-cluster IdP; the IdP's request log proves the auth server's shared caching
+  validator fetched discovery + JWKS only once across all joins (the v18 caching backport).
+provides_feature: oidc_caching
+requires_features: [kubernetes]
+min_version: v18
+
+checks: |
+  # Non-vacuous workload: the probe minted a fresh SA token per join attempt (≥3 joins).
+  log_count cache-idp ge 3 GET /k8s/token
+  # Caching: despite ≥3 joins, the IdP served discovery + JWKS AT MOST ONCE each — the
+  # auth server reused the cached provider instead of re-fetching per join.
+  log_count cache-idp le 1 GET /\.well-known/openid-configuration
+  log_count cache-idp le 1 GET /keys
+  # The repeated oidc-validated joins actually succeeded (identity produced).
+  bot_joined  cache-probe-bot kubernetes
+  output_file cache-probe /out/id/identity

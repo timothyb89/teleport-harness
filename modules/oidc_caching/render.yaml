@@ -1,0 +1,11 @@
+# Render context for oidc_caching (see harness/render.py).
+components: [oidc-server]     # its prebuild builds the oidc-server image cache-idp reuses
+# Per-unit render contexts don't share vars, so name the oidc image here too (must match
+# components/oidc-server/render.yaml). cache-idp is a DEDICATED IdP built from that image.
+oidc_image: teleport-harness-oidc:latest
+# The probe bot: empty token => bootstrap creates the bot; its kubernetes-method join
+# token (bootstrap/token-cache-oidc.yaml.j2, bot_name-matched) authorizes the joins.
+bots:
+  - {name: cache-probe-bot, roles: cache-tester}
+# How many fresh joins the probe performs (each re-validates via the caching validator).
+cache_joins: 5

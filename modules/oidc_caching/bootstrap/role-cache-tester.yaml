@@ -1,0 +1,11 @@
+# Minimal role for the caching probe bot: enough for the produced identity to
+# authenticate + perform an authorized action, matching the kube-tester role.
+kind: role
+version: v7
+metadata:
+  name: cache-tester
+spec:
+  allow:
+    rules:
+      - resources: [token]
+        verbs: [read, list]

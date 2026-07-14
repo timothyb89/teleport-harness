@@ -37,6 +37,11 @@ _SPECS: list[VerbSpec] = [
     VerbSpec("scoped_node_count", 2, 2, "scoped_node_count <scope> <n>"),
     VerbSpec("log_contains", 2, None, "log_contains <container-suffix> <regex...>"),
     VerbSpec(
+        "log_count", 4, None,
+        "log_count <container-suffix> <eq|ne|lt|le|gt|ge> <n> <regex...>  "
+        "(assert the # of matching log lines)",
+    ),
+    VerbSpec(
         "audit_event", 1, None,
         "audit_event <event-type> [field=value ...]  (inspect a structured audit event)",
     ),

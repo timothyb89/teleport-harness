@@ -125,6 +125,9 @@ unit-testable with a `FakeCluster` (they never were in bash). Adding a verb = an
 `harness/verify.py` `IMPLS` + a `VerbSpec` in `harness/checks.py` (a test enforces they match).
 Current verbs: `node_present`/`node_absent`/`node_scope`/`node_count`/`scoped_node_count`,
 `log_contains <suffix> <regex…>` (case-insensitive; SKIP on no match),
+`log_count <suffix> <eq|ne|lt|le|gt|ge> <n> <regex…>` (assert the COUNT of matching log
+lines against a threshold — proves e.g. "≥3 joins drove traffic yet discovery was fetched
+≤1×"; proof lists the matched, line-numbered lines),
 `audit_event <event-type> [field=value…]` (inspect a STRUCTURED audit event from the JSON file
 backend — matches one event of that type where every `field=value` holds, value-compare
 case-insensitive; renders the FULL event as pretty-JSON proof. Two lines selecting the same event
@@ -142,12 +145,16 @@ Modules today: `generic_oidc` (agents AND bots join via OIDC JWTs — discovery 
 custom CA via a self-signed `oidc-ca` server + static_jwks, unscoped + scoped), `tbot` (Machine ID bot joins +
 identity output, token method), `bound_keypair` (bot joins via bound_keypair with a preset
 registration secret), `kubernetes` (bots join via k8s SA JWTs — both `oidc` and `static_jwks`
-types — minted by the shared `oidc-server` component). `tbot`/`bound_keypair` differ only in
+types — minted by the shared `oidc-server` component), `oidc_caching` (a repeated-join probe
+proves the auth server's shared `oidc.CachingTokenValidator` actually caches — N fresh kube
+`oidc` joins against a DEDICATED in-cluster IdP, whose isolated request log shows discovery +
+JWKS fetched only once across all joins via `log_count`). `tbot`/`bound_keypair` differ only in
 join method + bootstrap + config; a new join-method module is a ~25-line `services.yml.j2`
 fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
 type — system-trusted, no custom-CA — validates it). Plans today: `bots` (tbot+bound_keypair),
-`oidc-caching` (generic_oidc+kubernetes on one shared oidc-server).
+`oidc-caching` (generic_oidc + kubernetes + oidc_caching — each gated independently, so on a
+target with only `kubernetes` generic_oidc SKIPs while the other two run).
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build --repo` · `up <module> --repo [--id]` · `run-plan <plan|module> --repo [--features a,b] [--version vNN] [--id]`

@@ -188,6 +188,44 @@ def test_log_contains_match_and_skip():
     assert _run(c, "log_contains agent-deny nonsense-pattern-xyz").status == "SKIP"
 
 
+def test_log_count_operators_and_tally():
+    # an IdP-style request log: 3 token mints (workload), 1 discovery fetch (cached)
+    log = "\n".join([
+        "2026/07/13 00:00:01 10.0.0.5:1 GET /k8s/token?serviceaccount=cache-probe-sa",
+        "2026/07/13 00:00:02 10.0.0.9:2 GET /.well-known/openid-configuration",
+        "2026/07/13 00:00:02 10.0.0.9:3 GET /keys",
+        "2026/07/13 00:00:03 10.0.0.5:4 GET /k8s/token?serviceaccount=cache-probe-sa",
+        "2026/07/13 00:00:04 10.0.0.5:5 GET /k8s/token?serviceaccount=cache-probe-sa",
+    ])
+    c = FakeCluster(logs={"cache-idp": log})
+    # workload lower bound: >= 3 token mints
+    assert _run(c, "log_count cache-idp ge 3 GET /k8s/token").status == "PASS"
+    assert _run(c, "log_count cache-idp ge 4 GET /k8s/token").status == "FAIL"
+    # caching upper bound: discovery + JWKS fetched at most once each
+    assert _run(c, r"log_count cache-idp le 1 GET /\.well-known/openid-configuration").status == "PASS"
+    assert _run(c, "log_count cache-idp le 1 GET /keys").status == "PASS"
+    # exact + zero
+    assert _run(c, "log_count cache-idp eq 3 GET /k8s/token").status == "PASS"
+    assert _run(c, "log_count cache-idp eq 0 GET /nonesuch").status == "PASS"
+
+
+def test_log_count_proof_lists_matched_lines_with_source():
+    log = "a\nGET /keys\nb\nGET /keys\n"
+    c = FakeCluster(logs={"cache-idp": log})
+    res = _run(c, "log_count cache-idp le 1 GET /keys")
+    assert res.status == "FAIL"  # 2 > 1
+    (proof,) = res.proofs
+    assert proof.kind == "log-excerpt" and proof.source == "logs/cache-idp.log"
+    assert "[2] GET /keys" in proof.content and "[4] GET /keys" in proof.content
+    assert res.assertions == ["count(/GET /keys/) <= 1"]
+
+
+def test_log_count_bad_operator_and_threshold_fail_cleanly():
+    c = FakeCluster(logs={"cache-idp": "GET /keys"})
+    assert _run(c, "log_count cache-idp between 1 GET /keys").status == "FAIL"
+    assert _run(c, "log_count cache-idp le notanint GET /keys").status == "FAIL"
+
+
 def test_bot_joined_with_and_without_method():
     line = "audit bot.join bot_name:bk-bot method:bound_keypair success:true"
     c = FakeCluster(logs={"auth": line})

@@ -1,0 +1,18 @@
+{# kube OIDC join token for the caching probe: teleport fetches the DEDICATED cache-idp
+   issuer's discovery+JWKS at join time via the shared caching validator. Every fresh join
+   re-validates against this issuer; with caching, the provider is fetched once and reused.
+   Authorizes bot cache-probe-bot for SA default:cache-probe-sa. #}
+kind: token
+version: v2
+metadata:
+  name: cache-probe-token
+spec:
+  roles: [Bot]
+  bot_name: cache-probe-bot
+  join_method: kubernetes
+  kubernetes:
+    type: oidc
+    oidc:
+      issuer: https://cache-idp.{{ lab_domain }}:8443
+    allow:
+      - service_account: "default:cache-probe-sa"

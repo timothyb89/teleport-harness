@@ -123,6 +123,13 @@ manifest token just creates the bot. See `modules/kubernetes/`.
    `res.proofs`. `FakeCluster(events=[...])` feeds structured audit events. This is the fast,
    reliable way to get a verb right.
 
+A verb can prove a *system property*, not just a single fact. Worked example: `log_count
+<suffix> <op> <n> <regex…>` counts matching log lines and asserts the tally, so the
+`oidc_caching` module proves the auth server's caching validator works by showing "≥3 fresh
+joins drove `/k8s/token` traffic, yet discovery + JWKS were each fetched ≤1× on a DEDICATED
+IdP" — many joins, one fetch. Isolating the IdP (its own issuer + data volume, not the shared
+`oidc-server`) keeps the request-count ledger unambiguous even when composed in a plan.
+
 ## Add a shared component
 `components/<name>/` has the same shape as a module minus `module.yaml`/`checks:` — a
 `services.yml.j2` fragment (the service + its `volumes:`), optional `render.yaml`/`prebuild.sh`/

@@ -1,0 +1,50 @@
+{# OIDC caching test: a DEDICATED in-cluster IdP (cache-idp) + a repeated-join probe.
+   cache-idp reuses the oidc-server image but has its OWN issuer + data volume, so it is
+   the sole OIDC consumer in this module and its request log is an unambiguous ledger of
+   what the auth server fetched. The probe does N fresh kube-`oidc` joins; with caching
+   working, cache-idp serves discovery + JWKS only once across all N. #}
+{% set cache_host = 'cache-idp.' ~ lab_domain %}
+services:
+  # Dedicated IdP: own issuer (served over the system-trusted wildcard cert so the kube
+  # `oidc` type, which has no custom-CA support, validates it) + own data dir.
+  cache-idp:
+    image: {{ oidc_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-cache-idp
+    command:
+      - -issuer=https://{{ cache_host }}:8443
+      - -addr=:8443
+      - -cluster-name={{ fqdn }}
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+    volumes:
+      - harness-certs:/certs:ro
+      - cache-idp-data:/data
+    networks:
+      internal:
+        aliases: ["{{ cache_host }}"]
+
+  # Repeated-join probe: N fresh kube `oidc` joins, each re-validating via the caching
+  # validator. Kept alive after the loop so the produced identity can be inspected.
+  cache-probe:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-cache-probe
+    entrypoint: ["/scripts/cache-probe-entrypoint.sh"]
+    environment:
+      OIDC_URL: https://{{ cache_host }}:8443
+      NAMESPACE: default
+      SERVICE_ACCOUNT: cache-probe-sa
+      JOINS: "{{ cache_joins }}"
+    volumes:
+      - {{ out }}/config/tbot-cache.yaml:/etc/tbot.yaml:ro
+      - {{ module_dir }}/scripts:/scripts:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+
+volumes:
+  cache-idp-data:
+  harness-certs:
+    external: true
+    name: harness-certs
