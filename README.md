@@ -23,6 +23,7 @@ their branch. Contributor docs, architecture & gotchas: **[CLAUDE.md](CLAUDE.md)
    `CF_DNS_API_TOKEN` (Cloudflare, Zone:DNS:Edit), `ACME_EMAIL`.
 3. Add a wildcard DNS record you control: `*.lab.<HARNESS_DOMAIN>  A  127.0.0.1`.
 4. `./bin/cluster doctor` — should be all green.
+5. `ln -s $(pwd)/bin/cluster ~/bin/th` - install into your $PATH as `th` to exec quickly
 
 ## Use
 ```bash
