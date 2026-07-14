@@ -16,7 +16,16 @@
 # Global flags (before or after the subcommand): --target <name> (targets/<name>.env)
 set -euo pipefail
 
-LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)"
+# Resolve symlinks so the CLI works when invoked via a symlink (e.g. ~/bin/th).
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in
+    /*) SELF="$LINK" ;;
+    *)  SELF="$(dirname "$SELF")/$LINK" ;;
+  esac
+done
+LIB="$(cd "$(dirname "$SELF")/../lib" && pwd)"
 . "$LIB/common.sh"
 . "$LIB/ingress.sh"
 . "$LIB/build.sh"
