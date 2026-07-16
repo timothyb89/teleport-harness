@@ -32,6 +32,16 @@ cluster_up_modules() {
   ingress_up
   image="$(build_image "$REPO" "${ENT:-0}")"
 
+  # Enterprise builds need a license file. Resolve the clone's bundled test license
+  # (overridable via HARNESS_LICENSE_FILE) and let render mount it into the auth container.
+  local license_arg="" license_file=""
+  if [ "${ENT:-0}" = 1 ]; then
+    license_file="${HARNESS_LICENSE_FILE:-$REPO/e/fixtures/license-all-features.pem}"
+    [ -f "$license_file" ] || die "ent build needs a license but none found at '$license_file' (set HARNESS_LICENSE_FILE)"
+    license_arg="--license-file $license_file"
+    hlog "ent build: mounting license $license_file"
+  fi
+
   mkdir -p "$out"
   cat > "$out/meta.env" <<EOF
 CLUSTER_ID=$id
@@ -51,7 +61,7 @@ EOF
   hlog "rendering cluster '$id' [$label: $modules_csv] at $fqdn"
   pybrain render --modules "$modules_csv" --cluster-id "$id" --fqdn "$fqdn" --port "$INGRESS_PORT" \
     --image "$image" --harness-domain "$HARNESS_DOMAIN" --lab-domain "$LAB_DOMAIN" \
-    --out "$out" || die "render failed"
+    $license_arg --out "$out" || die "render failed"
   [ -f "$out/docker-compose.yml" ] || die "render did not produce $out/docker-compose.yml"
 
   hlog "starting containers"

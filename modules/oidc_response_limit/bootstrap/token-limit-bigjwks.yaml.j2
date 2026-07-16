@@ -1,0 +1,18 @@
+{# kube OIDC join token for the NEGATIVE (oversized JWKS) bot. This issuer's discovery
+   doc is normal, but its JWKS is oversized; the lazy key-set fetch during token
+   verification must abort with the size error. Authorizes bot limit-bigjwks-bot for SA
+   default:limit-bigjwks-sa. #}
+kind: token
+version: v2
+metadata:
+  name: limit-bigjwks-token
+spec:
+  roles: [Bot]
+  bot_name: limit-bigjwks-bot
+  join_method: kubernetes
+  kubernetes:
+    type: oidc
+    oidc:
+      issuer: https://bigjwks.{{ lab_domain }}:8443
+    allow:
+      - service_account: "default:limit-bigjwks-sa"

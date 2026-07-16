@@ -1,0 +1,51 @@
+# oidc_response_limit: prove the OIDC join round tripper enforces its maximum
+# response-size cap (lib/oidc.OIDCRoundTripper, ~1 MiB) end-to-end, and — critically —
+# that an over-limit response makes the fetch FAIL FAST instead of blocking. The auth
+# server validates a kube `oidc`-type join by fetching the issuer's discovery doc + JWKS
+# through the shared oidc.CachingTokenValidator, which wraps its HTTP client in that
+# round tripper. Three dedicated bots join via kube `oidc`:
+#   - limit-ok       -> a WELL-BEHAVED IdP (normal discovery + JWKS)            -> succeeds
+#   - limit-bigdisco -> an IdP whose discovery doc is oversized AND then hangs  -> denied
+#   - limit-bigjwks  -> an IdP with a normal discovery doc but oversized JWKS   -> denied
+# The hostile IdPs are the shared oidc-server run with -oversize-endpoints (opt-in). The
+# bigdisco IdP additionally holds the connection open forever after the oversized body:
+# the exact scenario that would wedge a client that drains an over-limit body rather than
+# abandoning it (the behavior removed in the teleport.e -> OSS move of this round tripper).
+name: oidc_response_limit
+description: >
+  OIDC round-tripper response-size limit — kube `oidc` join bots validate through the
+  shared caching validator (which wraps its client in lib/oidc.OIDCRoundTripper). A
+  well-behaved IdP joins fine; IdPs that oversize the discovery doc (then hang the
+  connection) or the JWKS are rejected with the size error and produce no identity,
+  proving the cap is enforced and the fetch fails fast instead of blocking.
+provides_feature: oidc_response_limit
+requires_features: [kubernetes]
+min_version: v18
+
+checks: |
+  # POSITIVE — a well-behaved IdP (normal-sized discovery + JWKS) still joins fine: the
+  # size-limiting round tripper leaves the happy path untouched (no regression).
+  bot_joined          limit-ok-bot kubernetes
+  output_file         limit-ok /out/id/identity
+  identity_authorized limit-ok /out/id/identity
+
+  # NEGATIVE — the IdP's discovery doc exceeds the ~1 MiB cap AND it then holds the
+  # connection open forever. The auth server's discovery fetch must abort with the size
+  # error instead of draining the over-limit body, so the join is DENIED and fast:
+  #   - the structured bot.join event records the failure + the size error;
+  #   - the size error text is surfaced to the bot, at the discovery step specifically;
+  #   - no identity is written. (Had the fetch drained/blocked forever, the bot would
+  #     never finish and no_output_file could not observe an absent file — so this also
+  #     evidences "did not hang".)
+  audit_event    bot.join bot_name=limit-bigdisco-bot method=kubernetes success=false
+  log_count      limit-bigdisco ge 1 response exceeds maximum size of
+  log_count      limit-bigdisco ge 1 Discovery has failed
+  no_output_file limit-bigdisco /out/id/identity
+
+  # NEGATIVE — discovery is normal but the JWKS is oversized, so the lazy key-set fetch
+  # during token verification hits the same cap: the join is denied at the key-fetch step
+  # and no identity is written.
+  audit_event    bot.join bot_name=limit-bigjwks-bot method=kubernetes success=false
+  log_count      limit-bigjwks ge 1 response exceeds maximum size of
+  log_count      limit-bigjwks ge 1 failed to get keys
+  no_output_file limit-bigjwks /out/id/identity

@@ -1,0 +1,17 @@
+{# kube OIDC join token for the NEGATIVE (oversized+hanging discovery) bot. The auth
+   server will try to fetch this issuer's discovery doc at join time and must abort with
+   the size error. Authorizes bot limit-bigdisco-bot for SA default:limit-bigdisco-sa. #}
+kind: token
+version: v2
+metadata:
+  name: limit-bigdisco-token
+spec:
+  roles: [Bot]
+  bot_name: limit-bigdisco-bot
+  join_method: kubernetes
+  kubernetes:
+    type: oidc
+    oidc:
+      issuer: https://bigdisco.{{ lab_domain }}:8443
+    allow:
+      - service_account: "default:limit-bigdisco-sa"

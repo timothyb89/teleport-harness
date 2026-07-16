@@ -18,6 +18,10 @@ auth_service:
   cluster_name: {{ fqdn }}
   listen_addr: 0.0.0.0:3025
   proxy_listener_mode: multiplex
+  {% if license_file is defined and license_file %}
+  # Enterprise builds require a license; the file is mounted by base.compose.yml.j2.
+  license_file: /etc/teleport/license.pem
+  {% endif %}
 proxy_service:
   enabled: "yes"
   web_listen_addr: 0.0.0.0:{{ port }}

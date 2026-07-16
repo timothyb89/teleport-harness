@@ -1,0 +1,11 @@
+# Minimal role for the limit test bots: enough for the produced identity to authenticate
+# and perform an authorized action (list tokens) via tctl --identity. Matches kube-tester.
+kind: role
+version: v7
+metadata:
+  name: limit-tester
+spec:
+  allow:
+    rules:
+      - resources: [token]
+        verbs: [read, list]

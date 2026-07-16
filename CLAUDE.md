@@ -148,11 +148,20 @@ registration secret), `kubernetes` (bots join via k8s SA JWTs — both `oidc` an
 types — minted by the shared `oidc-server` component), `oidc_caching` (a repeated-join probe
 proves the auth server's shared `oidc.CachingTokenValidator` actually caches — N fresh kube
 `oidc` joins against a DEDICATED in-cluster IdP, whose isolated request log shows discovery +
-JWKS fetched only once across all joins via `log_count`). `tbot`/`bound_keypair` differ only in
-join method + bootstrap + config; a new join-method module is a ~25-line `services.yml.j2`
-fragment + `bootstrap/` + `checks:`.
+JWKS fetched only once across all joins via `log_count`), `oidc_response_limit` (proves the
+shared `lib/oidc.OIDCRoundTripper` response-size cap, ~1 MiB, is enforced end-to-end AND fails
+fast: three kube-`oidc` bots validate through the caching validator — one joins a well-behaved
+IdP (succeeds), two join dedicated hostile IdPs that oversize the discovery doc (which then
+HANGS the connection open) or the JWKS, and are denied with the size error at the right fetch
+step, producing no identity; the hang case proves the fetch aborts instead of draining an
+over-limit body — the behavior removed in the teleport.e→OSS move of this round tripper).
+`tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
+is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
-type — system-trusted, no custom-CA — validates it). Plans today: `bots` (tbot+bound_keypair),
+type — system-trusted, no custom-CA — validates it; opt-in HOSTILE flags
+`-oversize-endpoints=discovery,jwks` / `-oversize-bytes` / `-hang-after-oversize` make a
+dedicated instance bloat + optionally never-close a response, to test a client's size cap).
+Plans today: `bots` (tbot+bound_keypair),
 `oidc-caching` (generic_oidc + kubernetes + oidc_caching — each gated independently, so on a
 target with only `kubernetes` generic_oidc SKIPs while the other two run).
 
@@ -186,6 +195,13 @@ break-glass** (`cluster web` mints an invite; the browser flow still needs a pas
 if the cluster enforces it, an MFA device).
 
 ## Invariants / gotchas (do NOT relearn)
+- **`--ent` builds need a license or auth exits 1** ("Failed to load license file … /var/lib/teleport/license.pem").
+  `cluster up/run-plan --ent` resolves the clone's bundled test license
+  (`$REPO/e/fixtures/license-all-features.pem`, override via `HARNESS_LICENSE_FILE`), and render
+  mounts it read-only at `/etc/teleport/license.pem` + sets `auth_service.license_file` (both
+  gated on the render `--license-file` arg, so OSS runs are unchanged). Most modules test OSS
+  `lib/*` code and run fine as OSS (the default); pass `--ent` only when you want the enterprise
+  auth binary (e.g. exercising `e/…`).
 - **All ports = the ingress port end-to-end** (proxy `web_listen_addr`, `public_addr`, agent
   `proxy_server`, ingress backend). A public_addr↔dial port split breaks agent reverse tunnels.
 - **nginx SNI passthrough, not Traefik** — lima blocks the docker socket even for root

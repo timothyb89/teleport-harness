@@ -1,0 +1,17 @@
+{# kube OIDC join token for the POSITIVE bot: teleport fetches the well-behaved shared
+   oidc-server's discovery + JWKS at join time via the caching validator. Authorizes bot
+   limit-ok-bot for SA default:limit-ok-sa. #}
+kind: token
+version: v2
+metadata:
+  name: limit-ok-token
+spec:
+  roles: [Bot]
+  bot_name: limit-ok-bot
+  join_method: kubernetes
+  kubernetes:
+    type: oidc
+    oidc:
+      issuer: https://oidc.{{ lab_domain }}:8443
+    allow:
+      - service_account: "default:limit-ok-sa"

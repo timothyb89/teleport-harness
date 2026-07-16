@@ -180,6 +180,7 @@ def cmd_render(args: argparse.Namespace) -> int:
         "image": args.image,
         "harness_domain": args.harness_domain,
         "lab_domain": args.lab_domain,
+        "license_file": args.license_file,
         "out": args.out,
     }
     compose = render_cluster(mdirs, ctx, Path(args.out), components_dir=_root() / "components")
@@ -259,6 +260,9 @@ def main(argv: list[str] | None = None) -> int:
     sr.add_argument("--image", required=True)
     sr.add_argument("--harness-domain", default="")
     sr.add_argument("--lab-domain", default="")
+    sr.add_argument("--license-file", default="",
+                    help="host path to an enterprise license; mounted into the auth "
+                         "container and referenced by auth_service.license_file (ent builds)")
     sr.add_argument("--out", required=True)
     sr.set_defaults(fn=cmd_render)
 

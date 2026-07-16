@@ -12,6 +12,13 @@
 //
 // Keys and the TLS cert are persisted under -data-dir so the JWKS and CA are
 // stable across restarts (important: the token resource embeds them).
+//
+// Hostile modes (opt-in, default off) let a dedicated instance MISBEHAVE so we can
+// exercise a client's defenses. See -oversize-endpoints / -oversize-bytes /
+// -hang-after-oversize: they bloat the discovery and/or JWKS responses past a
+// client's max-response-size cap, optionally holding the connection open forever
+// after the oversized body — the case that would wedge a client that tries to drain
+// an over-limit body instead of bailing out immediately.
 package main
 
 import (
@@ -49,6 +56,12 @@ var (
 	extraSANs   = flag.String("extra-sans", "", "comma-separated extra DNS/IP SANs for the TLS cert")
 	tlsCertFile = flag.String("tls-cert", "", "serve this TLS cert instead of a generated self-signed one (e.g. a wildcard LE cert); pair with -tls-key")
 	tlsKeyFile  = flag.String("tls-key", "", "private key for -tls-cert")
+
+	// Hostile knobs (default off): make a dedicated instance misbehave to test a
+	// client's max-response-size handling. See the package doc.
+	oversizeEndpoints = flag.String("oversize-endpoints", "", "comma-separated endpoints whose response bodies are padded past a client's size cap: 'discovery', 'jwks'")
+	oversizeBytes     = flag.Int("oversize-bytes", 2*1024*1024, "bytes of filler to pad an oversized response with (default 2 MiB, past Teleport's 1 MiB cap)")
+	hangAfterOversize = flag.Bool("hang-after-oversize", false, "after writing an oversized body, flush and block until the client disconnects (simulates a server that never closes the stream)")
 )
 
 const kid = "teleport-generic-oidc-test"
@@ -69,7 +82,14 @@ func main() {
 		log.Fatalf("tls cert: %v", err)
 	}
 
-	s := &server{signingKey: signingKey, caPEM: caPEM}
+	oversize := map[string]bool{}
+	for _, e := range strings.Split(*oversizeEndpoints, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			oversize[e] = true
+		}
+	}
+
+	s := &server{signingKey: signingKey, caPEM: caPEM, oversize: oversize}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", s.handleDiscovery)
@@ -92,15 +112,21 @@ func main() {
 	log.Printf("  discovery: %s/.well-known/openid-configuration", *issuer)
 	log.Printf("  mint:      %s/token?sub=test-bot", *issuer)
 	log.Printf("  k8s mint:  %s/k8s/token  (aud=%s)", *issuer, *clusterName)
+	if len(oversize) > 0 {
+		log.Printf("  HOSTILE:  oversizing %v by %d bytes (hang-after-oversize=%t)", *oversizeEndpoints, *oversizeBytes, *hangAfterOversize)
+	}
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
 
 type server struct {
 	signingKey *rsa.PrivateKey
 	caPEM      []byte
+	// oversize is the set of endpoints ("discovery"/"jwks") whose responses are
+	// padded past a client's max-response-size cap; empty in normal operation.
+	oversize map[string]bool
 }
 
-func (s *server) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
+func (s *server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	base := strings.TrimSuffix(*issuer, "/")
 	doc := map[string]any{
 		// Discover() requires this to exactly equal the requested issuer.
@@ -114,10 +140,14 @@ func (s *server) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
 		"scopes_supported":                      []string{"openid"},
 		"claims_supported":                      []string{"sub", "iss", "aud", "exp", "iat"},
 	}
+	if s.oversize["discovery"] {
+		s.writeOversizeJSON(w, r, doc)
+		return
+	}
 	writeJSON(w, doc)
 }
 
-func (s *server) handleJWKS(w http.ResponseWriter, _ *http.Request) {
+func (s *server) handleJWKS(w http.ResponseWriter, r *http.Request) {
 	pub := s.signingKey.Public().(*rsa.PublicKey)
 	jwk := map[string]any{
 		"kty": "RSA",
@@ -127,7 +157,46 @@ func (s *server) handleJWKS(w http.ResponseWriter, _ *http.Request) {
 		"n":   b64url(pub.N.Bytes()),
 		"e":   b64url(big.NewInt(int64(pub.E)).Bytes()),
 	}
+	if s.oversize["jwks"] {
+		s.writeOversizeJSON(w, r, map[string]any{"keys": []any{jwk}})
+		return
+	}
 	writeJSON(w, map[string]any{"keys": []any{jwk}})
+}
+
+// writeOversizeJSON emits v as JSON plus a padding field that pushes the body
+// past *oversizeBytes, so a client that caps response sizes rejects it before it
+// finishes reading. The result is still well-formed JSON (an ignored extra field),
+// so a client WITHOUT a cap would parse it fine — the failure is purely about size.
+// With -hang-after-oversize the handler then flushes and blocks until the client
+// disconnects, modelling a server that keeps the stream open forever: the exact
+// case that would wedge a client which drains an over-limit body instead of
+// abandoning it, and which a correct client must fail fast on.
+func (s *server) writeOversizeJSON(w http.ResponseWriter, r *http.Request, v map[string]any) {
+	padded := make(map[string]any, len(v)+1)
+	for k, val := range v {
+		padded[k] = val
+	}
+	padded["_padding"] = strings.Repeat("A", *oversizeBytes)
+
+	body, err := json.Marshal(padded)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	log.Printf("served OVERSIZED %d-byte response for %s", len(body), r.URL.Path)
+
+	if *hangAfterOversize {
+		log.Printf("holding %s connection open until the client disconnects", r.URL.Path)
+		<-r.Context().Done()
+		log.Printf("client disconnected from %s: %v", r.URL.Path, r.Context().Err())
+	}
 }
 
 func (s *server) handleCA(w http.ResponseWriter, _ *http.Request) {

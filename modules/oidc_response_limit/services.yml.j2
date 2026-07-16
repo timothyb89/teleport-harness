@@ -1,0 +1,112 @@
+{# oidc_response_limit: prove the OIDC join round tripper enforces its max-response-size
+   cap end-to-end. Three dedicated kube-`oidc` join bots validate through the shared
+   oidc.CachingTokenValidator (the round tripper under test):
+     - limit-ok       joins the WELL-BEHAVED shared oidc-server                  -> succeeds
+     - limit-bigdisco joins an IdP whose discovery doc is oversized + hangs       -> denied
+     - limit-bigjwks  joins an IdP whose JWKS is oversized (discovery is normal)  -> denied
+   The hostile IdPs reuse the oidc-server image with -oversize-endpoints set; their
+   /k8s/token endpoint stays well-behaved so each bot can still mint the SA JWT it presents.
+   They serve the system-trusted wildcard cert at their FQDN alias, so the kube `oidc` type
+   (no custom-CA support) validates the issuer. #}
+{% set ok_host       = 'oidc.'     ~ lab_domain %}
+{% set bigdisco_host = 'bigdisco.' ~ lab_domain %}
+{% set bigjwks_host  = 'bigjwks.'  ~ lab_domain %}
+services:
+  # Hostile IdP: discovery doc padded past the ~1 MiB cap, THEN the connection is held
+  # open forever — the exact case a drain-the-body client would wedge on.
+  bigdisco:
+    image: {{ oidc_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-bigdisco
+    command:
+      - -issuer=https://{{ bigdisco_host }}:8443
+      - -addr=:8443
+      - -cluster-name={{ fqdn }}
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      - -oversize-endpoints=discovery
+      - -hang-after-oversize
+    volumes:
+      - harness-certs:/certs:ro
+      - bigdisco-data:/data
+    networks:
+      internal:
+        aliases: ["{{ bigdisco_host }}"]
+
+  # Hostile IdP: discovery is normal, JWKS is padded past the cap — exercises the lazy
+  # key-set fetch path of the caching validator (fetched during token verification).
+  bigjwks:
+    image: {{ oidc_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-bigjwks
+    command:
+      - -issuer=https://{{ bigjwks_host }}:8443
+      - -addr=:8443
+      - -cluster-name={{ fqdn }}
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      - -oversize-endpoints=jwks
+    volumes:
+      - harness-certs:/certs:ro
+      - bigjwks-data:/data
+    networks:
+      internal:
+        aliases: ["{{ bigjwks_host }}"]
+
+  # POSITIVE bot: joins the well-behaved shared oidc-server (normal discovery + JWKS).
+  limit-ok:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-limit-ok
+    entrypoint: ["/scripts/join-oneshot.sh"]
+    environment:
+      OIDC_URL: https://{{ ok_host }}:8443
+      NAMESPACE: default
+      SERVICE_ACCOUNT: limit-ok-sa
+    volumes:
+      - {{ out }}/config/tbot-ok.yaml:/etc/tbot.yaml:ro
+      - {{ module_dir }}/scripts:/scripts:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+
+  # NEGATIVE bot: oversized + hanging discovery doc.
+  limit-bigdisco:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-limit-bigdisco
+    entrypoint: ["/scripts/join-oneshot.sh"]
+    environment:
+      OIDC_URL: https://{{ bigdisco_host }}:8443
+      NAMESPACE: default
+      SERVICE_ACCOUNT: limit-bigdisco-sa
+    volumes:
+      - {{ out }}/config/tbot-bigdisco.yaml:/etc/tbot.yaml:ro
+      - {{ module_dir }}/scripts:/scripts:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+
+  # NEGATIVE bot: oversized JWKS (discovery is normal).
+  limit-bigjwks:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-limit-bigjwks
+    entrypoint: ["/scripts/join-oneshot.sh"]
+    environment:
+      OIDC_URL: https://{{ bigjwks_host }}:8443
+      NAMESPACE: default
+      SERVICE_ACCOUNT: limit-bigjwks-sa
+    volumes:
+      - {{ out }}/config/tbot-bigjwks.yaml:/etc/tbot.yaml:ro
+      - {{ module_dir }}/scripts:/scripts:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+
+volumes:
+  bigdisco-data:
+  bigjwks-data:
+  harness-certs:
+    external: true
+    name: harness-certs

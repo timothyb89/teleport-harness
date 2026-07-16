@@ -2,7 +2,7 @@
 components: [oidc-server]              # shared IdP that mints/serves the OIDC JWTs
 # Image for the module-local self-signed `oidc-ca` issuer. Same image the oidc-server
 # component builds; named here because module fragments don't see component render vars.
-oidc_image: teleport-harness-oidc:latest
+oidc_image: teleport-harness-oidc:v2
 auth_env:
   TELEPORT_UNSTABLE_SCOPES: "yes"      # scoped tokens/roles/bots need this on auth
 bot_token: harness-tokmgr-secret       # token-manager bot join secret (per-cluster)

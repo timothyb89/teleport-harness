@@ -1,0 +1,13 @@
+# Render context for oidc_response_limit (see harness/render.py).
+components: [oidc-server]     # the shared, well-behaved IdP (used by the positive bot)
+                             # + its prebuild builds the oidc image the hostile IdPs reuse.
+# Per-unit render contexts don't share vars, so name the oidc image here too (must match
+# components/oidc-server/render.yaml). The hostile IdPs are dedicated instances of it.
+oidc_image: teleport-harness-oidc:v2
+# One bot per join case; empty token => bootstrap creates the bot and its kubernetes-method
+# join token (bootstrap/token-*.yaml.j2, bot_name-matched) authorizes it. All three bots
+# must exist so the ONLY thing that fails for the negatives is the response-size cap.
+bots:
+  - {name: limit-ok-bot, roles: limit-tester}
+  - {name: limit-bigdisco-bot, roles: limit-tester}
+  - {name: limit-bigjwks-bot, roles: limit-tester}

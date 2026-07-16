@@ -22,6 +22,11 @@ services:
       - {{ out }}/config/auth.yaml:/etc/teleport/auth.yaml:ro
       - {{ out }}/bootstrap:/bootstrap:ro
       - {{ shared_scripts }}/auth-entrypoint.sh:/scripts/auth-entrypoint.sh:ro
+      {% if license_file is defined and license_file %}
+      # Enterprise builds need a license; mounted read-only next to auth.yaml and
+      # referenced by auth_service.license_file (see auth.yaml.j2). OSS builds omit this.
+      - {{ license_file }}:/etc/teleport/license.pem:ro
+      {% endif %}
       - auth-data:/var/lib/teleport
     networks:
       internal:
