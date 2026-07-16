@@ -209,6 +209,8 @@ func (s *server) handleCA(w http.ResponseWriter, _ *http.Request) {
 //	sub        overrides the subject (default "test-bot")
 //	aud        overrides the audience (default -audience flag)
 //	claim      repeatable key=value extra string claims (e.g. ?claim=team=infra)
+//	list       repeatable key=v1,v2,... extra STRING ARRAY claims, so token rules
+//	           can exercise list/set operations (e.g. ?list=groups=dev,ops)
 //
 // A couple of stable custom claims (org, environment) are always included so
 // the sample token rules match out of the box.
@@ -231,6 +233,20 @@ func (s *server) handleToken(w http.ResponseWriter, r *http.Request) {
 	for _, kv := range q["claim"] {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			claims[k] = v
+		}
+	}
+	// Repeatable ?list=key=v1,v2,... injects a string ARRAY claim. JSON arrays
+	// decode to []any on the Teleport side, exercising the set() flattening path
+	// (e.g. contains(set(claims.groups), "dev")).
+	for _, kv := range q["list"] {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			var arr []string
+			for _, item := range strings.Split(v, ",") {
+				if item = strings.TrimSpace(item); item != "" {
+					arr = append(arr, item)
+				}
+			}
+			claims[k] = arr
 		}
 	}
 

@@ -2,13 +2,16 @@
 components: [oidc-server]              # shared IdP that mints/serves the OIDC JWTs
 # Image for the module-local self-signed `oidc-ca` issuer. Same image the oidc-server
 # component builds; named here because module fragments don't see component render vars.
-oidc_image: teleport-harness-oidc:v2
+oidc_image: teleport-harness-oidc:v3
 auth_env:
   TELEPORT_UNSTABLE_SCOPES: "yes"      # scoped tokens/roles/bots need this on auth
 bot_token: harness-tokmgr-secret       # token-manager bot join secret (per-cluster)
 agent_sub: test-agent                  # subject the positive agents request / rules match
-# positive (discovery/static/scoped-*) + negative (deny/scoped-deny) agents
-agents: [discovery, static, scoped-discovery, scoped-static, deny, scoped-deny]
+# positive (discovery/static/scoped-*/expr) + negative (deny/scoped-deny/expr-deny) agents.
+# expr/expr-deny share ONE token whose allow rule is a predicate EXPRESSION matching a
+# string-array `groups` claim via set()+contains (the JSON-array -> Set path); they
+# differ only in whether the groups they request include the required value.
+agents: [discovery, static, scoped-discovery, scoped-static, deny, scoped-deny, expr, expr-deny]
 # bots that join via generic_oidc (tbot). Each pairs a trust mode (custom-CA
 # discovery vs static_jwks) with scoped/unscoped. The token-manager mints their
 # provision tokens at runtime; scoped bots are created via bootstrap scoped_bot

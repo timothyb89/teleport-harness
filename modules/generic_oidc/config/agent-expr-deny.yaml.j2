@@ -1,0 +1,19 @@
+version: v3
+teleport:
+  nodename: {{ cluster_id }}-agent-expr-deny
+  data_dir: /var/lib/teleport
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: generic_oidc
+    token_name: generic-oidc-agent-expr
+    # Same EXPRESSION token as agent-expr, but the `groups` array omits "dev", so
+    # contains(set(claims.groups), "dev") is false and the join is denied. Proves
+    # the expression is actually evaluated over the flattened array (not ignored).
+    generic_oidc:
+      command: ["curl", "-fsSk", "https://oidc:8443/token?sub=test-agent&list=groups=contractors,interns"]
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: generic-oidc, variant: expr-deny}

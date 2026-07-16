@@ -23,6 +23,10 @@ checks: |
   node_present agent-static
   node_present agent-scoped-discovery
   node_present agent-scoped-static
+  # positive: agent whose token uses a predicate EXPRESSION allow rule
+  # (contains(set(claims.groups), "dev")) matching a string-ARRAY claim — proves
+  # set() flattens a JSON array into a Set the built-in set functions can query.
+  node_present agent-expr
   # scoped agents must be pinned to their assigned scope
   node_scope   agent-scoped-discovery /genericoidc-test
   node_scope   agent-scoped-static /genericoidc-test
@@ -31,8 +35,12 @@ checks: |
   node_absent  agent-scoped-deny
   log_contains agent-deny unable to (join via|validate) generic_oidc|denied
   log_contains agent-scoped-deny unable to (join via|validate) generic_oidc|denied
-  # exact totals: the four expected agents joined (nothing extra), two of them scoped
-  node_count         4
+  # negative: same expression token, but the requested `groups` array omits "dev",
+  # so the expression is false and the join is denied (proves it's evaluated).
+  node_absent  agent-expr-deny
+  log_contains agent-expr-deny unable to (join via|validate) generic_oidc|denied
+  # exact totals: the five expected agents joined (nothing extra), two of them scoped
+  node_count         5
   scoped_node_count  /genericoidc-test 2
   # the agent tokens were created THROUGH the token-manager bot identity, not cluster
   # admin: inspect the structured join_token.create audit event and assert its

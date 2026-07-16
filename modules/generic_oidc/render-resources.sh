@@ -196,6 +196,38 @@ $(printf '%s\n' "$JWKS" | indent '      ')
 EOF
 echo "    wrote $AGENT_STATIC"
 
+# Expression-rule agent token (static_jwks). Instead of `conditions`, the allow rule
+# is a predicate `expression` that matches against a STRING ARRAY claim (`groups`)
+# via the enhanced set() helper: set() flattens the JSON array into a Set so the
+# built-in contains() can query it. Pair with a join config that mints a JWT
+# carrying ?list=groups=... (a positive agent whose groups include "dev" joins; a
+# negative agent whose groups omit it is denied). Exercises the array->Set path.
+AGENT_EXPR="$OUT_DIR/token-agent-expr.yaml"
+cat > "$AGENT_EXPR" <<EOF
+# generic_oidc AGENT token (static_jwks) with a predicate EXPRESSION allow rule.
+# The rule uses set() to flatten the array-valued \`groups\` claim into a Set, then
+# contains() to require membership — the JSON-array -> Set path the enhanced set()
+# helper enables (a plain list claim can't otherwise feed the set functions).
+kind: token
+version: v2
+metadata:
+  name: ${AGENT_NAME}-expr
+  expires: "2035-01-01T00:00:00Z"
+spec:
+  roles: [${AGENT_ROLE}]
+  join_method: generic_oidc
+  generic_oidc:
+    issuer: ${ISSUER}
+    audience: ${AUDIENCE}
+    static_jwks: |
+$(printf '%s\n' "$JWKS" | indent '      ')
+    must_match_fields:
+      org: ethernet-fyi
+    allow_any:
+      - expression: 'contains(set(claims.groups), "dev")'
+EOF
+echo "    wrote $AGENT_EXPR"
+
 # Scoped variant: a scoped_token (proto resource, v1) for a scoped bot. Uses the
 # discovery + tls_ca path. Pair it with the static scoped-{role,bot,role-assignment}
 # resources in genericoidc-test/scoped/.

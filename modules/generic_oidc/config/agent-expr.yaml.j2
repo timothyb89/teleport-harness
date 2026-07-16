@@ -1,0 +1,19 @@
+version: v3
+teleport:
+  nodename: {{ cluster_id }}-agent-expr
+  data_dir: /var/lib/teleport
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: generic_oidc
+    token_name: generic-oidc-agent-expr
+    # Mints a JWT whose `groups` claim is a string ARRAY including "dev", so the
+    # token's expression rule contains(set(claims.groups), "dev") matches. `set()`
+    # flattens the JSON array into a Set the built-in contains() can query.
+    generic_oidc:
+      command: ["curl", "-fsSk", "https://oidc:8443/token?sub=test-agent&list=groups=dev,ops"]
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: generic-oidc, variant: expr}

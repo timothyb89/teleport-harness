@@ -48,6 +48,7 @@ OUT_DIR=/out/main \
 echo "[token-manager] creating unscoped agent + static_jwks bot tokens..."
 create /out/main/token-agent-discovery.yaml     # agent, discovery (system trust)
 create /out/main/token-agent-static-jwks.yaml   # agent, static_jwks
+create /out/main/token-agent-expr.yaml          # agent, static_jwks, EXPRESSION rule: contains(set(claims.groups), "dev")
 create /out/main/token-static-jwks.yaml         # BOT, static_jwks (gobot-static-static)
 
 # --- CA set (self-signed issuer): custom-CA discovery bots ------------------
