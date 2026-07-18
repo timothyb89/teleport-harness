@@ -34,6 +34,7 @@ EXPECTED_SERVICES = {
         "auth", "oidc", "oidc-ca", "tbot", "token-manager",
         "agent-discovery", "agent-static", "agent-scoped-discovery",
         "agent-scoped-static", "agent-deny", "agent-scoped-deny",
+        "agent-expr", "agent-expr-deny",
         "gobot-disc", "gobot-static", "gobot-scoped-disc", "gobot-scoped-static",
     },
     "kubernetes": {"auth", "oidc", "kube-oidc", "kube-jwks"},  # oidc from the shared component

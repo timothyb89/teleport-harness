@@ -424,6 +424,7 @@ def test_generic_oidc_all_pass_simulated():
         _node("c1-agent-discovery"), _node("c1-agent-static"),
         _node("c1-agent-scoped-discovery", scope=scope),
         _node("c1-agent-scoped-static", scope=scope),
+        _node("c1-agent-expr"),  # predicate-expression agent (contains(set(claims.groups),"dev"))
     ]
     bots = ["gobot-disc", "gobot-static", "gobot-scoped-disc", "gobot-scoped-static"]
     auth_log = "\n".join(
@@ -432,6 +433,8 @@ def test_generic_oidc_all_pass_simulated():
     logs = {
         "agent-deny": "unable to validate generic_oidc token",
         "agent-scoped-deny": "denied: unable to join via generic_oidc",
+        # expr-deny: same expression token, groups omit "dev" -> expression false -> denied
+        "agent-expr-deny": "denied: unable to validate generic_oidc token",
         "auth": auth_log,
     }
     # structured audit events: the join_token.create the impersonator check now inspects
