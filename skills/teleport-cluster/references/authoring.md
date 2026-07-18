@@ -90,7 +90,9 @@ shared component + bootstrap hook). A module directory:
   container) for resources that must be built at runtime, e.g. a `static_jwks` token whose JWKS
   is fetched from a running component. `$CONFIG` (auth.yaml path) is exported.
 - **`prebuild.sh`** *(optional)* — an imperative pre-render step (e.g. `docker build` a side
-  image), run with the render context as `UPPER_CASE` env (`module_dir` → `$MODULE_DIR`).
+  image, or build a binary from the clone), run with the render context as `UPPER_CASE` env
+  (`module_dir` → `$MODULE_DIR`, `out` → `$OUT`, and `repo` → `$REPO`, the teleport clone path —
+  how `components/terraform-runner/` builds the provider).
 - **`checks.py`** *(optional escape hatch)* — `def checks(cluster, nodes) -> list[CheckResult]`
   for a proof no declarative verb expresses. Prefer adding a verb (below) if it's reusable.
 
@@ -136,6 +138,31 @@ IdP" — many joins, one fetch. Isolating the IdP (its own issuer + data volume,
 `config/*.j2`/`bootstrap/`. Modules opt in via `components: [<name>]` (deduped across a plan, so
 two modules sharing one component get a single instance). See `components/oidc-server/`.
 
+## Add a Terraform-provider test (`terraform-runner` component)
+Test a change that's managed via the Teleport **Terraform provider** by driving a DEV build of
+the provider (from the clone's working tree) against the cluster. The shared
+`components/terraform-runner/` does the heavy lifting; a new test is a thin module:
+
+- `render.yaml`: `components: [terraform-runner]` + the engine vars `tf_image`/`tf_bin`
+  (module fragments can't see a component's render vars, so set them here — default
+  `hashicorp/terraform:1.9` / `terraform`; OpenTofu is `ghcr.io/opentofu/opentofu:1.8` / `tofu`).
+- `services.yml.j2`: one runner container (copy `modules/terraform_bot/`). Key bits —
+  `image: {{ tf_image }}`, `entrypoint: ["sh", "/scripts/tf-entrypoint.sh"]`, env
+  `TF_BIN`/`TF_TELEPORT_ADDR: {{ cluster_id }}-auth:3025`/`TF_TELEPORT_IDENTITY_FILE_PATH: /id/identity`
+  (+ any `TF_VAR_*`), mounts `{{ out }}/tf-plugins:/plugins:ro` (the built provider),
+  `{{ shared_scripts }}/tf-entrypoint.sh`, `{{ module_dir }}/tf:/work:ro` (your HCL), and
+  `tf-identity:/id:ro`; `depends_on: { tf-idbot: { condition: service_healthy } }`.
+- `tf/*.tf`: your Terraform config (mounted from source, so cluster values come via `TF_VAR_*`,
+  not templating). The provider block is empty — `addr`/identity come from env. The entrypoint
+  uses `dev_overrides` → NO `terraform init`/lockfiles.
+- `checks:`: `log_contains <svc> Apply complete` + `resource_present <kind/name>` /
+  `resource_field <kind/name> <dotted.path> [expected]` to assert what apply created in the cluster.
+
+Notes: auth is `identity_file_path` (the provider REJECTS the token join method); the provider
+binary is rebuilt every render (an uncommitted provider fix always takes — no SHA cache). A
+known-failing-that-flips test (see `terraform_generic_oidc`, the `must_match_fields` bug) just
+sets the not-yet-supported field and lets the resource checks FAIL until the provider is fixed.
+
 ## Write a plan
 `plans/<name>.yaml` (name MUST equal filename):
 ```yaml
@@ -169,3 +196,5 @@ independently (gated-out → SKIP, left out of the compose), verifies each, one 
 - [ ] new verb? → `verify.py` IMPLS + `checks.py` VerbSpec + `FakeCluster` test.
 - [ ] `cluster validate <name>` clean; `uv run --extra dev pytest` green.
 - [ ] `run-plan <name> --repo <clone>` passes; skim `runs/<ts>-<id>/results.md` evidence.
+- [ ] When finished, suggest creating a commit. Unless specified, commits
+      directly to main are fine.

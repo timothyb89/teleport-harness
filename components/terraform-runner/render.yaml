@@ -1,0 +1,12 @@
+# Context for the terraform-runner component (merged in when a module lists it under
+# `components:`). See harness/render.py + the shared harness/templates/scripts/tf-entrypoint.sh.
+#
+# NOTE: the Terraform ENGINE vars (tf_image / tf_bin) live in each MODULE's render.yaml, not
+# here — module fragments can't see a component's render vars (same reason generic_oidc
+# re-declares oidc_image), and it's the module that owns the runner container.
+#
+# The privileged bot the provider authenticates AS (via identity_file_path). Mirrors the
+# lib/admin.sh admin bot (editor,access,auditor) so terraform can manage bots/tokens/roles.
+tf_admin_token: harness-tf-admin-secret
+bots:
+  - {name: tf-admin, roles: "editor,access,auditor", token: harness-tf-admin-secret}

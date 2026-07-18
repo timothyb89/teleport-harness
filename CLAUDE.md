@@ -78,7 +78,8 @@ brain owns decisions + rendering, the shell owns orchestration.
   `auth_env: {…}` (unioned onto the auth service), `bots: [{name,roles,token}]` (bootstrapped bots),
   and any template vars. `config/*.j2` — teleport/tbot configs. `bootstrap/*.yaml[.j2]` — roles +
   provision-token resources applied at bootstrap (rendered if `.j2`). `prebuild.sh` *(optional)* —
-  imperative pre-step (build a side image), run with the context as `UPPER_CASE` env.
+  imperative pre-step (build a side image), run with the context as `UPPER_CASE` env (incl.
+  `$REPO`, the clone path — how `terraform-runner` builds the provider, and `$OUT`, the state dir).
 - `checks.py` *(optional escape hatch)* — Python: define `def checks(cluster, nodes) ->
   list[CheckResult]` for checks not expressible as a declarative verb. Gets the same
   `Cluster` seam (`cluster.exec_rc/logs/file_nonempty/get_nodes`) the built-in asserts use,
@@ -138,7 +139,12 @@ text log), `output_file`/`no_output_file <suffix> <path>`, `identity_authorized 
 <identity-path> <scope>` (asserts `tsh status --identity` shows the scope — scope-pin proof),
 `tsh_ssh <suffix> [login]` (admin identity), `tsh_ssh_as <suffix> <identity-path> <node-suffix>
 [login]` (tsh ssh from a container using ITS OWN identity → `echo harness-ok`; a bot's practical
-end-to-end access test).
+end-to-end access test),
+`resource_present <kind/name>` (a live resource exists — `tctl get <kind>/<name> --format json`
+returns it; FULL JSON proof; e.g. asserting what a terraform apply created),
+`resource_field <kind/name> <dotted.path> [expected]` (a field on a live resource is present,
+and — with `expected` — equals it by case-insensitive substring; missing resource OR path FAILs —
+how `terraform_generic_oidc` surfaces the must_match_fields bug).
 Node/container args reference the nodename suffix after `<id>-`.
 
 Modules today: `generic_oidc` (agents AND bots join via OIDC JWTs — discovery over a
@@ -154,16 +160,37 @@ fast: three kube-`oidc` bots validate through the caching validator — one join
 IdP (succeeds), two join dedicated hostile IdPs that oversize the discovery doc (which then
 HANGS the connection open) or the JWKS, and are denied with the size error at the right fetch
 step, producing no identity; the hang case proves the fetch aborts instead of draining an
-over-limit body — the behavior removed in the teleport.e→OSS move of this round tripper).
+over-limit body — the behavior removed in the teleport.e→OSS move of this round tripper),
+`terraform_bot` (drives a DEV build of the Teleport **Terraform provider** against the cluster:
+`terraform apply` creates a `teleport_bot` + `teleport_provision_token`, then `resource_present`
+asserts both exist — proves the whole build→identity→apply→state pipeline; OSS, no gate),
+`terraform_generic_oidc` (terraform sets `must_match_fields` on a generic_oidc join token, then
+proves it's ENFORCED at join — a KNOWN-FAILING probe with a subtle root cause: the field is
+excluded from the generated provider schema, so the provider SILENTLY DROPS it (apply SUCCEEDS,
+token created WITHOUT the field — not a loud error). The behavioral tell: it pulls in the
+oidc-server component and a negative join test — two agents present a JWT that satisfies allow_any
+(sub) but differ in the `org` claim; the wrong-`org` agent WRONGLY joins today (dropped field =
+no matcher) and must be denied once the field round-trips. `resource_field` + `node_absent` FAIL
+today and flip to PASS with no edits once the provider bug is fixed. Gated on generic_oidc).
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
 type — system-trusted, no custom-CA — validates it; opt-in HOSTILE flags
 `-oversize-endpoints=discovery,jwks` / `-oversize-bytes` / `-hang-after-oversize` make a
-dedicated instance bloat + optionally never-close a response, to test a client's size cap).
+dedicated instance bloat + optionally never-close a response, to test a client's size cap),
+`terraform-runner` (shared plumbing for the terraform_* modules: a `prebuild.sh` cross-builds
+`terraform-provider-teleport` from the clone's working tree — `make build OS=linux ARCH=amd64`,
+CGO-off, into `$OUT/tf-plugins`, NOT SHA-cached so an uncommitted provider fix always rebuilds —
+plus a privileged `tf-admin` bot + tbot writing an identity to the `tf-identity` volume. Modules
+add their own runner container that mounts these + `{{ shared_scripts }}/tf-entrypoint.sh`, which
+uses a `dev_overrides` `.terraformrc` to run `apply` with NO init/lockfiles. Auth is
+`identity_file_path` because the provider REJECTS the token join method. Engine is HashiCorp
+Terraform (`tf_image`/`tf_bin` in each module's render.yaml; OpenTofu is a two-var swap)).
 Plans today: `bots` (tbot+bound_keypair),
 `oidc-caching` (generic_oidc + kubernetes + oidc_caching — each gated independently, so on a
-target with only `kubernetes` generic_oidc SKIPs while the other two run).
+target with only `kubernetes` generic_oidc SKIPs while the other two run),
+`terraform` (terraform_bot + terraform_generic_oidc sharing one terraform-runner; the oidc module
+gates out where generic_oidc isn't provided while terraform_bot still runs).
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build --repo` · `up <module> --repo [--id]` · `run-plan <plan|module> --repo [--features a,b] [--version vNN] [--id]`

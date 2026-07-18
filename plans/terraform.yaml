@@ -1,0 +1,16 @@
+# Terraform-provider test plan: build a DEV terraform-provider-teleport from the clone and
+# drive it against ONE cluster, sharing the terraform-runner component (provider build +
+# tf-admin identity). terraform_bot proves the pipeline end-to-end (creates a bot + token,
+# PASS today); terraform_generic_oidc probes the known must_match_fields provider bug
+# (FAIL today, flips to PASS once the provider is fixed).
+#
+#   run-plan terraform --repo ~/projects/teleport-b --features generic_oidc --version v18
+#
+# Each module gates independently: on a target without generic_oidc, terraform_generic_oidc
+# SKIPs while terraform_bot still runs.
+name: terraform
+description: >
+  Teleport Terraform provider (dev build) driven against a live cluster: terraform_bot
+  creates a bot + join token (PASS), terraform_generic_oidc sets must_match_fields on a
+  generic_oidc token (FAIL until the provider schema bug is fixed, then PASS).
+modules: [terraform_bot, terraform_generic_oidc]

@@ -24,7 +24,8 @@ CTX = {
     "out": "/state/zz1",
 }
 
-ALL_MODULES = ["tbot", "bound_keypair", "generic_oidc", "kubernetes"]
+ALL_MODULES = ["tbot", "bound_keypair", "generic_oidc", "kubernetes",
+               "terraform_bot", "terraform_generic_oidc"]
 
 EXPECTED_SERVICES = {
     "tbot": {"auth", "tbot", "tbot-deny"},
@@ -36,6 +37,11 @@ EXPECTED_SERVICES = {
         "gobot-disc", "gobot-static", "gobot-scoped-disc", "gobot-scoped-static",
     },
     "kubernetes": {"auth", "oidc", "kube-oidc", "kube-jwks"},  # oidc from the shared component
+    # tf-idbot from the shared terraform-runner component; the runner container per module
+    "terraform_bot": {"auth", "tf-idbot", "tf-bot"},
+    # + oidc (oidc-server component) and the two join-test agents
+    "terraform_generic_oidc": {"auth", "oidc", "tf-idbot", "tf-oidc",
+                               "tf-agent-ok", "tf-agent-badorg"},
 }
 
 
@@ -101,6 +107,9 @@ EXPECTED_BOTS = {
     # bootstrap resources, not `bots add` manifest entries.
     "generic_oidc": {"token-manager", "gobot-disc", "gobot-static"},
     "kubernetes": {"kube-oidc-bot", "kube-jwks-bot"},
+    # the privileged identity bot the terraform-runner component contributes
+    "terraform_bot": {"tf-admin"},
+    "terraform_generic_oidc": {"tf-admin"},
 }
 
 

@@ -182,6 +182,7 @@ def cmd_render(args: argparse.Namespace) -> int:
         "lab_domain": args.lab_domain,
         "license_file": args.license_file,
         "out": args.out,
+        "repo": args.repo,
     }
     compose = render_cluster(mdirs, ctx, Path(args.out), components_dir=_root() / "components")
     print(f"[render] wrote {compose}", file=sys.stderr)
@@ -263,6 +264,9 @@ def main(argv: list[str] | None = None) -> int:
     sr.add_argument("--license-file", default="",
                     help="host path to an enterprise license; mounted into the auth "
                          "container and referenced by auth_service.license_file (ent builds)")
+    sr.add_argument("--repo", default="",
+                    help="host path to the teleport clone; exposed to prebuild.sh as $REPO "
+                         "(e.g. the terraform-runner component builds the provider from it)")
     sr.add_argument("--out", required=True)
     sr.set_defaults(fn=cmd_render)
 

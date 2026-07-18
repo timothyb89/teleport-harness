@@ -1,0 +1,23 @@
+{# terraform_bot runner: a HashiCorp Terraform (or, later, OpenTofu) container that applies
+   tf/main.tf against the cluster. Auth = the tf-admin identity file the terraform-runner
+   component's tbot wrote to the tf-identity volume (the provider rejects token-join, so
+   identity_file_path is the path). The provider binary comes from {{ out }}/tf-plugins
+   (built by the component prebuild) via dev_overrides in the shared entrypoint. #}
+services:
+  tf-bot:
+    image: {{ tf_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tf-bot
+    entrypoint: ["sh", "/scripts/tf-entrypoint.sh"]
+    environment:
+      TF_BIN: "{{ tf_bin }}"
+      TF_TELEPORT_ADDR: "{{ cluster_id }}-auth:3025"
+      TF_TELEPORT_IDENTITY_FILE_PATH: "/id/identity"
+    volumes:
+      - {{ out }}/tf-plugins:/plugins:ro
+      - {{ shared_scripts }}/tf-entrypoint.sh:/scripts/tf-entrypoint.sh:ro
+      - {{ module_dir }}/tf:/work:ro
+      - tf-identity:/id:ro
+    networks: [internal]
+    depends_on:
+      tf-idbot: {condition: service_healthy}

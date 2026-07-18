@@ -1,0 +1,9 @@
+{# tbot for the tf-admin bot: writes a renewable identity file to the shared tf-identity
+   volume (/idents/identity), which Terraform runners load via TF_TELEPORT_IDENTITY_FILE_PATH.
+   Distinct filename from modules/tbot's config so the two never collide in $OUT/config. #}
+version: v2
+proxy_server: {{ fqdn }}:{{ port }}
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /idents}

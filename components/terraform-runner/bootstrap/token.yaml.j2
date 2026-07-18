@@ -1,0 +1,6 @@
+{# tf-admin bot's join token (classic token method; secret == the token name). The shared
+   auth-entrypoint applies this, then `bots add tf-admin --token=<this>` (from bots.manifest). #}
+kind: token
+version: v2
+metadata: {name: {{ tf_admin_token }}}
+spec: {roles: [Bot], bot_name: tf-admin, join_method: token}

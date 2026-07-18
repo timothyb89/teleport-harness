@@ -1,0 +1,39 @@
+# terraform_generic_oidc: use the Terraform provider (dev build) to create a generic_oidc join
+# token whose spec sets `must_match_fields`, then PROVE the field is actually enforced at join.
+#
+# Known-failing TODAY, for a subtle reason: the provider does NOT reject `must_match_fields` —
+# it SILENTLY DROPS it. The field is excluded from the generated TF schema (protoc-gen-terraform
+# can't handle its google.protobuf.Struct type — see protoc-gen-terraform-teleport.yaml), so it
+# has no schema attribute / no CopyFrom. `terraform apply` SUCCEEDS, the token is created, but
+# WITHOUT must_match_fields. The behavioral consequence: an identity that satisfies `allow_any`
+# (sub) but carries a WRONG `org` (the must_match_fields claim) WRONGLY joins, because the
+# unenforced field lets everything through. Once the provider bug is fixed (un-exclude the field
+# + a custom Struct type in tfschema/custom_types.go + regenerate), the field round-trips, the
+# bad-org agent is denied, and this module flips to PASS with NO edits.
+name: terraform_generic_oidc
+description: >
+  Teleport Terraform provider (dev build) — terraform apply creates a generic_oidc join token
+  with must_match_fields, then a negative join test proves it's evaluated: a matching agent
+  joins, but one that meets allow_any yet carries a wrong `org` must be denied. Known-failing
+  today (the provider silently drops must_match_fields); flips to PASS once the bug is fixed.
+provides_feature: terraform_generic_oidc
+requires_features: [generic_oidc]
+min_version: v18                 # generic_oidc lands in v18
+
+# Verification — source of truth (harness/verify.py).
+checks: |
+  # Apply SUCCEEDS (the provider drops must_match_fields silently — it does NOT error), so the
+  # token is created...
+  log_contains     tf-oidc Apply complete
+  resource_present token/tf-oidc-token
+  # ...but the field never reaches the server. FAILs today; flips to PASS once the provider
+  # round-trips must_match_fields.
+  resource_field   token/tf-oidc-token spec.generic_oidc.must_match_fields.org ethernet-fyi
+  # BEHAVIORAL proof it's actually EVALUATED at join, not merely stored. Both agents present a
+  # JWT whose `sub` satisfies allow_any; they differ only in the `org` claim (the
+  # must_match_fields matcher). The fully-matching agent joins either way (proves the token is
+  # join-valid). The wrong-`org` agent must be DENIED — but TODAY it WRONGLY joins (dropped
+  # field = no matcher), so node_absent FAILs; once the field is enforced it's denied -> PASS.
+  node_present     tf-agent-ok
+  node_absent      tf-agent-badorg
+  log_contains     tf-agent-badorg unable to (join via|validate) generic_oidc|denied

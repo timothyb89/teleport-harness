@@ -406,6 +406,63 @@ def _tsh_ssh_as(c, nodes, args):
                                          cmd + f"\n{_truncate(out, 160)}")])
 
 
+# --- live resource state (what a terraform apply, or any actor, created) ------
+def _split_ref(ref: str) -> tuple[str, str]:
+    """`kind/name` -> (kind, name). Name may itself contain '/' (rare); split once."""
+    kind, _, name = ref.partition("/")
+    return kind, name
+
+
+def _resource_proof(kind: str, name: str, doc: dict) -> ProofItem:
+    return ProofItem("resource", f"{kind}/{name} (tctl get)",
+                     json.dumps(doc, indent=2, sort_keys=True), lang="json")
+
+
+def _dig(doc: dict, path: str):
+    """Walk a dotted path through nested dicts; return (found, value)."""
+    cur = doc
+    for key in path.split("."):
+        if not isinstance(cur, dict) or key not in cur:
+            return False, None
+        cur = cur[key]
+    return True, cur
+
+
+def _resource_present(c, nodes, args):
+    kind, name = _split_ref(args[0])
+    doc = c.get_resource(kind, name)
+    if doc:
+        return CheckResult(PASS, f"resource {kind}/{name} present",
+                           proofs=[_resource_proof(kind, name, doc)])
+    return CheckResult(FAIL, f"resource {kind}/{name} not found")
+
+
+def _resource_field(c, nodes, args):
+    """Assert a field (dotted path) on a live resource. With <expected>, its value must
+    match (case-insensitive string compare); without, the path must merely be present.
+    A missing resource OR missing path FAILs — this is how terraform_generic_oidc
+    surfaces the must_match_fields bug (apply aborts, token never created)."""
+    kind, name = _split_ref(args[0])
+    path = args[1]
+    expected = args[2] if len(args) > 2 else None
+    asserts = [f"{kind}/{name}.{path}" + (f" = {expected}" if expected is not None else " present")]
+    doc = c.get_resource(kind, name)
+    if not doc:
+        return CheckResult(FAIL, f"resource {kind}/{name} not found (cannot read {path})",
+                           assertions=asserts)
+    found, value = _dig(doc, path)
+    proof = _resource_proof(kind, name, doc)
+    if not found:
+        return CheckResult(FAIL, f"{kind}/{name}: field {path} absent",
+                           proofs=[proof], assertions=asserts)
+    if expected is not None and expected.lower() not in str(value).lower():
+        return CheckResult(FAIL, f"{kind}/{name}: {path}={value!r} != {expected!r}",
+                           proofs=[proof], assertions=asserts)
+    detail = f"= {value}" if expected is None else f"= {value} (matches {expected})"
+    return CheckResult(PASS, f"{kind}/{name}: {path} {detail}",
+                       proofs=[proof], assertions=asserts)
+
+
 # verb -> impl. Kept in lockstep with harness/checks.REGISTRY (test enforces it).
 Impl = Callable[[Cluster, list[dict], list[str]], CheckResult]
 IMPLS: dict[str, Impl] = {
@@ -424,6 +481,8 @@ IMPLS: dict[str, Impl] = {
     "identity_scope": _identity_scope,
     "tsh_ssh": _tsh_ssh,
     "tsh_ssh_as": _tsh_ssh_as,
+    "resource_present": _resource_present,
+    "resource_field": _resource_field,
 }
 
 

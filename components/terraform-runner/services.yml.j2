@@ -1,0 +1,29 @@
+{# terraform-runner: SHARED plumbing for driving a DEV build of the Teleport Terraform
+   provider against the cluster. This component contributes the privileged identity (a
+   tbot writing to the tf-identity volume) + the provider binary (built by prebuild.sh into
+   $OUT/tf-plugins). Each TEST MODULE adds its own runner container (its own .tf + checks)
+   that mounts these + {{ shared_scripts }}/tf-entrypoint.sh. The provider REJECTS the token
+   join method, so auth is identity_file_path. #}
+services:
+  tf-idbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tf-idbot
+    command: [tbot, start, -c, /etc/tbot.yaml, "--token={{ tf_admin_token }}", "--join-method=token"]
+    volumes:
+      - {{ out }}/config/tf-idbot.yaml:/etc/tbot.yaml:ro
+      - tf-identity:/idents
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+    # Runners `depends_on: {tf-idbot: service_healthy}` — healthy only once the identity
+    # file exists, so terraform never starts before it can authenticate.
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /idents/identity"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+volumes:
+  tf-identity:

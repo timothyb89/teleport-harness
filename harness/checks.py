@@ -61,6 +61,15 @@ _SPECS: list[VerbSpec] = [
         "tsh_ssh_as", 3, 4,
         "tsh_ssh_as <container-suffix> <identity-path> <node-suffix> [login]",
     ),
+    VerbSpec(
+        "resource_present", 1, 1,
+        "resource_present <kind/name>  (tctl get <kind>/<name> returns a resource)",
+    ),
+    VerbSpec(
+        "resource_field", 2, 3,
+        "resource_field <kind/name> <dotted.path> [expected]  "
+        "(a field on a live resource is present, and optionally equals a value)",
+    ),
 ]
 
 REGISTRY: dict[str, VerbSpec] = {s.name: s for s in _SPECS}

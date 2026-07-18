@@ -25,6 +25,12 @@ class Cluster:
     def get_nodes(self) -> list[dict]:  # pragma: no cover - overridden in tests
         raise NotImplementedError
 
+    def get_resource(self, kind: str, name: str) -> dict | None:  # pragma: no cover
+        """A single resource by kind+name, via `tctl get <kind>/<name>` — the seam
+        the resource_present/resource_field verbs use to inspect cluster state (e.g.
+        what a terraform apply created). None if absent/unreadable. Overridden in tests."""
+        raise NotImplementedError
+
     def logs(self, suffix: str) -> str:  # pragma: no cover
         raise NotImplementedError
 
@@ -85,6 +91,28 @@ class DockerCluster(Cluster):
         except json.JSONDecodeError:
             return []
         return data if isinstance(data, list) else []
+
+    def get_resource(self, kind: str, name: str) -> dict | None:
+        # mirrors: docker exec <id>-auth tctl get <kind>/<name> --format json
+        # (--format json emits a JSON array even for a single resource).
+        cp = self._run(
+            ["docker", "exec", self.container("auth"),
+             "tctl", "get", f"{kind}/{name}", "--format", "json"]
+        )
+        if cp.returncode != 0 or not cp.stdout.strip():
+            return None
+        try:
+            data = json.loads(cp.stdout)
+        except json.JSONDecodeError:
+            return None
+        docs = data if isinstance(data, list) else [data]
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            if doc.get("metadata", {}).get("name") == name:
+                return doc
+        # tctl already filtered to this name; fall back to the sole element if present.
+        return docs[0] if docs and isinstance(docs[0], dict) else None
 
     def logs(self, suffix: str) -> str:
         # mirrors: docker logs <id>-<suffix> 2>&1  (capture first — no pipefail trap)

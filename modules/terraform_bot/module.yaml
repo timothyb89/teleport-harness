@@ -1,0 +1,23 @@
+# terraform_bot: drive a DEV build of the Teleport Terraform provider against the cluster
+# and have it create a Machine ID bot + a join token. Proves the whole pipeline end-to-end:
+# build the provider from the clone -> tf-admin identity -> `terraform apply` (via
+# dev_overrides, no init) -> resources exist in the cluster. Uses only OSS bot/token
+# resources, so it runs on any modern build (no feature gate).
+name: terraform_bot
+description: >
+  Teleport Terraform provider (dev build) — terraform apply creates a teleport_bot and a
+  teleport_provision_token; both are then verified to exist in the live cluster. Exercises
+  the provider build + identity-file auth + dev_overrides runner shared by all TF modules.
+provides_feature: terraform_provider
+requires_features: []
+min_version: v16                 # provider supports servers >= 15; v16 is a safe floor
+
+# Verification — the source of truth, all declarative (run by harness/verify.py).
+checks: |
+  # terraform apply succeeded (dev_overrides in effect -> no init needed)
+  log_contains     tf-bot Apply complete
+  # the bot + join token the HCL declared now exist in the cluster
+  resource_present bot/tf-demo-bot
+  resource_present token/tf-demo-token
+  # spot-check a field round-tripped through the provider correctly
+  resource_field   token/tf-demo-token spec.bot_name tf-demo-bot

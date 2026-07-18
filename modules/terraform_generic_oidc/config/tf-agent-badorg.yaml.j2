@@ -1,0 +1,20 @@
+{# Negative join: JWT sub=tf-oidc-subject STILL satisfies allow_any, but org=wrong-org
+   MISMATCHES must_match_fields (org=ethernet-fyi). So denial is attributable ONLY to
+   must_match_fields — the proof it's evaluated. TODAY this WRONGLY joins (field dropped);
+   once the provider round-trips must_match_fields it is denied. #}
+version: v3
+teleport:
+  nodename: {{ cluster_id }}-tf-agent-badorg
+  data_dir: /var/lib/teleport
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: generic_oidc
+    token_name: tf-oidc-token
+    generic_oidc:
+      command: ["curl", "-fsSk", "https://oidc:8443/token?sub=tf-oidc-subject&claim=org=wrong-org"]
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: terraform-generic-oidc, variant: badorg}

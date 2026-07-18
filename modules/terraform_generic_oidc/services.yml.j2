@@ -1,0 +1,52 @@
+{# terraform_generic_oidc: a runner applies a generic_oidc join token carrying must_match_fields,
+   then two agents attempt to join with it to prove the field is EVALUATED (not just stored).
+   The oidc-server component mints the JWTs (system-trusted wildcard cert at oidc.<lab_domain>,
+   so the token validates discovery over system trust — no tls_ca). Both agents' JWTs satisfy
+   allow_any (sub=tf-oidc-subject); they differ only in the `org` claim (the must_match_fields
+   matcher): tf-agent-ok keeps the default org (ethernet-fyi, matches) and tf-agent-badorg
+   overrides it (wrong, must be denied once the field is enforced). #}
+services:
+  tf-oidc:
+    image: {{ tf_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tf-oidc
+    entrypoint: ["sh", "/scripts/tf-entrypoint.sh"]
+    environment:
+      TF_BIN: "{{ tf_bin }}"
+      TF_TELEPORT_ADDR: "{{ cluster_id }}-auth:3025"
+      TF_TELEPORT_IDENTITY_FILE_PATH: "/id/identity"
+      # issuer/audience must match what the oidc-server serves/mints (fixed :8443, wildcard cert).
+      TF_VAR_issuer: "https://oidc.{{ lab_domain }}:8443"
+      TF_VAR_audience: "{{ fqdn }}/generic-oidc"
+    volumes:
+      - {{ out }}/tf-plugins:/plugins:ro
+      - {{ shared_scripts }}/tf-entrypoint.sh:/scripts/tf-entrypoint.sh:ro
+      - {{ module_dir }}/tf:/work:ro
+      - tf-identity:/id:ro
+    networks: [internal]
+    depends_on:
+      tf-idbot: {condition: service_healthy}
+    # Healthy once `terraform apply` has finished (marker from tf-entrypoint.sh), so the agents
+    # only start after the TF-created token exists.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/tf-apply-done"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+{% for name in ["tf-agent-ok", "tf-agent-badorg"] %}
+
+  # {{ name }}: a Node that joins with the TF-created token (see config/{{ name }}.yaml for the
+  # JWT it presents). Starts only after tf-oidc is healthy (the token has been applied).
+  {{ name }}:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-{{ name }}
+    command: ["teleport", "start", "--config", "/etc/teleport/teleport.yaml"]
+    volumes:
+      - {{ out }}/config/{{ name }}.yaml:/etc/teleport/teleport.yaml:ro
+    networks: [internal]
+    depends_on:
+      tf-oidc: {condition: service_healthy}
+      oidc: {condition: service_started}
+{% endfor %}

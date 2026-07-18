@@ -1,0 +1,9 @@
+# Render context for terraform_generic_oidc (see harness/render.py).
+# terraform-runner: builds the provider + tf-admin identity. oidc-server: the in-cluster IdP
+# that mints the JWTs the join test's agents present (served over the system-trusted wildcard
+# cert at oidc.<lab_domain>, so the TF token validates discovery over system trust — no tls_ca).
+components: [terraform-runner, oidc-server]
+# Terraform engine (this module owns the runner container). Swap to OpenTofu later with:
+#   tf_image: ghcr.io/opentofu/opentofu:1.8   tf_bin: tofu
+tf_image: hashicorp/terraform:1.9
+tf_bin: terraform

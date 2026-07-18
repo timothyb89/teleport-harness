@@ -29,7 +29,7 @@ MODULES = REPO / "modules"
 
 class FakeCluster(Cluster):
     def __init__(self, cid="c1", nodes=None, logs=None, files=None, execs=None,
-                 tsh_ok=False, events=None):
+                 tsh_ok=False, events=None, resources=None):
         super().__init__(cid)
         self._nodes = nodes or []
         self._logs = logs or {}
@@ -37,9 +37,13 @@ class FakeCluster(Cluster):
         self._execs = execs or {}
         self._tsh_ok = tsh_ok
         self._events = events or []
+        self._resources = resources or {}  # {"kind/name": {resource dict}}
 
     def get_nodes(self):
         return self._nodes
+
+    def get_resource(self, kind, name):
+        return self._resources.get(f"{kind}/{name}")
 
     def logs(self, suffix):
         return self._logs.get(suffix, "")
@@ -358,6 +362,44 @@ def test_tsh_ssh_as_pass_and_fail():
     # access denied / no OS user -> nonzero + no marker -> FAIL
     bad = FakeCluster(execs={("gobot", argv): (255, "access denied to root\n")})
     assert _run(bad, "tsh_ssh_as gobot /out/id/identity agent-scoped-discovery root").status == "FAIL"
+
+
+# ---- resource_present / resource_field (live cluster state after e.g. tf apply) ----
+_TF_TOKEN = {"kind": "token", "version": "v2", "metadata": {"name": "tf-demo-token"},
+             "spec": {"roles": ["Bot"], "bot_name": "tf-demo-bot", "join_method": "token"}}
+_GORC_TOKEN = {"kind": "token", "version": "v2", "metadata": {"name": "tf-oidc-token"},
+               "spec": {"roles": ["Bot"], "join_method": "generic_oidc",
+                        "generic_oidc": {"issuer": "https://idp", "must_match_fields": {"sub": "ci"}}}}
+
+
+def test_resource_present_pass_and_fail():
+    c = FakeCluster(resources={"token/tf-demo-token": _TF_TOKEN})
+    res = _run(c, "resource_present token/tf-demo-token")
+    assert res.status == "PASS"
+    (p,) = res.proofs
+    assert p.kind == "resource" and p.lang == "json" and '"tf-demo-token"' in p.content
+    # a resource terraform never created (e.g. apply aborted) -> FAIL
+    assert _run(c, "resource_present bot/tf-demo-bot").status == "FAIL"
+
+
+def test_resource_field_presence_and_value_match():
+    c = FakeCluster(resources={"token/tf-oidc-token": _GORC_TOKEN})
+    # presence-only (no expected value)
+    assert _run(c, "resource_field token/tf-oidc-token spec.generic_oidc.must_match_fields").status == "PASS"
+    # value match is case-insensitive substring, like audit_event
+    ok = _run(c, "resource_field token/tf-oidc-token spec.join_method GENERIC_OIDC")
+    assert ok.status == "PASS" and ok.assertions == ["token/tf-oidc-token.spec.join_method = GENERIC_OIDC"]
+    # wrong value -> FAIL
+    assert _run(c, "resource_field token/tf-oidc-token spec.join_method token").status == "FAIL"
+
+
+def test_resource_field_missing_path_and_missing_resource_fail():
+    # the must_match_fields bug today: the field is absent from the created token...
+    no_mmf = {"metadata": {"name": "t"}, "spec": {"generic_oidc": {"issuer": "x"}}}
+    c = FakeCluster(resources={"token/t": no_mmf})
+    assert _run(c, "resource_field token/t spec.generic_oidc.must_match_fields").status == "FAIL"
+    # ...or, more often today, apply aborts and the token is never created at all.
+    assert _run(FakeCluster(), "resource_field token/t spec.generic_oidc.must_match_fields x").status == "FAIL"
 
 
 # ---- render / RESULT --------------------------------------------------------

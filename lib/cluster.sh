@@ -61,7 +61,7 @@ EOF
   hlog "rendering cluster '$id' [$label: $modules_csv] at $fqdn"
   pybrain render --modules "$modules_csv" --cluster-id "$id" --fqdn "$fqdn" --port "$INGRESS_PORT" \
     --image "$image" --harness-domain "$HARNESS_DOMAIN" --lab-domain "$LAB_DOMAIN" \
-    $license_arg --out "$out" || die "render failed"
+    --repo "$REPO" $license_arg --out "$out" || die "render failed"
   [ -f "$out/docker-compose.yml" ] || die "render did not produce $out/docker-compose.yml"
 
   hlog "starting containers"
