@@ -29,7 +29,7 @@ MODULES = REPO / "modules"
 
 class FakeCluster(Cluster):
     def __init__(self, cid="c1", nodes=None, logs=None, files=None, execs=None,
-                 tsh_ok=False, events=None, resources=None):
+                 tsh_ok=False, events=None, resources=None, state_files=None):
         super().__init__(cid)
         self._nodes = nodes or []
         self._logs = logs or {}
@@ -38,12 +38,16 @@ class FakeCluster(Cluster):
         self._tsh_ok = tsh_ok
         self._events = events or []
         self._resources = resources or {}  # {"kind/name": {resource dict}}
+        self._state_files = state_files or {}  # {relpath: text}
 
     def get_nodes(self):
         return self._nodes
 
     def get_resource(self, kind, name):
         return self._resources.get(f"{kind}/{name}")
+
+    def state_file(self, relpath):
+        return self._state_files.get(relpath)
 
     def logs(self, suffix):
         return self._logs.get(suffix, "")
@@ -402,6 +406,53 @@ def test_resource_field_missing_path_and_missing_resource_fail():
     assert _run(FakeCluster(), "resource_field token/t spec.generic_oidc.must_match_fields x").status == "FAIL"
 
 
+# ---- agent_result (agent-driven tests: an AI agent's findings) ---------------
+from harness.agent import RESULT_RELPATH, TRANSCRIPT_RELPATH  # noqa: E402
+
+_AGENT_OK = (
+    '{"task":"onboard docbot via bound_keypair","status":"partial",'
+    '"summary":"onboarded, but the guide never says how to authenticate tctl",'
+    '"steps":[{"n":1,"action":"read /docs/getting-started.mdx","expected":"4 steps",'
+    '"observed":"followed","ok":true,"doc_ref":"getting-started.mdx"},'
+    '{"n":2,"action":"tctl create token","expected":"created","observed":"ok","ok":true}],'
+    '"issues":[{"severity":"major","area":"docs","description":"no auth step for a fresh user",'
+    '"evidence":"Step 2 assumes a logged-in tctl","suggested_fix":"add a login step"}]}'
+)
+
+
+def test_agent_result_advisory_pass_surfaces_findings():
+    c = FakeCluster(state_files={RESULT_RELPATH: _AGENT_OK,
+                                 TRANSCRIPT_RELPATH: '{"type":"result","total_cost_usd":0.1}'})
+    res = _run(c, "agent_result")
+    assert res.status == "PASS" and "advisory" in res.msg
+    assert "status=partial" in res.msg and "1 issue" in res.msg
+    # both the structured verdict and the transcript are captured as proof
+    kinds = {p.title for p in res.proofs}
+    assert any("verdict" in t for t in kinds) and any("transcript" in t for t in kinds)
+    assert any(p.lang == "json" for p in res.proofs)
+    # each step + issue becomes an assertion shown under the proof
+    assert any("step 1" in a for a in res.assertions)
+    assert any("major/docs" in a for a in res.assertions)
+
+
+def test_agent_result_missing_fails():
+    res = _run(FakeCluster(), "agent_result")
+    assert res.status == "FAIL" and "no result" in res.msg
+
+
+def test_agent_result_invalid_json_fails_with_raw_proof():
+    c = FakeCluster(state_files={RESULT_RELPATH: "not json at all {"})
+    res = _run(c, "agent_result")
+    assert res.status == "FAIL" and "invalid" in res.msg
+    assert res.proofs and "unparseable" in res.proofs[0].title
+
+
+def test_agent_result_expected_status_gates():
+    c = FakeCluster(state_files={RESULT_RELPATH: _AGENT_OK})  # status == "partial"
+    assert _run(c, "agent_result partial").status == "PASS"
+    assert _run(c, "agent_result pass").status == "FAIL"
+
+
 # ---- render / RESULT --------------------------------------------------------
 def test_render_fail_and_pass():
     text, passed = render([CheckResult("PASS", "ok"), CheckResult("SKIP", "later")])
@@ -474,3 +525,20 @@ def test_tbot_identity_check_is_declarative_now():
     results = verify(c, m.checks, module_dir=MODULES / "tbot")
     _, passed = render(results)
     assert passed
+
+
+def test_docs_bound_keypair_all_pass_simulated():
+    """The agent-driven module passes when the agent produced a valid result (advisory) AND
+    the objective end-state holds: docbot joined via bound_keypair and both resources exist."""
+    m = load_module(MODULES / "docs_bound_keypair")
+    docbot_token = {"kind": "token", "metadata": {"name": "docbot-token"},
+                    "spec": {"roles": ["Bot"], "bot_name": "docbot", "join_method": "bound_keypair"}}
+    docbot = {"kind": "bot", "metadata": {"name": "docbot"}, "spec": {"roles": ["access"]}}
+    c = FakeCluster(
+        logs={"auth": "bot.join bot_name:docbot method:bound_keypair success:true"},
+        resources={"token/docbot-token": docbot_token, "bot/docbot": docbot},
+        state_files={RESULT_RELPATH: _AGENT_OK},
+    )
+    results = verify(c, m.checks, module_dir=MODULES / "docs_bound_keypair")
+    text, passed = render(results)
+    assert passed, text

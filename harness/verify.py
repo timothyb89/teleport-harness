@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from pydantic import ValidationError
+
 from .cluster import Cluster
 from .checks import REGISTRY
 from .models import Check
@@ -463,6 +465,49 @@ def _resource_field(c, nodes, args):
                        proofs=[proof], assertions=asserts)
 
 
+# --- agent-driven tests (an AI agent's findings, written to a state-dir bind mount) -----------
+def _agent_result(c, nodes, args):
+    """Surface an agent-driven test's verdict (harness/agent.py AgentResult), which the
+    workbench wrote to /out/agent-result.json (a state-dir bind mount). ADVISORY: PASS as long
+    as a *valid* result exists — the agent's status + every snag it reported become proof +
+    assertions for the report, but the run is gated by the OBJECTIVE verbs alongside this one
+    (bot_joined/resource_present), not by the agent's opinion. FAIL only if the agent produced
+    nothing parseable. With <expected-status>, the agent's self-status must additionally match."""
+    from .agent import AgentResult, RESULT_RELPATH, TRANSCRIPT_RELPATH
+
+    expected = args[0] if args else None
+    raw = c.state_file(RESULT_RELPATH)
+    if raw is None:
+        return CheckResult(FAIL, "agent produced no result (agent-result.json missing — "
+                                 "agent didn't run, crashed, or never wrote its verdict)")
+    try:
+        res = AgentResult.model_validate_json(raw)
+    except ValidationError as e:
+        return CheckResult(FAIL, f"agent-result.json is invalid ({e.error_count()} error(s))",
+                           proofs=[ProofItem("text", "agent-result.json (unparseable)", raw)])
+
+    # distinct kinds so the report renders the verdict as a formatted "Agent findings" section
+    # and collapses the (large) transcript — see harness/report.py.
+    proofs = [ProofItem("agent-result", f"agent verdict: {res.task or 'task'}",
+                        res.model_dump_json(indent=2), lang="json")]
+    transcript = c.state_file(TRANSCRIPT_RELPATH)
+    if transcript:
+        proofs.append(ProofItem("agent-transcript", "agent transcript (claude -p --output-format json)",
+                                transcript, lang="json"))
+    asserts = [f"[{'ok' if s.ok else 'FAIL'}] step {s.n}: {s.action}".rstrip() for s in res.steps]
+    asserts += [f"[{i.severity}/{i.area}] {i.description}" for i in res.issues]
+    blockers = sum(1 for i in res.issues if i.severity.lower() == "blocker")
+    summary = (f"agent status={res.status}; {len(res.steps)} step(s), {len(res.issues)} issue(s)"
+               + (f", {blockers} blocker" if blockers else ""))
+
+    if expected is not None:
+        if res.status.lower() != expected.lower():
+            return CheckResult(FAIL, f"{summary} — expected status {expected!r}",
+                               proofs=proofs, assertions=asserts)
+        return CheckResult(PASS, f"{summary} (matches expected)", proofs=proofs, assertions=asserts)
+    return CheckResult(PASS, f"{summary} (advisory)", proofs=proofs, assertions=asserts)
+
+
 # verb -> impl. Kept in lockstep with harness/checks.REGISTRY (test enforces it).
 Impl = Callable[[Cluster, list[dict], list[str]], CheckResult]
 IMPLS: dict[str, Impl] = {
@@ -483,6 +528,7 @@ IMPLS: dict[str, Impl] = {
     "tsh_ssh_as": _tsh_ssh_as,
     "resource_present": _resource_present,
     "resource_field": _resource_field,
+    "agent_result": _agent_result,
 }
 
 

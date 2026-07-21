@@ -140,6 +140,20 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return EXIT_OK if passed else EXIT_ERR
 
 
+def cmd_agent_run(args: argparse.Namespace) -> int:
+    """Host step (run by lib/plan.sh after the cluster is healthy, before verify): drive an
+    agent-driven module's workbench with a locked-down `claude -p`. No-op (exit 0) for modules
+    without an `agent:` block. Returns EXIT_ERR only on infrastructural failure (claude missing /
+    timeout / crash); the agent's own verdict is advisory and surfaced later by agent_result."""
+    from .agent import run_agent
+
+    mdir = _modules_dir(args.modules_dir) / args.module
+    state_dir = Path(args.state_dir) if args.state_dir else _root() / "state" / args.cluster_id
+    ok, msg = run_agent(mdir, args.cluster_id, state_dir)
+    print(msg, file=sys.stderr if not ok else sys.stdout)
+    return EXIT_OK if ok else EXIT_ERR
+
+
 def cmd_report_md(args: argparse.Namespace) -> int:
     """Emit the rich markdown report for a cluster's state dir (to stdout)."""
     from .report import build_markdown
@@ -243,6 +257,13 @@ def main(argv: list[str] | None = None) -> int:
     sf.add_argument("--state-dir", help="state/<id>/ (for meta needed by tsh_ssh)")
     sf.add_argument("--json-out", help="also write a JSON report to this path")
     sf.set_defaults(fn=cmd_verify)
+
+    sar = sub.add_parser("agent-run", help="drive an agent-driven module's workbench (host step)")
+    sar.add_argument("module")
+    sar.add_argument("--cluster-id", required=True)
+    sar.add_argument("--state-dir", help="state/<id>/ (meta.env + where the agent result lands)")
+    sar.add_argument("--repo", default="", help="host path to the teleport clone (symmetry with render)")
+    sar.set_defaults(fn=cmd_agent_run)
 
     srm = sub.add_parser("report-md", help="build the rich markdown report from a state dir")
     srm.add_argument("--state-dir", required=True)

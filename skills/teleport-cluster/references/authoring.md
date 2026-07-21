@@ -163,6 +163,41 @@ binary is rebuilt every render (an uncommitted provider fix always takes — no 
 known-failing-that-flips test (see `terraform_generic_oidc`, the `must_match_fields` bug) just
 sets the not-yet-supported field and lets the resource checks FAIL until the provider is fixed.
 
+## Add an agent-driven test (`agent-runner` component)
+Test whether a real task is *doable* — e.g. "can someone follow this guide?" — by letting a
+locked-down AI agent drive the cluster and report what it hit. The shared
+`components/agent-runner/` provides a pre-seeded admin identity (agent runs `tctl` with no
+login/MFA) + the `/out` bind; a new test is a thin module (copy `modules/docs_bound_keypair/`):
+
+- `render.yaml`: `components: [agent-runner]` + an `agent:` block the host step reads —
+  `provider: claude`, `model:`, `prompt: prompt.md`, `timeout_seconds:`.
+- `services.yml.j2`: ONE idle runner container **named `workbench`** (`container_name:
+  {{ cluster_id }}-workbench` — the name the driver execs into), `entrypoint: ["sh","-lc","mkdir -p
+  /work && sleep infinity"]`, mounting whatever the task needs *read-only*, the identity
+  `agent-identity:/id:ro`, and `{{ out }}/agent/out:/out`; `depends_on: { agent-idbot: { condition:
+  service_healthy } }`. For a DOC-follow task, mount the WHOLE docs tree (`{{ repo }}/docs:/docs:ro`),
+  not just one page — Teleport docs use `(!docs/pages/includes/…!)` directives, and the includes
+  live outside any single page's subtree; mounting the tree makes them resolvable (`docs/X` →
+  `/docs/X`). The image (`{{ image }}`) has `tctl`/`tbot`/`jq`/`curl` baked in (see `lib/build.sh`);
+  if a task needs another tool, add it to that apt-get line (rebuild with `REBUILD_IMAGE=1`).
+- `prompt.md` (rendered as jinja with `{{ cluster_id }}`/`{{ fqdn }}`/`{{ port }}`/`{{ auth_addr }}`):
+  the task. Tell the agent its ONLY tool is `run(cmd)` (execs inside the container), to background
+  long-runners, NOT to fabricate success, to use fixed resource names, and to finish by writing
+  `/out/agent-result.json`. For raw-source docs, tell it how to resolve `(!…!)` includes (read the
+  named file under `/docs`) so it follows the guide's actual steps instead of guessing.
+- `checks:`: `agent_result` (advisory — surfaces the findings; FAILs only if no valid result) PLUS
+  **objective** verbs that actually gate on the resulting cluster state (`bot_joined`,
+  `resource_present <kind/name>` with the names you pinned in the prompt). Never let the agent's
+  self-verdict be the gate.
+
+How it runs: `run-plan` calls `lib/agent.sh::run_agents` after the cluster is healthy and before
+verify; it waits for the `workbench` container, then `harness agent-run` drives `claude -p` on the
+host (subscription auth, no API key). Containment is by construction — the agent has exactly one
+tool (`harness/agent_mcp.py`'s `run`) that execs inside the one workbench (no docker socket, no
+host access); the lockdown flags live in `harness/agent.py`. Requires `claude` on PATH + logged in
+(`doctor` warns if missing). A future API-key driver (Agent SDK / Codex) is a drop-in behind
+`agent.provider` and unlocks CI — the module contract is unchanged.
+
 ## Write a plan
 `plans/<name>.yaml` (name MUST equal filename):
 ```yaml

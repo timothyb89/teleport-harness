@@ -70,6 +70,12 @@ _SPECS: list[VerbSpec] = [
         "resource_field <kind/name> <dotted.path> [expected]  "
         "(a field on a live resource is present, and optionally equals a value)",
     ),
+    VerbSpec(
+        "agent_result", 0, 1,
+        "agent_result [expected-status]  (surface an AI agent's findings from "
+        "agent-result.json; advisory — FAILs only if no valid result was produced, or "
+        "if expected-status is given and the agent's self-status differs)",
+    ),
 ]
 
 REGISTRY: dict[str, VerbSpec] = {s.name: s for s in _SPECS}

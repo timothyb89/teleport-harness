@@ -1,0 +1,9 @@
+# agent-runner: SHARED plumbing for agent-driven test modules (an AI agent follows a real task,
+# e.g. a doc, against the cluster). This component contributes the privileged, pre-seeded admin
+# identity (a tbot writing a renewable identity to the agent-identity volume) so the agent can
+# run tctl with NO login/MFA — the same bot-identity trick lib/admin.sh uses. Each test MODULE
+# adds its own `workbench` runner container (the thing the agent drives) + prompt + checks, and
+# declares the `agent:` block that harness agent-run reads.
+agent_admin_token: harness-agent-secret
+bots:
+  - {name: agent-admin, roles: "editor,access,auditor", token: harness-agent-secret}

@@ -1,0 +1,5 @@
+name: docs
+description: >
+  Agent-driven doc-follow tests — can an AI agent complete a real task using only the docs?
+  Each module drives a locked-down agent against a disposable cluster and reports what it hit.
+modules: [docs_bound_keypair]

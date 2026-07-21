@@ -1,0 +1,20 @@
+{# The workbench: an idle container the host-side agent drives via `docker exec` (its ONLY tool,
+   proxied through harness/agent_mcp.py). It's both the "admin workstation" and the "bot host"
+   from the guide. Version-matched teleport image (has tctl + tbot); the Bound Keypair docs
+   mounted read-only at /docs; the pre-seeded admin identity at /id:ro (agent runs
+   `tctl --identity /id/identity --auth-server <id>-auth:3025 …`); a writable /work; and /out
+   bound to the state dir so the agent's agent-result.json is readable by the agent_result verb.
+   No docker socket is mounted — in-container root cannot escape. #}
+services:
+  workbench:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-workbench
+    entrypoint: ["sh", "-lc", "mkdir -p /work && sleep infinity"]
+    volumes:
+      - {{ repo }}/docs/pages/reference/machine-workload-identity/bound-keypair:/docs:ro
+      - agent-identity:/id:ro
+      - {{ out }}/agent/out:/out
+    networks: [internal]
+    depends_on:
+      agent-idbot: {condition: service_healthy}

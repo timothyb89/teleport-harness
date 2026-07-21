@@ -31,6 +31,13 @@ class Cluster:
         what a terraform apply created). None if absent/unreadable. Overridden in tests."""
         raise NotImplementedError
 
+    def state_file(self, relpath: str) -> str | None:  # pragma: no cover
+        """Read a file under the cluster's state dir (state/<id>/) as text, or None if
+        absent/unreadable. The seam `agent_result` uses to read the agent's
+        agent-result.json / transcript, which the workbench wrote to a state-dir bind
+        mount. Overridden in tests."""
+        raise NotImplementedError
+
     def logs(self, suffix: str) -> str:  # pragma: no cover
         raise NotImplementedError
 
@@ -113,6 +120,14 @@ class DockerCluster(Cluster):
                 return doc
         # tctl already filtered to this name; fall back to the sole element if present.
         return docs[0] if docs and isinstance(docs[0], dict) else None
+
+    def state_file(self, relpath: str) -> str | None:
+        if not self.state_dir:
+            return None
+        try:
+            return (self.state_dir / relpath).read_text()
+        except (FileNotFoundError, OSError):
+            return None
 
     def logs(self, suffix: str) -> str:
         # mirrors: docker logs <id>-<suffix> 2>&1  (capture first — no pipefail trap)

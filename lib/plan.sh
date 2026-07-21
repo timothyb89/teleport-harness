@@ -37,6 +37,9 @@ run_plan_single() {
   export ID="${ID:-$(gen_id)}"
   if [ -d "$(state_dir_for "$ID")" ]; then hlog "reusing existing cluster '$ID'"; else cluster_up "$module"; fi
 
+  # ---- agent-driven modules: drive the workbench before verifying (no-op for others) ----
+  command -v run_agents >/dev/null 2>&1 && run_agents "$ID" "$module"
+
   # ---- settle, then verify (module-agnostic: retry until checks pass or timeout) ----
   # Agents/bots take time to join and negatives take a beat to log their denial, and
   # each module expects different things — so instead of guessing counts, just re-run
@@ -91,6 +94,11 @@ run_plan_multi() {
   export ID="${ID:-$(gen_id)}"
   if [ -d "$(state_dir_for "$ID")" ]; then hlog "reusing existing cluster '$ID'"
   else cluster_up_modules "$plan" "$run_csv"; fi
+
+  # ---- agent-driven modules: drive each workbench before verifying (no-op for others) ----
+  if command -v run_agents >/dev/null 2>&1; then
+    for m in $run_mods; do run_agents "$ID" "$m"; done
+  fi
 
   # ---- verify every module against the shared cluster; retry until all pass ----
   hlog "waiting for plan '$plan' checks to pass on cluster '$ID'"

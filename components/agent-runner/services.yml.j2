@@ -1,0 +1,26 @@
+{# agent-runner: pre-seeded admin identity for agent-driven modules (mirrors terraform-runner's
+   tf-idbot). A tbot joins with the classic `agent-admin` token and writes a renewable identity
+   to the agent-identity volume; each module's `workbench` mounts it :ro and runs tctl against
+   <id>-auth:3025 with no login/MFA (bots are exempt from admin-action MFA). Runners gate on
+   `depends_on: {agent-idbot: service_healthy}` so they never start before the identity exists. #}
+services:
+  agent-idbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-agent-idbot
+    command: [tbot, start, -c, /etc/tbot.yaml, "--token={{ agent_admin_token }}", "--join-method=token"]
+    volumes:
+      - {{ out }}/config/agent-idbot.yaml:/etc/tbot.yaml:ro
+      - agent-identity:/idents
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /idents/identity"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+volumes:
+  agent-identity:

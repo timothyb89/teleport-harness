@@ -34,6 +34,10 @@ doctor() {
   # python3 (authoritative TLS verifier; macOS curl/LibreSSL is unreliable)
   command -v python3 >/dev/null 2>&1 && pass "python3 present (TLS verification)" || chk_warn "python3 missing (used for web-UI verification)"
 
+  # claude CLI (only agent-driven modules like docs_bound_keypair need it; subscription login, no API key)
+  if command -v claude >/dev/null 2>&1; then pass "claude CLI present ($(claude --version 2>/dev/null | head -1)) — agent-driven modules can run"
+  else chk_warn "claude CLI missing (only needed for agent-driven modules; must be logged in with a subscription)"; fi
+
   # uv + the Python brain (YAML parsing / gating / checks validation)
   if command -v uv >/dev/null 2>&1; then
     if pybrain validate >/dev/null 2>&1; then pass "harness brain ok (uv); all modules validate"

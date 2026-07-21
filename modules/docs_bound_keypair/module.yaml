@@ -1,0 +1,16 @@
+name: docs_bound_keypair
+description: >
+  An AI agent follows the Bound Keypair getting-started guide to onboard a Machine ID bot.
+  It reports every doc snag (advisory); objective checks confirm the bot actually joined.
+requires_features: [bound_keypair]
+min_version: v18
+checks: |
+  # Advisory — the agent's own verdict + every snag it hit. Report-only: FAILs ONLY if the agent
+  # produced no valid agent-result.json (didn't run / crashed). The objective checks below gate.
+  agent_result
+  # Objective end-state — these GATE pass/fail. Names are pinned by the prompt so they're
+  # deterministic even though the guide's examples use `example`. bot_joined (a cluster-side
+  # bot.join audit event) is the real proof the onboarding worked end-to-end.
+  bot_joined       docbot bound_keypair
+  resource_present bot/docbot
+  resource_present token/docbot-token

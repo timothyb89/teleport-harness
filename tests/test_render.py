@@ -22,10 +22,11 @@ CTX = {
     "harness_domain": "example.com",
     "lab_domain": "lab.example.com",
     "out": "/state/zz1",
+    "repo": "/fake/teleport",  # docs_bound_keypair's workbench mounts {{ repo }}/docs
 }
 
 ALL_MODULES = ["tbot", "bound_keypair", "generic_oidc", "kubernetes",
-               "terraform_bot", "terraform_generic_oidc"]
+               "terraform_bot", "terraform_generic_oidc", "docs_bound_keypair"]
 
 EXPECTED_SERVICES = {
     "tbot": {"auth", "tbot", "tbot-deny"},
@@ -43,6 +44,8 @@ EXPECTED_SERVICES = {
     # + oidc (oidc-server component) and the two join-test agents
     "terraform_generic_oidc": {"auth", "oidc", "tf-idbot", "tf-oidc",
                                "tf-agent-ok", "tf-agent-badorg"},
+    # agent-idbot from the shared agent-runner component; workbench is the module's runner
+    "docs_bound_keypair": {"auth", "agent-idbot", "workbench"},
 }
 
 
@@ -111,6 +114,8 @@ EXPECTED_BOTS = {
     # the privileged identity bot the terraform-runner component contributes
     "terraform_bot": {"tf-admin"},
     "terraform_generic_oidc": {"tf-admin"},
+    # the privileged admin identity bot the agent-runner component contributes
+    "docs_bound_keypair": {"agent-admin"},
 }
 
 

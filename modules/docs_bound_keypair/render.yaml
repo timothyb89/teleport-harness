@@ -1,0 +1,13 @@
+# docs_bound_keypair: an AI agent follows the Bound Keypair *getting-started* guide to onboard a
+# Machine ID bot, reporting every doc snag (advisory) while objective checks confirm the bot
+# actually joined (see module.yaml). Pulls in the shared agent-runner (pre-seeded admin identity)
+# and mounts the docs read-only into the workbench (see services.yml.j2).
+#
+# The `agent:` block configures the HOST step (harness agent-run): which agent/model drives the
+# workbench, the prompt file (rendered as jinja with connection facts), and a wall-clock cap.
+components: [agent-runner]
+agent:
+  provider: claude          # future: codex / sdk-api (API-key drivers)
+  model: claude-opus-4-8
+  prompt: prompt.md
+  timeout_seconds: 900

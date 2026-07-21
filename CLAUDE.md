@@ -59,6 +59,8 @@ structured JSON w/ a proof registry), `render --modules a,b,c --out <dir> …` (
 components; also emits `setup.json` — a provenance manifest of the roles/tokens/bots/services it
 created, each with a source link, that the report renders directly),
 `plan-resolve <plan> [--features] [--version]` (gate each module → run/skip JSON),
+`agent-run <module> --cluster-id <id>` (host step for agent-driven modules: drive the workbench
+with a locked-down `claude -p`; no-op if the module has no `agent:` block — see `harness/agent.py`),
 `report-md --state-dir <dir>` (rich markdown report). All unit-tested
 (`tests/`, `uv run --extra dev pytest`) — the harness's correctness bar. A bad `module.yaml`
 (typo'd verb, wrong arity, unknown key, bad version) fails fast with a clear message instead of
@@ -144,7 +146,11 @@ end-to-end access test),
 returns it; FULL JSON proof; e.g. asserting what a terraform apply created),
 `resource_field <kind/name> <dotted.path> [expected]` (a field on a live resource is present,
 and — with `expected` — equals it by case-insensitive substring; missing resource OR path FAILs —
-how `terraform_generic_oidc` surfaces the must_match_fields bug).
+how `terraform_generic_oidc` surfaces the must_match_fields bug),
+`agent_result [expected-status]` (surface an AI agent's findings from `agent-result.json` — the
+agent's self-verdict + every snag it reported become proof + assertions; ADVISORY: FAILs only if
+no valid result was produced, or, with `expected-status`, if the agent's self-status differs. The
+run is gated by the OBJECTIVE verbs beside it, not the agent's opinion — see `docs_bound_keypair`).
 Node/container args reference the nodename suffix after `<id>-`.
 
 Modules today: `generic_oidc` (agents AND bots join via OIDC JWTs — discovery over a
@@ -171,7 +177,15 @@ token created WITHOUT the field — not a loud error). The behavioral tell: it p
 oidc-server component and a negative join test — two agents present a JWT that satisfies allow_any
 (sub) but differ in the `org` claim; the wrong-`org` agent WRONGLY joins today (dropped field =
 no matcher) and must be denied once the field round-trips. `resource_field` + `node_absent` FAIL
-today and flip to PASS with no edits once the provider bug is fixed. Gated on generic_oidc).
+today and flip to PASS with no edits once the provider bug is fixed. Gated on generic_oidc),
+`docs_bound_keypair` (a NEW *kind* of module — **agent-driven**: a locked-down AI agent follows
+the real Bound Keypair getting-started guide to onboard a bot `docbot`, reporting every doc snag.
+The agent's `run()` tool execs ONLY inside a disposable `workbench` container [see the agent-runner
+component]; its findings are ADVISORY (`agent_result`) while OBJECTIVE checks gate: `bot_joined
+docbot bound_keypair` + `resource_present bot/docbot`/`token/docbot-token`. The host-side agent is
+`claude -p` on the user's subscription — no API key. The WHOLE `{{ repo }}/docs` tree is mounted
+`:ro` so the guide's `(!docs/pages/includes/…!)` directives resolve to real files (the prompt tells
+the agent to follow them); gated on bound_keypair, min v18).
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
@@ -185,23 +199,38 @@ plus a privileged `tf-admin` bot + tbot writing an identity to the `tf-identity`
 add their own runner container that mounts these + `{{ shared_scripts }}/tf-entrypoint.sh`, which
 uses a `dev_overrides` `.terraformrc` to run `apply` with NO init/lockfiles. Auth is
 `identity_file_path` because the provider REJECTS the token join method. Engine is HashiCorp
-Terraform (`tf_image`/`tf_bin` in each module's render.yaml; OpenTofu is a two-var swap)).
+Terraform (`tf_image`/`tf_bin` in each module's render.yaml; OpenTofu is a two-var swap)),
+`agent-runner` (shared plumbing for **agent-driven** modules: a privileged pre-seeded `agent-admin`
+bot + tbot writing an identity to the `agent-identity` volume, so an AI agent runs `tctl` with no
+login/MFA [the lib/admin.sh trick]; a `prebuild.sh` mkdirs the `$OUT/agent/out` bind. Each agent
+module adds its own `workbench` runner container [mounts the identity `:ro` + docs `:ro` + `/out`]
+that the host-side agent drives via `docker exec`. Containment: the agent's ONLY tool is a single
+MCP `run(cmd)` [`harness/agent_mcp.py`] that execs inside that one named container — never the
+host; `harness/agent.py` assembles the locked-down `claude -p` [`--allowed-tools`
+mcp__workbench__run, all host built-ins `--disallowed-tools`, `--permission-mode dontAsk`,
+`--strict-mcp-config`, a PreToolUse hook, scratch cwd] and reads the agent's `agent-result.json`
+back)).
 Plans today: `bots` (tbot+bound_keypair),
 `oidc-caching` (generic_oidc + kubernetes + oidc_caching — each gated independently, so on a
 target with only `kubernetes` generic_oidc SKIPs while the other two run),
 `terraform` (terraform_bot + terraform_generic_oidc sharing one terraform-runner; the oidc module
-gates out where generic_oidc isn't provided while terraform_bot still runs).
+gates out where generic_oidc isn't provided while terraform_bot still runs),
+`docs` (agent-driven doc-follow tests; today just `docs_bound_keypair`).
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build --repo` · `up <module> --repo [--id]` · `run-plan <plan|module> --repo [--features a,b] [--version vNN] [--id]`
 · `ls` · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` ·
 `share <run-bundle|id> [--public]` · `teardown <id|--all>`.
 `run-plan <plan|module>` gates each module on `requires_features`/`min_version` (SKIP with a
-logged reason — no silent skips), composes the cluster up (or reuses an existing `--id`), verifies
+logged reason — no silent skips), composes the cluster up (or reuses an existing `--id`), runs any
+**agent-driven** module's host step (`lib/agent.sh::run_agents` → `harness agent-run`, after the
+cluster is healthy and before verify — a no-op for non-agent modules), verifies
 every running module, and writes `runs/<ts>-<id>/`: a rich **`results.md`** (built by `harness
 report-md` from the structured data — summary table; a cluster-setup section rendered from
-`setup.json` as services/roles/tokens/bots TABLES with source links; node inventory; and a
-per-module check TABLE linking to anchored, untruncated proof sections), per-module
+`setup.json` as services/roles/tokens/bots TABLES with source links; node inventory; a per-module
+check TABLE linking to anchored, untruncated proof sections; and — for agent-driven modules — a
+dedicated **Agent findings** section rendering the agent's verdict as formatted, severity-sorted
+issues [markdown preserved] + a steps list, with the raw JSON + transcript collapsed), per-module
 `results-*.json`, the renderer's `setup.json` provenance manifest, the raw `console.txt`,
 per-service `logs/`, and `rendered/` (compose + config + bootstrap). Leaves the cluster up.
 `share <run-bundle|id>` publishes a bundle as a GitHub gist (`gh gist create`, secret by default;
