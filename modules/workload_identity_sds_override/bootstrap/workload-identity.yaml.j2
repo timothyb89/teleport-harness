@@ -1,0 +1,10 @@
+# The WorkloadIdentity both tbot services (SDS + x509 file) select by name.
+kind: workload_identity
+version: v1
+metadata:
+  name: {{ workload_identity_name }}
+  labels:
+    harness: sds-override
+spec:
+  spiffe:
+    id: /harness/sds-demo

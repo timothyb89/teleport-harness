@@ -1,0 +1,14 @@
+# Render context for workload_identity_sds_override (see harness/render.py).
+bot_token: harness-wi-secret
+# Public Envoy image; consumes tbot's SDS over the shared unix socket.
+envoy_image: envoyproxy/envoy:v1.31-latest
+# Envoy runs NATIVELY (arm64 on this Apple-Silicon lima host) instead of the amd64 emulation the
+# teleport binaries use: the amd64 Envoy binary crashes under Rosetta ("rosetta error: bss_size
+# overflow", exit 133). Envoy is only an SDS socket peer (language/arch-independent gRPC over a
+# unix socket), so its arch is free to differ from tbot's. Override for an amd64 host.
+envoy_platform: linux/arm64
+# Name of the WorkloadIdentity resource the tbot services select (see bootstrap/).
+workload_identity_name: harness-sds-demo
+# The bot that runs tbot; joins via the token method (token created in bootstrap/token.yaml.j2).
+bots:
+  - {name: wi-bot, roles: wi-issuer, token: harness-wi-secret}

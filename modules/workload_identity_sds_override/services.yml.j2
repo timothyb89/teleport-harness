@@ -1,0 +1,41 @@
+{# tbot serves the Workload Identity API (Envoy SDS) on a unix socket in the shared `sockets`
+   volume; a real Envoy sidecar consumes it. tbot ALSO writes an x509 file output (the control:
+   the same override chain serialized correctly, one PEM block per cert). Composed onto base auth. #}
+services:
+  # tbot: workload-identity-api on unix:///sockets/workload.sock + a workload-identity-x509 file
+  # output to /out/x509 (both select the same WorkloadIdentity, so both get the override chain).
+  wi-tbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-wi-tbot
+    command: [tbot, start, -c, /etc/tbot.yaml, "--token={{ bot_token }}", "--join-method=token"]
+    volumes:
+      - {{ out }}/config/tbot.yaml:/etc/tbot.yaml:ro
+      - sockets:/sockets
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+
+  # Envoy: sources the SVID (`default`) + trust bundle (`ALL`) from tbot's SDS endpoint over the
+  # unix socket. Runs as root so socket perms never block the connection. Admin on :9901 (bound to
+  # 0.0.0.0 so checks.py can probe SDS stats cross-container). With the override active it NACKs the
+  # `default` secret; its logs carry "Failed to load certificate chain from <inline>".
+  wi-envoy:
+    image: {{ envoy_image }}
+    # arm64 (native on this host), NOT the amd64 emulation the teleport images use — the amd64
+    # Envoy binary crashes under Rosetta ("bss_size overflow"). Envoy is just an SDS socket peer,
+    # so its arch is independent of tbot's. See envoy_platform in render.yaml.
+    platform: {{ envoy_platform }}
+    container_name: {{ cluster_id }}-wi-envoy
+    user: "0:0"
+    command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "-l", "info"]
+    volumes:
+      - {{ out }}/config/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - sockets:/sockets
+    networks: [internal]
+    depends_on:
+      wi-tbot: {condition: service_started}
+
+volumes:
+  # shared between wi-tbot (creates the socket) and wi-envoy (connects to it).
+  sockets:

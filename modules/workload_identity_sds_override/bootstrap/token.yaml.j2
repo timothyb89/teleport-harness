@@ -1,0 +1,6 @@
+# Join token for wi-bot (token method, fixed secret = name). bots.manifest's `bots add --token`
+# references this existing token.
+kind: token
+version: v2
+metadata: {name: {{ bot_token }}}
+spec: {roles: [Bot], bot_name: wi-bot, join_method: token}

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Bootstrap hook (runs as LOCAL ADMIN inside the auth container; CONFIG exported). Mints a
+# `workload_identity_x509_issuer_override` named "default" so that issued X509-SVIDs carry a
+# non-empty certificate chain — the precondition that trips the tbot SDS serialization bug.
+#
+# Flow (per docs/pages/reference/machine-workload-identity/workload-identity/issuer-override.mdx):
+#   1. build a throwaway 2-tier CA (root -> intermediate)
+#   2. `tctl ... x509-issuer-overrides sign-csrs` -> a CSR carrying the SPIFFE CA's PUBLIC KEY
+#   3. sign that CSR with the intermediate -> a new issuer cert (same pubkey, chains to our root)
+#   4. `tctl ... x509-issuer-overrides create` with fullchain = issuer + intermediate (root omitted)
+#
+# ENTERPRISE ONLY: sign-csrs / create require an enterprise auth. On an OSS build they error and no
+# override is created — the module's `resource_present workload_identity_x509_issuer_override/default`
+# check then FAILs loudly (no silent false-green). Tolerant on purpose: any failure is logged and the
+# override simply won't exist, which the checks surface.
+set -uo pipefail
+W=/tmp/wi-override
+mkdir -p "$W"
+cd "$W"
+TCTL=(tctl --config "${CONFIG:-/etc/teleport/auth.yaml}")
+
+echo "[wi-override] building throwaway 2-tier CA (root -> intermediate)"
+openssl genrsa -out root.key 2048 2>/dev/null
+openssl req -x509 -new -key root.key -sha256 -days 3650 -subj "/CN=harness-scratch-root" -out root.crt 2>/dev/null
+openssl genrsa -out int.key 2048 2>/dev/null
+openssl req -new -key int.key -subj "/CN=harness-scratch-intermediate" -out int.csr 2>/dev/null
+openssl x509 -req -in int.csr -CA root.crt -CAkey root.key -CAcreateserial -days 3650 -sha256 \
+  -extfile <(printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n') \
+  -out int.crt 2>/dev/null
+
+echo "[wi-override] requesting issuer CSR from the SPIFFE CA (enterprise: x509-issuer-overrides sign-csrs)"
+if ! "${TCTL[@]}" workload-identity x509-issuer-overrides sign-csrs > csrs.out 2>sign.err; then
+  echo "[wi-override] sign-csrs FAILED (enterprise required?):"; sed 's/^/[wi-override]   /' sign.err
+  exit 0
+fi
+sed -n '/BEGIN CERTIFICATE REQUEST/,/END CERTIFICATE REQUEST/p' csrs.out > issuer.csr
+if [ ! -s issuer.csr ]; then
+  echo "[wi-override] no CSR parsed from sign-csrs output; aborting"; sed 's/^/[wi-override]   /' csrs.out
+  exit 0
+fi
+
+echo "[wi-override] signing the issuer CSR with the throwaway intermediate"
+openssl x509 -req -in issuer.csr -CA int.crt -CAkey int.key -CAcreateserial -days 3650 -sha256 \
+  -extfile <(printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n') \
+  -out issuer.crt 2>/dev/null
+
+echo "[wi-override] fullchain = issuer + intermediate (self-signed root omitted); creating override 'default'"
+cat issuer.crt int.crt > fullchain.pem
+if ! "${TCTL[@]}" workload-identity x509-issuer-overrides create --force --name default fullchain.pem 2>&1 | sed 's/^/[wi-override]   /'; then
+  echo "[wi-override] create FAILED"
+  exit 0
+fi
+
+if "${TCTL[@]}" get workload_identity_x509_issuer_override/default >/dev/null 2>&1; then
+  echo "[wi-override] OK — override 'default' created"
+else
+  echo "[wi-override] WARNING — override not present after create"
+fi

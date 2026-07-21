@@ -1,0 +1,50 @@
+# workload_identity_sds_override — reproduces a tbot Workload Identity SDS bug.
+#
+# Setup mirrors the customer report: tbot runs the Workload Identity API on a unix socket;
+# a real Envoy sidecar consumes it over the Envoy SDS protocol. Everything is fine UNTIL a
+# `workload_identity_x509_issuer_override` (ENTERPRISE) is configured — then the issued
+# X509-SVID carries a non-empty certificate chain, and tbot's SDS handler serializes the
+# leaf+chain as a SINGLE concatenated-DER PEM block (see lib/tbot/internal/sds/handler.go
+# newTLSV3Certificate, comment "does not currently support intermediate certificates"). Envoy
+# rejects it: "Failed to load certificate chain from <inline>" and NACKs the SDS response.
+#
+# The file (workload-identity-x509) output path serializes the SAME chain CORRECTLY, one PEM
+# block per cert (lib/tbot/services/workloadidentity/x509_output.go), so the control check on
+# svid.pem passes — proving the defect is the SDS handler's serialization, not issuance/override.
+#
+# KNOWN-FAILING-THAT-FLIPS (like terraform_generic_oidc): on today's master the two `log_count
+# ... eq 0` bug checks (and the checks.py cert-accepted probe) FAIL — that IS the reproduction.
+# They flip to PASS once the SDS handler PEM-encodes each cert in its own block.
+#
+# REQUIRES --ent: workload identity issuance and issuer overrides are enterprise features. On an
+# OSS build the override can't be created; the `resource_present` precondition + the control
+# check then FAIL loudly rather than silently reporting a false green.
+name: workload_identity_sds_override
+description: >
+  tbot Workload Identity API + Envoy SDS with a workload_identity_x509_issuer_override
+  (enterprise). The override makes issued X509-SVIDs carry a cert chain; tbot's SDS handler
+  concatenates leaf+chain into ONE PEM block, so Envoy NACKs "Failed to load certificate chain
+  from <inline>". The file (x509) output serializes the same chain correctly, localizing the bug
+  to the SDS handler. Bug checks FAIL today and flip to PASS when the handler is fixed. Needs --ent.
+provides_feature: workload_identity_sds_override
+requires_features: []
+min_version: v17
+
+# Verification (source of truth). Declarative verbs below + a checks.py escape hatch (an Envoy
+# admin SDS-stats probe that parses the served secret's acceptance, and a control that parses the
+# file-output svid.pem chain with openssl).
+checks: |
+  # PRECONDITION / false-green guard: the enterprise issuer override must actually exist. Without
+  # --ent it can't be created, there's no chain, and the bug cannot reproduce — so FAIL loudly.
+  resource_present workload_identity_x509_issuer_override/default
+  # the bot backing the workload-identity-api joined
+  bot_joined          wi-bot
+  # HARD GUARD against a false-green: Envoy must have actually STARTED and reached its dispatch
+  # loop. If the sidecar never ran (e.g. crashed under emulation) it consumes no SDS, logs no
+  # error, and the eq-0 checks below would pass vacuously — this makes that case FAIL instead.
+  log_count           wi-envoy ge 1 starting main dispatch loop
+  # THE BUG — flip-checks (FAIL on today's master, PASS once the SDS handler is fixed):
+  #   Envoy rejects the malformed inline certificate chain (the customer's exact symptom).
+  log_count           wi-envoy eq 0 failed to load certificate chain
+  #   tbot observes Envoy NACK the very discovery response it served.
+  log_count           wi-tbot eq 0 unable to apply previous discovery response

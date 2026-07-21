@@ -1,0 +1,85 @@
+{# Envoy config sourcing an X509-SVID (`default`) + trust bundle (`ALL`) from tbot's
+   workload-identity-api SDS endpoint over the unix socket — the customer's setup, from
+   docs/pages/reference/machine-workload-identity/workload-identity/workload-identity-api-and-workload-attestation.mdx
+   With a workload_identity_x509_issuer_override active, tbot serves the `default` cert as a single
+   concatenated-DER PEM block; Envoy rejects it ("Failed to load certificate chain from <inline>")
+   and NACKs. Admin is on 0.0.0.0:9901 so checks.py can read SDS stats from another container. #}
+node:
+  id: "harness-envoy"
+  cluster: "harness"
+
+admin:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
+
+static_resources:
+  listeners:
+    - name: sds_listener
+      enable_reuse_port: false
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 8080
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: {prefix: "/"}
+                          direct_response:
+                            status: 200
+                            body: {inline_string: "ok"}
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                # The certificate the proxy presents — sourced from tbot via SDS. This is the
+                # secret that fails to load when the override adds a chain.
+                tls_certificate_sds_secret_configs:
+                  - name: "default"
+                    sds_config:
+                      resource_api_version: V3
+                      api_config_source:
+                        api_type: GRPC
+                        transport_api_version: V3
+                        grpc_services:
+                          envoy_grpc:
+                            cluster_name: tbot_agent
+                combined_validation_context:
+                  default_validation_context:
+                    match_typed_subject_alt_names: []
+                  validation_context_sds_secret_config:
+                    name: "ALL"
+                    sds_config:
+                      resource_api_version: V3
+                      api_config_source:
+                        api_type: GRPC
+                        transport_api_version: V3
+                        grpc_services:
+                          envoy_grpc:
+                            cluster_name: tbot_agent
+  clusters:
+    - name: tbot_agent
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: tbot_agent
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    pipe:
+                      path: /sockets/workload.sock

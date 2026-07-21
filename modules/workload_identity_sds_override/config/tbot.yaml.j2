@@ -1,0 +1,19 @@
+version: v2
+proxy_server: {{ fqdn }}:{{ port }}
+storage: {type: directory, path: /var/lib/tbot}
+services:
+  # The Workload Identity API — implements the SPIFFE Workload API AND the Envoy SDS API on the
+  # same unix socket. This is the surface under test.
+  - type: workload-identity-api
+    listen: unix:///sockets/workload.sock
+    selector:
+      name: {{ workload_identity_name }}
+  # Control: the x509 FILE output writes svid.pem with the same SVID + override chain, but via the
+  # correct serializer (one PEM block per cert). checks.py asserts svid.pem is a valid multi-cert
+  # chain — proving issuance + the override are fine and only the SDS path mis-serializes.
+  - type: workload-identity-x509
+    selector:
+      name: {{ workload_identity_name }}
+    destination:
+      type: directory
+      path: /out/x509

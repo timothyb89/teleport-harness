@@ -1,0 +1,12 @@
+# Role for the bot: issue any WorkloadIdentity (workload_identity_labels) + read the resource.
+kind: role
+version: v7
+metadata:
+  name: wi-issuer
+spec:
+  allow:
+    workload_identity_labels:
+      '*': ['*']
+    rules:
+      - resources: [workload_identity]
+        verbs: [read, list]
