@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -71,6 +72,14 @@ class Cluster:
 
     def proxy_addr(self) -> str:  # pragma: no cover
         """`<fqdn>:<port>` for tsh --proxy from inside a cluster container."""
+        raise NotImplementedError
+
+    def restart_auth(self, timeout: float = 150.0) -> bool:  # pragma: no cover
+        """Restart the auth container and block until it serves /healthz again, i.e. the
+        NEW teleport process finished init. The seam a check uses to exercise a
+        startup-only code path (e.g. re-running `--apply-on-startup`): apply-on-startup
+        runs during init BEFORE /healthz answers, so a successful poll means the re-apply
+        completed. Returns False on restart failure or timeout. Overridden in tests."""
         raise NotImplementedError
 
 
@@ -191,3 +200,21 @@ class DockerCluster(Cluster):
 
     def proxy_addr(self) -> str:
         return f"{self._meta('FQDN')}:{self._meta('PORT')}"
+
+    def restart_auth(self, timeout: float = 150.0) -> bool:
+        # `docker restart` keeps the container (writable layer + named volumes: backend
+        # data + already-applied resources survive), only re-running the entrypoint —
+        # which re-runs `--apply-on-startup`. Then poll /healthz from inside the container
+        # until the fresh teleport answers (exec fails transiently while it's restarting;
+        # treated as not-ready). /healthz answering ⇒ init done ⇒ re-apply completed.
+        cp = self._run(["docker", "restart", self.container("auth")])
+        if cp.returncode != 0:
+            return False
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            rc, _ = self.exec_out("auth", ["sh", "-c",
+                                           "curl -fsS http://localhost:3000/healthz >/dev/null 2>&1"])
+            if rc == 0:
+                return True
+            time.sleep(3)
+        return False

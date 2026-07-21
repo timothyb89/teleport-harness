@@ -1,0 +1,23 @@
+{# The bound_keypair join token, supplied via `teleport start --apply-on-startup` (see the
+   shared auth-entrypoint) rather than the entrypoint's `tctl create`. This is the resource
+   whose apply path the fix changed: teleport must initialize status.bound_keypair here (else
+   the join is rejected) and preserve it across restarts. bk-bot is created separately (empty
+   manifest token); this token — bot_name-matched — authorizes its join.
+
+   Spec-only: no status. checks.py later re-applies a variant WITH a bogus status (+ a changed
+   recovery.limit) and restarts auth to prove the bogus status is discarded while spec updates. #}
+kind: token
+version: v2
+metadata:
+  name: bk-token
+  expires: "3000-01-01T00:00:00Z"
+spec:
+  roles: [Bot]
+  bot_name: bk-bot
+  join_method: bound_keypair
+  bound_keypair:
+    onboarding:
+      registration_secret: {{ reg_secret }}
+    recovery:
+      limit: 1
+      mode: insecure

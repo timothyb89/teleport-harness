@@ -25,12 +25,13 @@ CTX = {
     "repo": "/fake/teleport",  # docs_bound_keypair's workbench mounts {{ repo }}/docs
 }
 
-ALL_MODULES = ["tbot", "bound_keypair", "generic_oidc", "kubernetes",
-               "terraform_bot", "terraform_generic_oidc", "docs_bound_keypair"]
+ALL_MODULES = ["tbot", "bound_keypair", "bound_keypair_apply_on_startup", "generic_oidc",
+               "kubernetes", "terraform_bot", "terraform_generic_oidc", "docs_bound_keypair"]
 
 EXPECTED_SERVICES = {
     "tbot": {"auth", "tbot", "tbot-deny"},
     "bound_keypair": {"auth", "bkbot", "bkbot-deny"},
+    "bound_keypair_apply_on_startup": {"auth", "bkbot", "bkbot-deny"},
     "generic_oidc": {
         "auth", "oidc", "oidc-ca", "tbot", "token-manager",
         "agent-discovery", "agent-static", "agent-scoped-discovery",
@@ -106,6 +107,7 @@ def test_auth_env_is_union_of_unit_auth_env(rendered):
 EXPECTED_BOTS = {
     "tbot": {"test-bot"},
     "bound_keypair": {"bk-bot"},
+    "bound_keypair_apply_on_startup": {"bk-bot"},
     # token-manager (token method) + the two unscoped generic_oidc bots (empty token,
     # authorized by runtime-created provision tokens). Scoped bots are scoped_bot
     # bootstrap resources, not `bots add` manifest entries.
@@ -151,9 +153,12 @@ def test_setup_json_provenance(rendered):
     assert EXPECTED_BOTS[mod] <= bot_names
     for b in setup["bots"]:
         assert b["source"].startswith("rendered/") or b["source"] == ""
-    # roles/tokens link to the rendered resource that defined them
-    for r in setup["roles"] + setup["tokens"]:
+    # roles/tokens link to the rendered resource that defined them (bootstrap, or — for
+    # tokens teleport applies itself — apply-on-startup)
+    for r in setup["roles"]:
         assert r["source"].startswith("rendered/bootstrap/")
+    for t in setup["tokens"]:
+        assert t["source"].startswith(("rendered/bootstrap/", "rendered/apply-on-startup/"))
 
 
 def test_setup_json_token_join_methods(tmp_path):
@@ -178,6 +183,34 @@ def test_generic_oidc_agent_configs_and_volumes(tmp_path):
     for name in ["discovery", "static", "scoped-discovery", "scoped-static", "deny", "scoped-deny"]:
         cfg = yaml.safe_load((tmp_path / "config" / f"agent-{name}.yaml").read_text())
         assert cfg["teleport"]["nodename"].endswith(f"agent-{name}") or name in ("discovery", "static", "deny")
+
+
+def test_apply_on_startup_collected_and_surfaced(tmp_path):
+    """A module's apply_on_startup/*.yaml[.j2] is rendered into $OUT/apply-on-startup (for
+    `teleport start --apply-on-startup`) and its tokens appear in setup.json flagged as such."""
+    import json
+    render_module(MODULES / "bound_keypair_apply_on_startup", CTX, tmp_path, run_prebuild=False)
+    applied = list((tmp_path / "apply-on-startup").glob("*.yaml"))
+    assert len(applied) == 1
+    body = applied[0].read_text()
+    assert "{{" not in body and "${" not in body  # fully rendered
+    doc = yaml.safe_load(body)
+    assert doc["kind"] == "token" and doc["spec"]["join_method"] == "bound_keypair"
+    assert doc["spec"]["bound_keypair"]["onboarding"]["registration_secret"] == "harness-bk-regsecret"
+    # surfaced in setup.json, flagged apply_on_startup so the report can distinguish it
+    setup = json.loads((tmp_path / "setup.json").read_text())
+    tok = next(t for t in setup["tokens"] if t["name"] == "bk-token")
+    assert tok["apply_on_startup"] is True
+    assert tok["source"] == "rendered/apply-on-startup/bound_keypair_apply_on_startup__token.yaml"
+
+
+def test_apply_on_startup_dir_always_present(tmp_path):
+    """The dir is created even for a module with no apply-on-startup resources, so the base
+    compose can unconditionally mount it (the entrypoint globs + only passes the flag if non-empty)."""
+    render_module(MODULES / "tbot", CTX, tmp_path, run_prebuild=False)
+    apply_dir = tmp_path / "apply-on-startup"
+    assert apply_dir.is_dir()
+    assert list(apply_dir.glob("*.yaml")) == []
 
 
 def test_missing_context_var_raises(tmp_path):

@@ -103,6 +103,25 @@ def _collect_bootstrap(unit_dir: Path, ctx: dict, boot_out: Path, origin: str) -
                 (hooks_out / f"{origin}__{f.name}").write_text(f.read_text())
 
 
+def _collect_apply_on_startup(unit_dir: Path, ctx: dict, apply_out: Path, origin: str) -> None:
+    """Render/copy a unit's `apply_on_startup/*.yaml[.j2]` into $OUT/apply-on-startup.
+
+    UNLIKE bootstrap (which the shared auth-entrypoint applies via LOCAL-ADMIN `tctl create`,
+    the user-facing path), these resources are handed to `teleport start --apply-on-startup`
+    so teleport itself applies them during init on EVERY startup — the code path being
+    exercised. The shared entrypoint concatenates every collected file into one multi-doc
+    YAML and passes it via the flag; if a unit contributes none, the flag is omitted."""
+    adir = unit_dir / "apply_on_startup"
+    if not adir.is_dir():
+        return
+    env = _env(adir, TEMPLATES)
+    for f in sorted(adir.iterdir()):
+        if f.name.endswith(".yaml.j2"):
+            (apply_out / f"{origin}__{f.name[:-3]}").write_text(_render_str(env, f.name, ctx))
+        elif f.name.endswith(".yaml"):
+            (apply_out / f"{origin}__{f.name}").write_text(f.read_text())
+
+
 def _merge_fragment(compose: dict, env: Environment, unit_dir: Path, ctx: dict,
                     origins: dict[str, str], label: str) -> None:
     frag_text = _render_str(env, "services.yml.j2", ctx)
@@ -128,6 +147,10 @@ def render_cluster(
     (out_dir / "config").mkdir(parents=True, exist_ok=True)
     boot_out = out_dir / "bootstrap"
     boot_out.mkdir(parents=True, exist_ok=True)
+    # Always present (even if empty) so the base compose can unconditionally mount it;
+    # the entrypoint globs it and only passes --apply-on-startup when it's non-empty.
+    apply_out = out_dir / "apply-on-startup"
+    apply_out.mkdir(parents=True, exist_ok=True)
 
     module_dirs = [Path(m) for m in module_dirs]
 
@@ -168,6 +191,7 @@ def render_cluster(
         _merge_fragment(compose, env, unit_dir, ctx, origins, unit_labels[unit_dir])
         _render_unit_configs(unit_dir, ctx, out_dir / "config")
         _collect_bootstrap(unit_dir, ctx, boot_out, unit_dir.name)
+        _collect_apply_on_startup(unit_dir, ctx, apply_out, unit_dir.name)
         for b in (rv.get("bots", []) or []):
             bots.append({**b, "_origin": unit_labels[unit_dir]})
 
@@ -192,7 +216,7 @@ def render_cluster(
 
     # setup.json — provenance manifest the report renders directly (no retroactive
     # scraping). Each entry links to the rendered source that produced it.
-    _write_setup(out_dir, boot_out, compose, origins, bots,
+    _write_setup(out_dir, boot_out, apply_out, compose, origins, bots,
                  [c.name for c in component_dirs], [m.name for m in module_dirs])
     return compose_path
 
@@ -234,17 +258,23 @@ def _docs(path: Path):
         return
 
 
-def _write_setup(out_dir: Path, boot_out: Path, compose: dict, origins: dict[str, str],
-                 bots: list[dict], components: list[str], modules: list[str]) -> None:
+def _write_setup(out_dir: Path, boot_out: Path, apply_out: Path, compose: dict,
+                 origins: dict[str, str], bots: list[dict], components: list[str],
+                 modules: list[str]) -> None:
     services = [
         {"name": name, "image": (spec or {}).get("image", "?"), "origin": origins.get(name, "")}
         for name, spec in (compose.get("services") or {}).items()
     ]
 
     roles, tokens, token_idx, boot_bots = [], [], {}, {}
-    for f in sorted(boot_out.glob("*.yaml")):
+    # Resources applied two ways: bootstrap (LOCAL-ADMIN `tctl create` via the entrypoint) and
+    # apply-on-startup (`teleport start --apply-on-startup`, applied by teleport on every boot).
+    # Both feed the same tables; `apply_on_startup: true` marks the latter so the report can note it.
+    sources = ([("rendered/bootstrap", f, False) for f in sorted(boot_out.glob("*.yaml"))]
+               + [("rendered/apply-on-startup", f, True) for f in sorted(apply_out.glob("*.yaml"))])
+    for prefix, f, on_startup in sources:
         origin = f.name.split("__", 1)[0] if "__" in f.name else ""
-        src = f"rendered/bootstrap/{f.name}"
+        src = f"{prefix}/{f.name}"
         for doc in _docs(f):
             kind = doc.get("kind", "")
             meta = doc.get("metadata") or {}
@@ -257,7 +287,7 @@ def _write_setup(out_dir: Path, boot_out: Path, compose: dict, origins: dict[str
             elif kind in ("token", "scoped_token"):
                 jm = spec.get("join_method", "")
                 tokens.append({"name": name, "kind": kind, "join_method": jm,
-                               "origin": origin, "source": src})
+                               "origin": origin, "source": src, "apply_on_startup": on_startup})
                 token_idx[name] = (jm, src)
             elif kind in ("bot", "scoped_bot"):
                 boot_bots[name] = {"roles": spec.get("roles") or [], "source": src, "origin": origin}

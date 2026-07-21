@@ -71,6 +71,9 @@ class FakeCluster(Cluster):
     def proxy_addr(self):
         return "c1.lab.example.com:8443"
 
+    def restart_auth(self, timeout=150.0):
+        return True
+
 
 def _node(hostname, scope=None):
     n = {"spec": {"hostname": hostname}}

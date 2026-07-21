@@ -21,6 +21,11 @@ services:
       - harness-certs:/certs:ro
       - {{ out }}/config/auth.yaml:/etc/teleport/auth.yaml:ro
       - {{ out }}/bootstrap:/bootstrap:ro
+      # apply-on-startup resources handed to `teleport start --apply-on-startup` (teleport
+      # applies them itself on every boot). Read-WRITE on purpose: a module's checks may
+      # rewrite the applied YAML in place (via docker exec) and restart auth to prove
+      # re-apply behavior (e.g. bound_keypair status preservation / discard).
+      - {{ out }}/apply-on-startup:/apply-on-startup
       - {{ shared_scripts }}/auth-entrypoint.sh:/scripts/auth-entrypoint.sh:ro
       {% if license_file is defined and license_file %}
       # Enterprise builds need a license; mounted read-only next to auth.yaml and

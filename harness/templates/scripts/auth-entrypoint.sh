@@ -13,8 +13,31 @@
 set -euo pipefail
 CONFIG=/etc/teleport/auth.yaml
 
+# apply-on-startup: unlike /bootstrap (applied below via LOCAL-ADMIN `tctl create`, the
+# user-facing path), these resources are handed to `teleport start --apply-on-startup` so
+# teleport applies them itself during init on EVERY boot (the code path under test). The
+# flag takes ONE file, so concatenate every contributed doc into a single multi-doc YAML;
+# omit the flag entirely when no module contributed any (keeps other clusters unchanged).
+# Re-globbed on every (re)start, so a check can rewrite these files + restart to re-apply.
+shopt -s nullglob
+APPLY_ARGS=()
+apply_files=(/apply-on-startup/*.yaml)
+if [ ${#apply_files[@]} -gt 0 ]; then
+  combined=/tmp/apply-on-startup.yaml
+  : > "$combined"
+  first=1
+  for f in "${apply_files[@]}"; do
+    [ $first -eq 1 ] || printf '\n---\n' >> "$combined"
+    cat "$f" >> "$combined"
+    first=0
+  done
+  APPLY_ARGS=(--apply-on-startup "$combined")
+  echo "[auth] apply-on-startup: ${apply_files[*]} -> $combined"
+fi
+
 echo "[auth] starting teleport auth+proxy..."
-teleport start --config "$CONFIG" &
+# ${a[@]+"${a[@]}"} expands to nothing (not an unbound error) when the array is empty under set -u.
+teleport start --config "$CONFIG" ${APPLY_ARGS[@]+"${APPLY_ARGS[@]}"} &
 TPID=$!
 
 echo "[auth] waiting for healthz on :3000..."

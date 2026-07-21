@@ -1,0 +1,38 @@
+# bound_keypair join token supplied via `teleport start --apply-on-startup` (NOT via the
+# entrypoint's `tctl create`, the way the plain `bound_keypair` module bootstraps its token).
+# This exercises the apply-on-startup fix: teleport itself applies the token during init and
+# must initialize status.bound_keypair (otherwise the join path rejects the token), then
+# PRESERVE that status when apply-on-startup re-runs on every restart.
+#
+# Runs in its OWN cluster (never composed into a shared plan): its checks.py RESTARTS the
+# shared auth container to exercise the re-apply path, which would disrupt sibling modules.
+name: bound_keypair_apply_on_startup
+description: >
+  A bound_keypair join token is supplied through `teleport start --apply-on-startup`. A real
+  tbot registers a keypair against it and joins (proving apply-on-startup initializes
+  status.bound_keypair — pre-fix it was nil and joins were rejected). A wrong registration
+  secret is denied. The checks.py then restarts auth to prove re-apply preserves the bound
+  key, silently discards config-supplied status, and freely updates spec.
+provides_feature: bound_keypair
+requires_features: [bound_keypair]
+min_version: v19
+
+# The join-success + negative-denial facts are declarative; the restart-based re-apply
+# properties (status preserved / config-status discarded / spec updated) live in checks.py,
+# which needs to restart auth and diff the token status before/after.
+checks: |
+  # the bot joined specifically via bound_keypair against the apply-on-startup token, and
+  # wrote an identity that authenticates + is authorized.
+  bot_joined          bk-bot bound_keypair
+  audit_event         bot.join bot_name=bk-bot method=bound_keypair success=true
+  output_file         bkbot /out/id/identity
+  identity_authorized bkbot /out/id/identity
+  # the token teleport applied on startup exists, is a bound_keypair token, and — the core
+  # fix — has an INITIALIZED status.bound_keypair (pre-fix apply-on-startup left it nil, so
+  # the join path rejected it; a successful join would be impossible).
+  resource_present    token/bk-token
+  resource_field      token/bk-token spec.join_method bound_keypair
+  resource_field      token/bk-token status.bound_keypair
+  # wrong registration secret -> denied, nothing produced.
+  log_contains        bkbot-deny denied|not found|failed to (join|connect)|authorization|invalid|unauthorized|registration|secret
+  no_output_file      bkbot-deny /out/id/identity
