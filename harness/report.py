@@ -89,6 +89,13 @@ def _cell(s: str) -> str:
     return str(s).replace("|", "\\|").replace("\n", " ")
 
 
+def _inline(s) -> str:
+    """Collapse whitespace/newlines to a single line while PRESERVING markdown (unlike _cell,
+    which escapes pipes for table cells). Used for the agent-findings prose, where backticks in
+    a description SHOULD render as code spans."""
+    return " ".join(str(s).split())
+
+
 # --------------------------------------------------------------------------- setup
 def _setup_section(L: list[str], setup: dict | None, state_dir: Path) -> None:
     L.append("## Cluster setup")
@@ -159,6 +166,89 @@ def _setup_section(L: list[str], setup: dict | None, state_dir: Path) -> None:
     L.append("")
 
 
+# ----------------------------------------------------------------- agent findings
+# Agent-driven modules (see harness/agent.py) emit their verdict as an "agent-result" proof
+# whose content is the AgentResult JSON. Rather than dumping that JSON as a code block, render a
+# dedicated, properly-formatted section: issues grouped by severity (markdown preserved), a steps
+# list, and the raw record collapsed. The check table + proof list link here instead.
+_SEV = {"blocker": ("🔴", 0), "major": ("🟠", 1), "minor": ("🟡", 2), "nit": ("⚪", 3)}
+_AGENT_STATUS = {"pass": "✅ pass", "partial": "⚠️ partial", "fail": "❌ fail"}
+
+
+def _findings_anchor(module: str) -> str:
+    return f"agent-findings-{module}"
+
+
+def _agent_result_proofs(m: dict) -> list[dict]:
+    return [p for p in (m.get("proofs") or []) if p.get("kind") == "agent-result"]
+
+
+def _has_agent_findings(modules: list[dict]) -> bool:
+    return any(_agent_result_proofs(m) for m in modules)
+
+
+def _agent_findings_section(L: list[str], modules: list[dict]) -> None:
+    L.append("## Agent findings")
+    L.append("")
+    L.append("*Advisory: an AI agent's own report of doing the task. The run's PASS/FAIL is decided "
+             "by the objective checks below, not by this verdict.*")
+    L.append("")
+    for m in modules:
+        module = m.get("module", "?")
+        for p in _agent_result_proofs(m):
+            try:
+                res = json.loads(p.get("content", ""))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            L.append(f'<a id="{_findings_anchor(module)}"></a>')
+            L.append("")
+            status = str(res.get("status", "")).lower()
+            L.append(f"### {module} — {_AGENT_STATUS.get(status, status or '?')}")
+            L.append("")
+            if res.get("task"):
+                L.append(f"**Task:** {_inline(res['task'])}")
+                L.append("")
+            if res.get("summary"):
+                L.append(_inline(res["summary"]))
+                L.append("")
+
+            issues = res.get("issues") or []
+            if issues:
+                issues = sorted(issues, key=lambda i: _SEV.get(str(i.get("severity", "")).lower(),
+                                                               ("", 9))[1])
+                L.append(f"#### Issues ({len(issues)})")
+                L.append("")
+                for it in issues:
+                    sev = str(it.get("severity", "")).lower()
+                    badge = _SEV.get(sev, ("•", 9))[0]
+                    area = _inline(it.get("area", ""))
+                    L.append(f"- {badge} **{sev or '?'}** · _{area}_ — {_inline(it.get('description', ''))}")
+                    if it.get("evidence"):
+                        L.append(f"  - **Evidence:** {_inline(it['evidence'])}")
+                    if it.get("suggested_fix"):
+                        L.append(f"  - **Suggested fix:** {_inline(it['suggested_fix'])}")
+                L.append("")
+
+            steps = res.get("steps") or []
+            if steps:
+                L.append("#### Steps")
+                L.append("")
+                for s in steps:
+                    ok = "✅" if s.get("ok", True) else "❌"
+                    ref = f"  _({_inline(s['doc_ref'])})_" if s.get("doc_ref") else ""
+                    L.append(f"{s.get('n', '?')}. {ok} **{_inline(s.get('action', ''))}**{ref}")
+                L.append("")
+
+            L.append("<details><summary>raw agent-result.json</summary>")
+            L.append("")
+            L.append("```json")
+            L.extend(json.dumps(res, indent=2).splitlines())
+            L.append("```")
+            L.append("")
+            L.append("</details>")
+            L.append("")
+
+
 # --------------------------------------------------------------------------- proofs
 def _proofs_for_module(m: dict) -> tuple[dict, dict]:
     """Return (proof_by_id, refs_by_check_index). Supports the new proof-registry shape
@@ -200,14 +290,20 @@ def _checks_section(L: list[str], modules: list[dict]) -> None:
         L.append("")
 
         proofs, refs = _proofs_for_module(m)
+
+        def _proof_link(pid: str) -> str:
+            # an agent-result proof is rendered in the dedicated "Agent findings" section, so
+            # link there rather than to a raw-JSON proof dump.
+            if proofs[pid].get("kind") == "agent-result":
+                return _link("↳ findings", f"#{_findings_anchor(module)}")
+            return _link("↳", f"#{_anchor(module, pid)}")
+
         # check table, linking each check to its proof section(s)
         L.append("| status | check | detail | proof |")
         L.append("|--------|-------|--------|-------|")
         for i, r in enumerate(results):
             verb_args = " ".join([r.get("verb", "")] + r.get("args", [])).strip()
-            links = " ".join(
-                _link("↳", f"#{_anchor(module, pid)}") for pid in refs.get(i, []) if pid in proofs
-            ) or "—"
+            links = " ".join(_proof_link(pid) for pid in refs.get(i, []) if pid in proofs) or "—"
             L.append(f"| {_BADGE.get(r['status'], r['status'])} | `{_cell(verb_args)}` "
                      f"| {_cell(r.get('msg', ''))} | {links} |")
         L.append("")
@@ -223,6 +319,8 @@ def _checks_section(L: list[str], modules: list[dict]) -> None:
                 citing.setdefault(pid, []).append(i)
                 if pid not in ordered:
                     ordered.append(pid)
+        # the agent-result proof is rendered in the dedicated "Agent findings" section, not here.
+        ordered = [pid for pid in ordered if proofs[pid].get("kind") != "agent-result"]
         if ordered:
             L.append(f"#### Proofs — {module}")
             L.append("")
@@ -241,7 +339,10 @@ def _checks_section(L: list[str], modules: list[dict]) -> None:
                     verb_args = " ".join([r.get("verb", "")] + r.get("args", [])).strip()
                     L.append(f"- {_BADGE.get(r['status'], r['status'])} `{_cell(verb_args)}`")
                     asserts = r.get("assertions") or []
-                    if asserts:
+                    if r.get("verb") == "agent_result":
+                        # findings render in the dedicated section; don't duplicate the bullets here
+                        L.append(f"  - see [Agent findings](#{_findings_anchor(module)})")
+                    elif asserts:
                         for a in asserts:
                             L.append(f"  - `{_cell(a)}`")
                     else:
@@ -250,10 +351,18 @@ def _checks_section(L: list[str], modules: list[dict]) -> None:
                 content = p.get("content", "")
                 if content:
                     lang = p.get("lang", "")
+                    # the agent transcript is large + already summarized in Agent findings — collapse it.
+                    collapse = p.get("kind") == "agent-transcript"
+                    if collapse:
+                        L.append("<details><summary>full transcript</summary>")
+                        L.append("")
                     L.append(f"```{lang}")
                     L.extend(content.splitlines())
                     L.append("```")
                     L.append("")
+                    if collapse:
+                        L.append("</details>")
+                        L.append("")
 
 
 # --------------------------------------------------------------------------- main
@@ -314,6 +423,9 @@ def build_markdown(state_dir: Path) -> str:
             L.append(f"| {_cell(n.get('hostname', '?'))} | {_cell(n.get('scope', '') or '—')} "
                      f"| {_cell(labels or '—')} |")
         L.append("")
+
+    if _has_agent_findings(modules):
+        _agent_findings_section(L, modules)
 
     _checks_section(L, modules)
 

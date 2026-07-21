@@ -48,7 +48,7 @@ build_image() {
   cat > "$bincache/Dockerfile" <<'EOF'
 FROM --platform=linux/amd64 debian:bookworm-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl openssl bash \
+ && apt-get install -y --no-install-recommends ca-certificates curl openssl bash jq \
  && rm -rf /var/lib/apt/lists/*
 COPY teleport /usr/local/bin/teleport
 COPY tctl /usr/local/bin/tctl

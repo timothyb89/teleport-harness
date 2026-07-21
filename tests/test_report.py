@@ -126,3 +126,77 @@ def test_build_markdown_falls_back_without_setup_json(tmp_path):
     md = build_markdown(sd)
     # services still come from the compose fallback
     assert "### Services" in md and "`oidc`" in md
+
+
+# ---- agent-driven modules: dedicated, formatted findings section ----
+_AGENT_RESULT = {
+    "task": "onboard docbot via bound_keypair",
+    "status": "partial",
+    "summary": "Onboarded docbot, but the guide's `tctl bots add` overlaps Step 3.",
+    "steps": [
+        {"n": 1, "action": "Create the bot", "ok": True, "doc_ref": "getting-started.mdx Step 2/4"},
+        {"n": 2, "action": "Start tbot", "ok": False, "doc_ref": "Step 4/4"},
+    ],
+    "issues": [
+        {"severity": "minor", "area": "docs", "description": "`services: []` vs `outputs: []` mismatch",
+         "evidence": "both under version: v2", "suggested_fix": "use `services:` consistently"},
+        {"severity": "major", "area": "docs", "description": "Step 2 overlaps Step 3",
+         "evidence": "`tctl bots add` prints a token", "suggested_fix": "reconcile the steps"},
+    ],
+}
+
+
+def _agent_bundle(tmp_path):
+    (tmp_path / "meta.env").write_text("CLUSTER_ID=zz1\nMODULE=docs_bound_keypair\n")
+    (tmp_path / "results-docs_bound_keypair.json").write_text(json.dumps({
+        "module": "docs_bound_keypair", "passed": True, "nodes": [],
+        "results": [
+            {"status": "PASS", "verb": "agent_result", "args": [], "msg": "agent status=partial",
+             "proof_refs": ["agent-result-abc", "agent-transcript-xyz"],
+             "assertions": ["[major/docs] Step 2 overlaps Step 3"]},
+            {"status": "PASS", "verb": "bot_joined", "args": ["docbot", "bound_keypair"],
+             "msg": "bot 'docbot' joined", "proof_refs": ["audit-1"], "assertions": []},
+        ],
+        "proofs": [
+            {"id": "agent-result-abc", "kind": "agent-result", "title": "agent verdict: onboard docbot",
+             "content": json.dumps(_AGENT_RESULT), "lang": "json", "source": ""},
+            {"id": "agent-transcript-xyz", "kind": "agent-transcript", "title": "agent transcript",
+             "content": '{"type":"result","total_cost_usd":1.6}', "lang": "json", "source": ""},
+            {"id": "audit-1", "kind": "audit-event", "title": "bot.join", "content": "{}", "lang": "json"},
+        ],
+    }))
+    return tmp_path
+
+
+def test_agent_findings_section_renders_formatted(tmp_path):
+    md = build_markdown(_agent_bundle(tmp_path))
+    # a dedicated section exists, anchored so the check table can link to it
+    assert "## Agent findings" in md
+    assert '<a id="agent-findings-docs_bound_keypair"></a>' in md
+    assert "docs_bound_keypair — ⚠️ partial" in md
+    # issues sorted most-severe-first, rendered as formatted list items (NOT one escaped code span)
+    assert md.index("Step 2 overlaps Step 3") < md.index("mismatch")
+    assert "**Suggested fix:** reconcile the steps" in md
+    # description markdown is preserved (backticks stay as code, not escaped away)
+    assert "`tctl bots add` prints a token" in md
+    # steps render with ok/fail badges
+    assert "1. ✅ **Create the bot**" in md and "2. ❌ **Start tbot**" in md
+    # raw record available but collapsed
+    assert "<details><summary>raw agent-result.json</summary>" in md
+
+
+def test_checks_table_links_agent_result_to_findings_and_collapses_transcript(tmp_path):
+    md = build_markdown(_agent_bundle(tmp_path))
+    # the agent_result check's proof cell points at the findings section, not a JSON dump
+    assert "[↳ findings](#agent-findings-docs_bound_keypair)" in md
+    # the (large) transcript proof is collapsed; the objective check's audit proof still renders
+    assert "<details><summary>full transcript</summary>" in md
+    assert "#proof-docs_bound_keypair-audit-1" in md
+    # the agent_result proof is NOT dumped as raw JSON under a "Proofs" heading
+    assert "- see [Agent findings](#agent-findings-docs_bound_keypair)" in md
+
+
+def test_no_agent_findings_section_without_agent_module(tmp_path):
+    # the standard (non-agent) bundle must not grow an empty Agent findings section
+    md = build_markdown(_state_dir(tmp_path))
+    assert "## Agent findings" not in md

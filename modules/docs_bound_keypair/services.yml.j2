@@ -1,10 +1,11 @@
 {# The workbench: an idle container the host-side agent drives via `docker exec` (its ONLY tool,
    proxied through harness/agent_mcp.py). It's both the "admin workstation" and the "bot host"
-   from the guide. Version-matched teleport image (has tctl + tbot); the Bound Keypair docs
-   mounted read-only at /docs; the pre-seeded admin identity at /id:ro (agent runs
-   `tctl --identity /id/identity --auth-server <id>-auth:3025 …`); a writable /work; and /out
-   bound to the state dir so the agent's agent-result.json is readable by the agent_result verb.
-   No docker socket is mounted — in-container root cannot escape. #}
+   from the guide. Version-matched teleport image (has tctl + tbot + jq); the WHOLE docs tree is
+   mounted read-only at /docs so the guide's `(!docs/pages/includes/…!)` directives resolve to real
+   files (`docs/X` in the repo == `/docs/X` in the container — see prompt.md); the pre-seeded admin
+   identity at /id:ro (agent runs `tctl --identity /id/identity --auth-server <id>-auth:3025 …`); a
+   writable /work; and /out bound to the state dir so the agent's agent-result.json is readable by
+   the agent_result verb. No docker socket is mounted — in-container root cannot escape. #}
 services:
   workbench:
     image: {{ image }}
@@ -12,7 +13,7 @@ services:
     container_name: {{ cluster_id }}-workbench
     entrypoint: ["sh", "-lc", "mkdir -p /work && sleep infinity"]
     volumes:
-      - {{ repo }}/docs/pages/reference/machine-workload-identity/bound-keypair:/docs:ro
+      - {{ repo }}/docs:/docs:ro
       - agent-identity:/id:ro
       - {{ out }}/agent/out:/out
     networks: [internal]

@@ -7,8 +7,18 @@ wrong, unclear, missing a step, or don't match the product's actual behavior.
 - Your ONLY tool is `run(cmd)`, which runs a shell command **inside a container** that is both
   your admin workstation and the bot host. There is no other tool — you cannot read local files
   or browse the web except through `run`.
-- The guide is mounted read-only at `/docs`. Start at `/docs/getting-started.mdx` and follow
-  links to other files under `/docs` as needed (e.g. the reference page).
+- The Teleport docs are mounted read-only at `/docs`. **Start at**
+  `/docs/pages/reference/machine-workload-identity/bound-keypair/getting-started.mdx` and follow
+  links to other pages under `/docs` as needed (e.g. the reference page).
+- **These are raw-source `.mdx` files, not the rendered site.** Teleport docs pull in shared
+  snippets with include directives that look like `(!docs/pages/includes/…!)` on their own line.
+  When you hit one, the real content is the file it names — read it: a repo path `docs/X` is
+  mounted at `/docs/X` (drop the leading `docs/`, prepend `/docs/`), e.g.
+  `(!docs/pages/includes/machine-id/create-a-bot.mdx!)` → `/docs/pages/includes/machine-id/create-a-bot.mdx`.
+  Resolve includes recursively so you follow the guide's actual instructions. If a step's command
+  only exists inside an include you cannot locate, record that as an issue and proceed sensibly.
+- Stay on-task: read the guide + the pages/includes it references. Don't wander the wider docs tree.
+- `jq` IS installed, so the guide's `jq` commands work as written.
 - You already have a pre-authenticated admin CLI. Wherever the guide runs `tctl …`, run instead:
   `tctl --identity /id/identity --auth-server {{ auth_addr }} <args…>`
   The guide's plain `tctl` assumes an interactive logged-in session; if it never explains how a
