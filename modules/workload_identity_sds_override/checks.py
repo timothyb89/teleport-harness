@@ -68,7 +68,10 @@ def _envoy_sds_stats(cluster) -> tuple[dict, str]:
             continue
         if "update_success" in name:
             totals["success"] += v
-        elif "update_rejected" in name or "update_failure" in name:
+        elif "update_rejected" in name:
+            # NACKs only. NOT update_failure: that counts subscription FETCH failures
+            # (gRPC stream reset/reconnect), which are benign and expected during startup
+            # warmup over the unix socket — they don't mean a secret was rejected.
             totals["rejected"] += v
         elif "update_attempt" in name:
             totals["attempt"] += v
