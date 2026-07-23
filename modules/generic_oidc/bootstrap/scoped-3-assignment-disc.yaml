@@ -10,5 +10,9 @@ spec:
   # scope-qualified bot name (<scope>::<bot-name>).
   bot: /genericoidc-test::gobot-scoped-disc
   assignments:
-    - role: generic-oidc-scoped-role
+    # The sub-assignment role is ALSO referenced by scope-qualified name
+    # (<roleScope>::<roleName>) since the namespacing change (gravitational#68457,
+    # on master + this v18 backport). A bare name fails validation ("missing '::'
+    # separator"). See lib/scopes/access/access.go ValidateAssignment.
+    - role: /genericoidc-test::generic-oidc-scoped-role
       scope: /genericoidc-test

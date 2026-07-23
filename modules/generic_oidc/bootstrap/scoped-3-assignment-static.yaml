@@ -9,5 +9,8 @@ spec:
   # scope-qualified bot name (<scope>::<bot-name>).
   bot: /genericoidc-test::gobot-scoped-static
   assignments:
-    - role: generic-oidc-scoped-role
+    # Scope-qualified role name (<roleScope>::<roleName>) — see the disc variant's
+    # note: required since the namespacing change (gravitational#68457) on master +
+    # this v18 backport; a bare name fails validation.
+    - role: /genericoidc-test::generic-oidc-scoped-role
       scope: /genericoidc-test
