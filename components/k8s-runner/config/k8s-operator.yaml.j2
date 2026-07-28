@@ -1,0 +1,85 @@
+{# Kubernetes manifests for the Teleport operator built from the clone. Rendered to
+   $OUT/config/k8s-operator.yaml and applied by the component's k8s-operator runner,
+   which first substitutes __TELEPORT_AUTH_IP__ (see k8s-operator-entrypoint.sh).
+
+   This intentionally does NOT use the teleport-cluster helm chart: the chart also
+   installs a Teleport cluster inside Kubernetes, and the harness already has one right
+   next door on the docker network. What is under test is the operator's resource sync,
+   not its packaging. #}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: teleport
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: teleport-operator
+  namespace: teleport
+---
+# cluster-admin is a deliberate simplification for a DISPOSABLE test cluster: the real
+# chart ships a least-privilege role, but reproducing it here would only test our copy of
+# it. Granting everything keeps RBAC from being a confounding variable when a reconcile
+# fails.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: teleport-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: teleport-operator
+    namespace: teleport
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: teleport-operator
+  namespace: teleport
+  labels: {app: teleport-operator}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: teleport-operator}
+  template:
+    metadata:
+      labels: {app: teleport-operator}
+    spec:
+      serviceAccountName: teleport-operator
+      # CoreDNS cannot resolve docker container names, so the Teleport cluster is pinned
+      # by IP. Both spellings are listed: {{ fqdn }} is what the wildcard LE certificate
+      # matches (so TLS verifies with no --insecure), and the container name is what the
+      # rest of the harness uses.
+      hostAliases:
+        - ip: "__TELEPORT_AUTH_IP__"
+          hostnames:
+            - "{{ fqdn }}"
+            - "{{ cluster_id }}-auth"
+      containers:
+        - name: operator
+          image: teleport-harness-operator:{{ cluster_id }}
+          # The image was side-loaded into containerd from a tarball; there is no
+          # registry to pull it from and an attempted pull would just fail slowly.
+          imagePullPolicy: Never
+          args:
+            # Reaching the cluster through its PROXY (not auth:3025) means the operator
+            # validates a publicly-trusted certificate out of the box.
+            - "--auth-server={{ fqdn }}:{{ port }}"
+            - "--token={{ operator_token }}"
+            - "--join-method=token"
+            - "--namespace=teleport"
+            - "--log-level=DEBUG"
+          ports:
+            - {name: health, containerPort: 8081}
+            - {name: metrics, containerPort: 8080}
+          # Readiness only, NO liveness probe. The token join method is single-use, so a
+          # restart can never re-join — a liveness probe would convert a transient stall
+          # into a permanently dead operator and a baffling test failure.
+          readinessProbe:
+            httpGet: {path: /readyz, port: health}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 60

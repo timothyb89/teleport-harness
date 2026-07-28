@@ -1,0 +1,14 @@
+# Render context for operator_generic_oidc (see harness/render.py).
+# k8s-runner: the disposable k3s node + the operator built from the clone.
+# oidc-server: the in-cluster IdP minting the JWTs the join-test agents present (served
+# over the system-trusted wildcard cert at oidc.<lab_domain>, so the token validates
+# discovery over system trust — no tls_ca needed).
+components: [k8s-runner, oidc-server]
+
+# Re-declared here because a module fragment can't see a component's render vars (same
+# reason generic_oidc re-declares oidc_image) — this module owns its own runner container.
+k3s_version: v1.31.5-k3s1
+
+# The `sub` both join-test agents present; satisfies allow_any on its own, so the only
+# thing that can distinguish them is the `org` claim in must_match_fields.
+oidc_subject: op-oidc-subject

@@ -465,6 +465,86 @@ def _resource_field(c, nodes, args):
                        proofs=[proof], assertions=asserts)
 
 
+# --- in-cluster Kubernetes state (the k8s-runner component's k3s) -------------
+# These inspect the k8s side of an operator test: what the API SERVER accepted and
+# stored, and what the operator wrote back to a CR's status. They pair with the
+# resource_* verbs above, which inspect the TELEPORT side — together they localise a
+# failure to "the CRD schema rejected it", "the operator never reconciled it", or
+# "it never reached Teleport".
+def _kube_proof(kind: str, name: str, doc: dict) -> ProofItem:
+    return ProofItem("k8s-resource", f"{kind}/{name} (kubectl get -o json)",
+                     json.dumps(doc, indent=2, sort_keys=True), lang="json")
+
+
+def _k8s_resource_present(c, nodes, args):
+    kind, name = _split_ref(args[0])
+    doc = c.kube_get(kind, name)
+    if doc:
+        return CheckResult(PASS, f"k8s {kind}/{name} present",
+                           proofs=[_kube_proof(kind, name, doc)])
+    # A CR the API server REJECTED never exists — this is how operator_generic_oidc
+    # surfaces the crdgen Struct bug (the nested CR is refused at admission).
+    return CheckResult(FAIL, f"k8s {kind}/{name} not found "
+                             f"(never created, or rejected by the API server)")
+
+
+def _k8s_resource_field(c, nodes, args):
+    """Assert a field (dotted path) on a live k8s object. With <expected>, its value must
+    match (case-insensitive substring, as for resource_field); without, the path must
+    merely be present. A missing object OR missing path FAILs."""
+    kind, name = _split_ref(args[0])
+    path = args[1]
+    expected = args[2] if len(args) > 2 else None
+    asserts = [f"k8s {kind}/{name}.{path}"
+               + (f" = {expected}" if expected is not None else " present")]
+    doc = c.kube_get(kind, name)
+    if not doc:
+        return CheckResult(FAIL, f"k8s {kind}/{name} not found (cannot read {path})",
+                           assertions=asserts)
+    found, value = _dig(doc, path)
+    proof = _kube_proof(kind, name, doc)
+    if not found:
+        return CheckResult(FAIL, f"k8s {kind}/{name}: field {path} absent",
+                           proofs=[proof], assertions=asserts)
+    if expected is not None and expected.lower() not in str(value).lower():
+        return CheckResult(FAIL, f"k8s {kind}/{name}: {path}={value!r} != {expected!r}",
+                           proofs=[proof], assertions=asserts)
+    detail = f"= {value}" if expected is None else f"= {value} (matches {expected})"
+    return CheckResult(PASS, f"k8s {kind}/{name}: {path} {detail}",
+                       proofs=[proof], assertions=asserts)
+
+
+def _k8s_condition(c, nodes, args):
+    """Assert a `status.conditions[]` entry on a k8s object — how a controller reports
+    what it did. Defaults to expecting status "True"; the condition's message is
+    surfaced in the failure so a reconcile error reads directly off the report."""
+    kind, name = _split_ref(args[0])
+    ctype = args[1]
+    expected = args[2] if len(args) > 2 else "True"
+    asserts = [f"k8s {kind}/{name} condition {ctype} = {expected}"]
+    doc = c.kube_get(kind, name)
+    if not doc:
+        return CheckResult(FAIL, f"k8s {kind}/{name} not found (cannot read condition {ctype})",
+                           assertions=asserts)
+    proof = _kube_proof(kind, name, doc)
+    conds = ((doc.get("status") or {}).get("conditions") or [])
+    cond = next((c_ for c_ in conds
+                 if isinstance(c_, dict) and str(c_.get("type", "")).lower() == ctype.lower()), None)
+    if cond is None:
+        have = ", ".join(str(c_.get("type", "?")) for c_ in conds if isinstance(c_, dict)) or "none"
+        return CheckResult(FAIL, f"k8s {kind}/{name}: no condition {ctype!r} (have: {have})",
+                           proofs=[proof], assertions=asserts)
+    got = str(cond.get("status", ""))
+    msg = str(cond.get("message", "")).strip()
+    if got.lower() != expected.lower():
+        detail = f" — {msg}" if msg else ""
+        return CheckResult(FAIL, f"k8s {kind}/{name}: {ctype}={got} (expected {expected}){detail}",
+                           proofs=[proof], assertions=asserts)
+    return CheckResult(PASS, f"k8s {kind}/{name}: {ctype}={got}"
+                             + (f" — {msg}" if msg else ""),
+                       proofs=[proof], assertions=asserts)
+
+
 # --- agent-driven tests (an AI agent's findings, written to a state-dir bind mount) -----------
 def _agent_result(c, nodes, args):
     """Surface an agent-driven test's verdict (harness/agent.py AgentResult), which the
@@ -528,6 +608,9 @@ IMPLS: dict[str, Impl] = {
     "tsh_ssh_as": _tsh_ssh_as,
     "resource_present": _resource_present,
     "resource_field": _resource_field,
+    "k8s_resource_present": _k8s_resource_present,
+    "k8s_resource_field": _k8s_resource_field,
+    "k8s_condition": _k8s_condition,
     "agent_result": _agent_result,
 }
 

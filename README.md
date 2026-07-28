@@ -38,6 +38,12 @@ their branch. Contributor docs, architecture & gotchas: **[CLAUDE.md](CLAUDE.md)
 # shared components), each gated + verified independently:
 ./bin/cluster run-plan oidc-caching --repo ~/projects/teleport-e \
     --features kubernetes --version v18
+
+# Test the KUBERNETES OPERATOR: builds it from the clone and runs it inside a disposable
+# k3s that lives and dies with the cluster. Needs no kind/k3d/kubectl/helm on your host —
+# see docs/kubernetes.md for the design and its host requirements.
+./bin/cluster run-plan operator --repo ~/projects/teleport \
+    --features generic_oidc --version v19
 ```
 `run-plan` builds Teleport (cached by commit SHA), composes + brings up the cluster behind the
 shared ingress, verifies the join outcomes, writes `runs/<ts>-<id>/` (per-module `results-*.json`
@@ -61,7 +67,9 @@ Test a branch: `git -C <clone> checkout <branch>`, then `--repo <clone>`.
   `services.yml.j2` (its bots/agents), `render.yaml`, `config/*.j2`, `bootstrap/` (roles/tokens).
   Today: `generic_oidc`, `tbot`, `bound_keypair`, `kubernetes`.
 - `components/<name>/` — a shared service dependency modules pull in via `components:`
-  (today: `oidc-server`, a trivial IdP reused by `generic_oidc` + `kubernetes`).
+  (today: `oidc-server`, a trivial IdP reused by `generic_oidc` + `kubernetes`;
+  `terraform-runner`; `agent-runner`; `k8s-runner`, a disposable in-cluster Kubernetes node
+  + the Teleport operator — see [docs/kubernetes.md](docs/kubernetes.md)).
 - `plans/<name>.yaml` — several modules composed into one cluster (today: `bots`, `oidc-caching`).
 - `harness/` — the Python brain (`models`, `checks`, `verify`, `cluster`, `render`, `report`, `cli`); `tests/`.
 - `skills/` — the Claude Code skill(s) for this harness, version-controlled with the code.

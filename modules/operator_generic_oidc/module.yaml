@@ -1,0 +1,62 @@
+# operator_generic_oidc: drive the Teleport KUBERNETES OPERATOR (built from the clone,
+# running in a disposable in-cluster k3s) to create a generic_oidc join token carrying
+# `must_match_fields`, and find out how far the google.protobuf.Struct value survives.
+#
+# This is the operator's answer to the question terraform_generic_oidc asks of the
+# Terraform provider — and the answer is DIFFERENT, which is the point of running both:
+#
+#   * Terraform  drops must_match_fields ENTIRELY and silently (the field is excluded
+#                from the generated provider schema).
+#   * The operator round-trips FLAT values correctly (api/types.Struct carries jsonpb
+#                Marshal/UnmarshalJSON, so the CR decodes properly) — but NESTED values
+#                are refused by the API SERVER, because crdgen emits
+#                `additionalProperties: true` for google.protobuf.Struct, which gives the
+#                map's values no schema at all. Nesting is explicitly supported by the
+#                proto and documented in the field's own comment.
+#
+# So the flat checks below are a REGRESSION GUARD (they pass today, and prove the operator
+# path is sound end to end), and the nested checks are a KNOWN-FAILING probe that flips to
+# PASS with no edits once crdgen emits x-kubernetes-preserve-unknown-fields instead
+# (integrations/operator/crdgen/schemagen.go, the .google.protobuf.Struct case) AND the
+# CRDs are regenerated with `make -C integrations/operator crd-manifests`.
+name: operator_generic_oidc
+description: >
+  Teleport Kubernetes operator (built from the clone, running in a disposable k3s) creates
+  a generic_oidc join token with must_match_fields. Flat values round-trip into Teleport
+  and are proven ENFORCED by a negative join test (PASS today). Nested values are rejected
+  by the generated CRD schema even though the API supports them (FAIL until crdgen is
+  fixed, then PASS).
+provides_feature: operator_generic_oidc
+requires_features: [generic_oidc]
+min_version: v18                 # generic_oidc lands in v18
+
+# Verification — source of truth (harness/verify.py).
+checks: |
+  # ---- the operator itself is alive and reconciling ------------------------------
+  log_contains         k8s-operator successfully rolled out
+  k8s_resource_present teleportprovisiontoken/op-oidc-token
+  k8s_condition        teleportprovisiontoken/op-oidc-token SuccessfullyReconciled
+
+  # ---- FLAT must_match_fields: the operator gets this RIGHT (regression guard) ----
+  # The CR reached Teleport as a real token...
+  resource_present     token/op-oidc-token
+  # ...carrying the Struct value intact, which is exactly what the Terraform provider
+  # fails to do. If this ever starts failing, the operator has regressed to parity
+  # with the provider bug.
+  resource_field       token/op-oidc-token spec.generic_oidc.must_match_fields.org ethernet-fyi
+  # BEHAVIOURAL proof it is EVALUATED at join, not merely stored. Both agents present a
+  # JWT whose `sub` satisfies allow_any; they differ ONLY in the `org` claim, so the
+  # denial is attributable to must_match_fields and nothing else.
+  node_present         op-agent-ok
+  node_absent          op-agent-badorg
+  log_contains         op-agent-badorg unable to (join via|validate) generic_oidc|denied
+
+  # ---- NESTED must_match_fields: the CRD cannot express it (known-failing) --------
+  # Diagnostic, not a gate: this matches TODAY and documents the exact rejection. Once
+  # crdgen is fixed there is no such log line and log_contains SKIPs, which is neutral.
+  log_contains         op-crs unknown field .*must_match_fields\.nested
+  # The gates. All three FAIL today because admission refused the CR outright, so it
+  # exists neither in Kubernetes nor in Teleport.
+  k8s_resource_present teleportprovisiontoken/op-oidc-nested
+  k8s_resource_field   teleportprovisiontoken/op-oidc-nested spec.generic_oidc.must_match_fields.nested.deep harness-nested
+  resource_field       token/op-oidc-nested spec.generic_oidc.must_match_fields.nested.deep harness-nested

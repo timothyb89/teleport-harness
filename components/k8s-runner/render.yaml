@@ -1,0 +1,20 @@
+# Context for the k8s-runner component (merged in when a module lists it under
+# `components:`). Provides a disposable in-cluster Kubernetes node plus the Teleport
+# Kubernetes operator, built from the clone's working tree.
+#
+# NOTE: k3s_version is re-declared in each MODULE's render.yaml too — module fragments
+# can't see a component's render vars (same reason generic_oidc re-declares oidc_image),
+# and a module owns its own runner container.
+k3s_version: v1.31.5-k3s1
+
+# The operator authenticates to Teleport as a privileged bot via its EMBEDDED tbot.
+#
+# GOTCHA: the `token` join method is SINGLE-USE — auth deletes the token once it is
+# redeemed (lib/auth/join.go), and embeddedtbot keeps its state in memory
+# (destination.NewMemory()), so a restarted operator pod can never re-join. That is why
+# the Deployment has no liveness probe: self-healing would turn one hiccup into a
+# permanently broken operator. The pod is applied only after auth is healthy, so the
+# single join it gets is the one that counts.
+operator_token: harness-operator-secret
+bots:
+  - {name: teleport-operator, roles: "editor,access,auditor", token: harness-operator-secret}

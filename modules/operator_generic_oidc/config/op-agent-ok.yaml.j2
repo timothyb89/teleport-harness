@@ -1,0 +1,19 @@
+{# Positive join: JWT sub={{ oidc_subject }} (satisfies allow_any) + the oidc-server's
+   default org=ethernet-fyi (satisfies must_match_fields). Joins with the token the
+   OPERATOR created, so its presence proves the whole CR -> operator -> Teleport path. #}
+version: v3
+teleport:
+  nodename: {{ cluster_id }}-op-agent-ok
+  data_dir: /var/lib/teleport
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: generic_oidc
+    token_name: op-oidc-token
+    generic_oidc:
+      command: ["curl", "-fsSk", "https://oidc:8443/token?sub={{ oidc_subject }}"]
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: operator-generic-oidc, variant: ok}

@@ -1,0 +1,52 @@
+{# operator_generic_oidc: apply two TeleportProvisionToken CRs (flat + nested
+   must_match_fields) into the k8s-runner component's disposable cluster, then have two
+   Teleport agents try to join with the token the OPERATOR created.
+
+   The oidc-server component mints both agents' JWTs over the system-trusted wildcard cert
+   at oidc.<lab_domain>, so the token validates discovery over system trust — no tls_ca.
+   The agents' JWTs are identical except for the `org` claim (the must_match_fields
+   matcher): op-agent-ok keeps the default (ethernet-fyi, matches) and op-agent-badorg
+   overrides it (wrong, must be denied). #}
+services:
+  # Applies this module's CRs. Runs the k3s image (kubectl + a shell already inside).
+  op-crs:
+    image: rancher/k3s:{{ k3s_version }}
+    container_name: {{ cluster_id }}-op-crs
+    entrypoint: ["/bin/sh", "/scripts/k8s-apply-entrypoint.sh"]
+    environment:
+      K3S_HOST: "{{ cluster_id }}-k3s"
+    volumes:
+      - {{ shared_scripts }}/k8s-common.sh:/scripts/k8s-common.sh:ro
+      - {{ shared_scripts }}/k8s-apply-entrypoint.sh:/scripts/k8s-apply-entrypoint.sh:ro
+      # Applied in filename order: the flat token (which the join test depends on) first.
+      - {{ out }}/config/op-cr-flat.yaml:/work/10-flat.yaml:ro
+      - {{ out }}/config/op-cr-nested.yaml:/work/20-nested.yaml:ro
+      - k8s-kubeconfig:/kubeconfig:ro
+    networks: [internal]
+    depends_on:
+      # Never apply a CR into a cluster with no controller watching it.
+      k8s-operator: {condition: service_healthy}
+    # Healthy once every CR has been applied AND the operator has had time to reconcile,
+    # so the agents below only start once their join token really exists in Teleport.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/apply-done"]
+      interval: 3s
+      timeout: 3s
+      retries: 100
+      start_period: 5s
+{% for name in ["op-agent-ok", "op-agent-badorg"] %}
+
+  # {{ name }}: a Node joining with the operator-created token (see config/{{ name }}.yaml
+  # for the JWT it presents).
+  {{ name }}:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-{{ name }}
+    command: ["teleport", "start", "--config", "/etc/teleport/teleport.yaml"]
+    volumes:
+      - {{ out }}/config/{{ name }}.yaml:/etc/teleport/teleport.yaml:ro
+    networks: [internal]
+    depends_on:
+      op-crs: {condition: service_healthy}
+      oidc: {condition: service_started}
+{% endfor %}

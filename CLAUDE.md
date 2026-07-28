@@ -147,6 +147,13 @@ returns it; FULL JSON proof; e.g. asserting what a terraform apply created),
 `resource_field <kind/name> <dotted.path> [expected]` (a field on a live resource is present,
 and — with `expected` — equals it by case-insensitive substring; missing resource OR path FAILs —
 how `terraform_generic_oidc` surfaces the must_match_fields bug),
+`k8s_resource_present <kind/name>`/`k8s_resource_field <kind/name> <dotted.path> [expected]`/
+`k8s_condition <kind/name> <condition-type> [expected-status]` (the KUBERNETES side of an
+operator test, via `kubectl get -o json` inside the k8s-runner component's k3s — `<kind/name>`
+resolves in the fixed `teleport` namespace, `cluster.KUBE_NAMESPACE`. Pair them with the
+Teleport-side `resource_*` verbs: together they localise a failure to "the CRD schema rejected
+it" vs "the operator never reconciled it" vs "it never reached Teleport". `k8s_condition`
+defaults to expecting status `True` and surfaces the condition's message on failure),
 `agent_result [expected-status]` (surface an AI agent's findings from `agent-result.json` — the
 agent's self-verdict + every snag it reported become proof + assertions; ADVISORY: FAILs only if
 no valid result was produced, or, with `expected-status`, if the agent's self-status differs. The
@@ -185,7 +192,21 @@ component]; its findings are ADVISORY (`agent_result`) while OBJECTIVE checks ga
 docbot bound_keypair` + `resource_present bot/docbot`/`token/docbot-token`. The host-side agent is
 `claude -p` on the user's subscription — no API key. The WHOLE `{{ repo }}/docs` tree is mounted
 `:ro` so the guide's `(!docs/pages/includes/…!)` directives resolve to real files (the prompt tells
-the agent to follow them); gated on bound_keypair, min v18).
+the agent to follow them); gated on bound_keypair, min v18),
+`operator_generic_oidc` (a NEW *kind* of module — **in-Kubernetes**: the Teleport OPERATOR,
+built from the clone and running in a disposable in-cluster k3s [the k8s-runner component],
+creates a generic_oidc token with `must_match_fields` from a CR. The operator's answer here
+DIFFERS from terraform's, which is why both exist: FLAT Struct values round-trip correctly
+[`api/types.Struct` carries jsonpb Marshal/UnmarshalJSON] and are proven ENFORCED by the same
+ok/badorg negative join test — PASS today, a regression guard. NESTED values are refused by the
+API SERVER because crdgen emits `additionalProperties: true` for google.protobuf.Struct, giving
+the map's values no schema at all [`crdgen/schemagen.go`, the `.google.protobuf.Struct` case],
+even though the proto + the field's own doc comment promise nesting. The 3 nested checks FAIL
+today and flip to PASS with NO edits once crdgen emits `x-kubernetes-preserve-unknown-fields`
+[as it already does for `Labels` ~80 lines above] AND the CRDs are regenerated. VERIFIED live:
+patching that one site on a running cluster flips 9/3 → 12/0, and the nested value reaches
+Teleport intact, so the schema change alone is sufficient. Write-up:
+`~/projects/teleport/operator-crdgen-struct-bug.md`; gated on generic_oidc, min v18).
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
@@ -209,13 +230,30 @@ MCP `run(cmd)` [`harness/agent_mcp.py`] that execs inside that one named contain
 host; `harness/agent.py` assembles the locked-down `claude -p` [`--allowed-tools`
 mcp__workbench__run, all host built-ins `--disallowed-tools`, `--permission-mode dontAsk`,
 `--strict-mcp-config`, a PreToolUse hook, scratch cwd] and reads the agent's `agent-result.json`
-back)).
+back)),
+`k8s-runner` (shared plumbing for **in-Kubernetes** modules — FULL DESIGN + host requirements +
+troubleshooting: **`docs/kubernetes.md`**. A disposable k8s node runs as an ORDINARY compose
+service [`rancher/k3s`, container `<id>-k3s`], NOT kind/k3d/minikube — so `teardown` is already
+correct [`compose down -v`] and nothing is registered on the host to leak; concurrent clusters
+coexist [everything namespaced by cluster id; verified with 2 simultaneous runs]. A `prebuild.sh`
+cross-builds the operator CGO-FREE for the docker daemon's NATIVE arch [the k8s side is
+deliberately NOT amd64 — emulating a control plane is slow and a cross-arch image won't resolve
+on the node; the operator only speaks gRPC], packages it, and `docker save`s it into
+`$OUT/k8s/images` which is bind-mounted at `/var/lib/rancher/k3s/agent/images` [k3s auto-imports
+at agent startup → `imagePullPolicy: Never`, no registry]. CRDs are the CHECKED-IN generated ones
+[after editing crdgen: `make -C integrations/operator crd-manifests`, or you test the old schema].
+A `k8s-operator` runner installs the CRDs [`--server-side`: the role CRDs blow the 256KB
+last-applied annotation] and rolls out the operator; modules add their own CR runner mounting
+`{{ shared_scripts }}/k8s-apply-entrypoint.sh`. Both runners reuse the k3s IMAGE itself [kubectl +
+a shell already inside, no extra pull, no skew]).
 Plans today: `bots` (tbot+bound_keypair),
 `oidc-caching` (generic_oidc + kubernetes + oidc_caching — each gated independently, so on a
 target with only `kubernetes` generic_oidc SKIPs while the other two run),
 `terraform` (terraform_bot + terraform_generic_oidc sharing one terraform-runner; the oidc module
 gates out where generic_oidc isn't provided while terraform_bot still runs),
-`docs` (agent-driven doc-follow tests; today just `docs_bound_keypair`).
+`docs` (agent-driven doc-follow tests; today just `docs_bound_keypair`),
+`operator` (in-Kubernetes operator tests sharing one k3s + operator rollout — by far the most
+expensive part of the setup; today just `operator_generic_oidc`).
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build --repo` · `up <module> --repo [--id]` · `run-plan <plan|module> --repo [--features a,b] [--version vNN] [--id]`
@@ -289,6 +327,25 @@ if the cluster enforces it, an MFA device).
   `code`, `success` (bool), `bot_name`, `method`, `token_name`, `impersonator`, `scope`, …. If the
   backend ever isn't emitting, `bot_joined` still works (text-log fallback), but a raw `audit_event`
   line FAILs — validate a new event's field names against a live run.
+- **The lima docker daemon is ROOTLESS** (`docker info` → `Security Options: rootless`), aarch64,
+  cgroup v2, with rosetta binfmt registered `F` (so amd64 works even in nested containers). This is
+  why k3s-in-a-container needs four non-obvious things, each found by watching it die — full
+  derivation in `docs/kubernetes.md`, but do NOT drop any of them: (1) a **kind-style cgroup v2
+  nesting fix** in the entrypoint (move every pid to a leaf cgroup, then delegate controllers) —
+  disabling `cgroups-per-qos` instead is a TRAP: the node goes Ready and every pod still fails with
+  the same error from runc; (2) `--snapshotter=native` (no `mount.fuse3` in the image,
+  overlay-on-overlay is refused); (3) `/dev/null` bound over `/dev/kmsg` + kubelet's
+  `KubeletInUserNamespace` gate; (4) `--tls-san=<id>-k3s` so siblings can dial it by name.
+- **Pods can't resolve docker container names** — CoreDNS forwards upstream, and `hostNetwork`
+  doesn't help (kubelet still hands the pod a generated resolv.conf). Resolve the IP in a RUNNER
+  container (where docker DNS works) and pin it into the pod with `hostAliases`. Pin the FQDN, not
+  just `<id>-auth`: the wildcard LE cert matches it, so the operator gets real TLS with no
+  `--insecure`. Only `nslookup` is available in the k3s image (no `getent`).
+- **The `token` join method is SINGLE-USE** (auth deletes the token on redemption,
+  `lib/auth/join.go`) and `embeddedtbot` stores state in memory (`destination.NewMemory()`) — so a
+  restarted operator pod can NEVER re-join. Hence the Deployment has readiness but deliberately
+  **no liveness probe**: self-healing would turn one stall into a permanently dead operator. A
+  future module needing restart-survival wants a non-consumable method (`kubernetes`+`static_jwks`).
 
 ## Adding a module
 (Full step-by-step + gotchas + checklist: `skills/teleport-cluster/references/authoring.md`.)
@@ -332,6 +389,17 @@ if the cluster enforces it, an MFA device).
   full `oidc-caching` plan (generic_oidc+kubernetes) passes on teleport-b; on **teleport-e** (the
   actual v18 caching backport) `generic_oidc` correctly gates out (not in that backport) and the
   **kube module passes both types** — the caching backport doesn't break kube joining.
+- **In-Kubernetes operator testing (`k8s-runner` + `operator_generic_oidc`) — DONE**: a disposable
+  k3s runs as an ordinary compose service (no kind/k3d/minikube, no host kubectl/helm), so
+  `teardown` already collects it and concurrent runs coexist. The operator is cross-built CGO-free
+  from the clone, side-loaded as an image tarball, and rolled out against the Teleport cluster next
+  door on the docker network. Verified live on `~/projects/teleport` (v19 master): 9 PASS / 3 FAIL,
+  the 3 being the crdgen google.protobuf.Struct nested-value bug it was written to find; patching
+  that one schema site on a live cluster flips it to 12/0. Design + host requirements:
+  `docs/kubernetes.md`. NEXT for this surface: other resource kinds (`extra_claims` on
+  WorkloadIdentity hits the SAME bug), deletion/adoption semantics, scoped resources, and — if a
+  module ever needs an operator that survives a pod restart — the `kubernetes`+`static_jwks`
+  join method instead of single-use `token`.
 - **More join methods**: `github`, `iam`/`ec2`, `azure`, etc. — each ~ a `services.yml.j2` fragment
   + `bootstrap/` + `checks:` now that composition + shared components exist.
 - **Deepen `tbot`**: multiple output types (`ssh`, `kubernetes`, `database`, `application`) with

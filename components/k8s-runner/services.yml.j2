@@ -1,0 +1,80 @@
+{# k8s-runner: SHARED plumbing for testing the Teleport Kubernetes operator.
+
+   Contributes a DISPOSABLE Kubernetes node (`k3s`, an ordinary container on the cluster's
+   internal network — so teardown is just `compose down -v`, and concurrent harness
+   clusters never see each other) plus the operator itself, built from the clone by
+   prebuild.sh. Each TEST MODULE adds its own runner container that applies its custom
+   resources (mounting {{ shared_scripts }}/k8s-apply-entrypoint.sh), exactly as the
+   terraform_* modules add their own terraform runner.
+
+   Every unusual setting on the k3s service below is load-bearing under ROOTLESS docker
+   and harmless under a rootful daemon — see docs/kubernetes.md. #}
+services:
+  k3s:
+    # No `platform:` on purpose — the k8s side runs NATIVE (see prebuild.sh). Emulating a
+    # control plane is slow and unreliable, and nothing under test depends on its arch.
+    image: rancher/k3s:{{ k3s_version }}
+    container_name: {{ cluster_id }}-k3s
+    entrypoint: ["/bin/sh", "/scripts/k3s-entrypoint.sh"]
+    privileged: true
+    # cgroup v2 delegation: the entrypoint rearranges this namespace's cgroup tree so
+    # kubelet and runc can create children (see k3s-entrypoint.sh).
+    cgroup: private
+    tmpfs: [/run, /var/run]
+    environment:
+      # k3s must present a certificate valid for the name sibling containers dial it by.
+      K3S_TLS_SAN: "{{ cluster_id }}-k3s"
+      K3S_KUBECONFIG_OUTPUT: /kubeconfig/k3s.yaml
+      K3S_KUBECONFIG_MODE: "666"
+    volumes:
+      - {{ shared_scripts }}/k3s-entrypoint.sh:/scripts/k3s-entrypoint.sh:ro
+      # Rootless docker cannot hand a container the real /dev/kmsg, and kubelet's
+      # oomWatcher opens it unconditionally. An empty stand-in satisfies the open.
+      - /dev/null:/dev/kmsg
+      # Image tarballs staged by prebuild.sh; k3s imports everything here at agent
+      # startup, which is how the locally-built operator image gets in without a registry.
+      - {{ out }}/k8s/images:/var/lib/rancher/k3s/agent/images:ro
+      - k8s-kubeconfig:/kubeconfig
+      - k8s-data:/var/lib/rancher/k3s
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "kubectl get --raw /readyz >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  # Installs the CRDs and rolls out the operator. Runs the k3s image itself (kubectl +
+  # a shell already inside, no extra pull, no version skew).
+  k8s-operator:
+    image: rancher/k3s:{{ k3s_version }}
+    container_name: {{ cluster_id }}-k8s-operator
+    entrypoint: ["/bin/sh", "/scripts/k8s-operator-entrypoint.sh"]
+    environment:
+      K3S_HOST: "{{ cluster_id }}-k3s"
+      TELEPORT_HOST: "{{ fqdn }}"
+    volumes:
+      - {{ shared_scripts }}/k8s-common.sh:/scripts/k8s-common.sh:ro
+      - {{ shared_scripts }}/k8s-operator-entrypoint.sh:/scripts/k8s-operator-entrypoint.sh:ro
+      - {{ out }}/k8s/crds:/crds:ro
+      - {{ out }}/config/k8s-operator.yaml:/manifests/k8s-operator.yaml:ro
+      - k8s-kubeconfig:/kubeconfig:ro
+    networks: [internal]
+    depends_on:
+      k3s: {condition: service_healthy}
+      # Gates the rollout on a bootstrapped Teleport: the operator's bot and its
+      # single-use join token must exist before the pod's embedded tbot starts.
+      auth: {condition: service_healthy}
+    # Healthy once the operator has rolled out, so a module's resource runner can
+    # `depends_on: {k8s-operator: service_healthy}` and never apply a CR into a cluster
+    # with no controller watching.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/operator-ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 100
+      start_period: 5s
+
+volumes:
+  k8s-kubeconfig:
+  k8s-data:

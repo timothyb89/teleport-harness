@@ -1,0 +1,27 @@
+{# FLAT must_match_fields — the case the operator handles correctly.
+
+   `additionalProperties: true` in the generated CRD gives this map's values no schema,
+   which turns out to be just enough for scalar values: the API server stores them, and
+   api/types.Struct's jsonpb UnmarshalJSON reassembles them into a real google.protobuf
+   Struct on the operator side. org=ethernet-fyi is the claim the oidc-server always
+   mints, so op-agent-ok satisfies it and op-agent-badorg does not. #}
+apiVersion: resources.teleport.dev/v2
+kind: TeleportProvisionToken
+metadata:
+  name: op-oidc-token
+  namespace: teleport
+spec:
+  roles: [Node]
+  join_method: generic_oidc
+  generic_oidc:
+    issuer: "https://oidc.{{ lab_domain }}:8443"
+    audience: "{{ fqdn }}/generic-oidc"
+    # Global AND-matched fields. The whole point of the join test below.
+    must_match_fields:
+      org: ethernet-fyi
+    # OR-matched rules; at least one must pass. Both agents satisfy this, so they differ
+    # only in `org`.
+    allow_any:
+      - conditions:
+          - attribute: sub
+            eq: {value: "{{ oidc_subject }}"}

@@ -1,0 +1,7 @@
+{# teleport-operator bot's join token (classic token method; secret == the token name).
+   The shared auth-entrypoint applies this, then `bots add teleport-operator --token=<this>`
+   (from bots.manifest). Single-use — see the note in the component's render.yaml. #}
+kind: token
+version: v2
+metadata: {name: {{ operator_token }}}
+spec: {roles: [Bot], bot_name: teleport-operator, join_method: token}

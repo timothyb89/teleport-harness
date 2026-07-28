@@ -1,0 +1,20 @@
+{# Negative join: sub={{ oidc_subject }} STILL satisfies allow_any, but org=wrong-org
+   mismatches must_match_fields (org=ethernet-fyi). Denial is therefore attributable ONLY
+   to must_match_fields — the proof the operator-created matcher is evaluated and not
+   merely stored. Unlike the Terraform equivalent, this is expected to be denied TODAY. #}
+version: v3
+teleport:
+  nodename: {{ cluster_id }}-op-agent-badorg
+  data_dir: /var/lib/teleport
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: generic_oidc
+    token_name: op-oidc-token
+    generic_oidc:
+      command: ["curl", "-fsSk", "https://oidc:8443/token?sub={{ oidc_subject }}&claim=org=wrong-org"]
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: operator-generic-oidc, variant: badorg}

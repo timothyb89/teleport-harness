@@ -198,6 +198,38 @@ host access); the lockdown flags live in `harness/agent.py`. Requires `claude` o
 (`doctor` warns if missing). A future API-key driver (Agent SDK / Codex) is a drop-in behind
 `agent.provider` and unlocks CI — the module contract is unchanged.
 
+## Add an in-Kubernetes operator test (`k8s-runner` component)
+Test a change that's managed via the Teleport **Kubernetes operator** by applying custom resources
+to a disposable in-cluster k3s and asserting on BOTH sides (what Kubernetes stored, what reached
+Teleport). The shared `components/k8s-runner/` provides the k3s node, the CRDs and the operator
+built from the clone; a new test is a thin module (copy `modules/operator_generic_oidc/`). Full
+design, host requirements and troubleshooting: **`docs/kubernetes.md`**.
+
+- `render.yaml`: `components: [k8s-runner]` + `k3s_version:` (module fragments can't see a
+  component's render vars, so re-declare it here).
+- `services.yml.j2`: one CR runner. Key bits — `image: rancher/k3s:{{ k3s_version }}` (the k3s
+  image IS the runner: kubectl + a shell already inside, no extra pull, no version skew),
+  `entrypoint: ["/bin/sh", "/scripts/k8s-apply-entrypoint.sh"]`, env
+  `K3S_HOST: {{ cluster_id }}-k3s`, mounts `{{ shared_scripts }}/k8s-common.sh` +
+  `{{ shared_scripts }}/k8s-apply-entrypoint.sh`, `k8s-kubeconfig:/kubeconfig:ro`, and each
+  rendered CR at `/work/NN-<name>.yaml` (applied in FILENAME order — number them);
+  `depends_on: { k8s-operator: { condition: service_healthy } }` so you never apply a CR into a
+  cluster with no controller watching. Healthcheck on `test -f /tmp/apply-done`.
+- `config/*.yaml.j2`: your CRs (rendered, so `{{ fqdn }}`/`{{ lab_domain }}` work). Namespace is
+  `teleport`.
+- `checks:`: `k8s_resource_present`/`k8s_resource_field`/`k8s_condition` for the KUBERNETES side +
+  `resource_present`/`resource_field` for the TELEPORT side. Asserting both localises a failure
+  precisely — CRD schema rejected it vs operator never reconciled it vs it never reached Teleport.
+  Add a behavioural check (an agent that joins with the resulting token) whenever the resource is
+  something enforced at runtime; "stored correctly" is weaker than "actually evaluated".
+
+Notes: the apply runner NEVER aborts on a rejected manifest — a rejection is frequently the finding
+— and logs a `RESULT <file>: accepted|REJECTED` line per file you can `log_contains` on. Use
+`log_contains` for the diagnostic ("here is today's exact error") because it SKIPs (neutral) once
+the bug is fixed, and the `k8s_*`/`resource_*` verbs for the gates that flip FAIL→PASS. CRDs come
+from the CHECKED-IN generated files, so after editing `crdgen` run
+`make -C integrations/operator crd-manifests` or you'll test the old schema.
+
 ## Write a plan
 `plans/<name>.yaml` (name MUST equal filename):
 ```yaml

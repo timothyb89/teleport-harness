@@ -29,7 +29,8 @@ MODULES = REPO / "modules"
 
 class FakeCluster(Cluster):
     def __init__(self, cid="c1", nodes=None, logs=None, files=None, execs=None,
-                 tsh_ok=False, events=None, resources=None, state_files=None):
+                 tsh_ok=False, events=None, resources=None, state_files=None,
+                 kube=None):
         super().__init__(cid)
         self._nodes = nodes or []
         self._logs = logs or {}
@@ -39,12 +40,16 @@ class FakeCluster(Cluster):
         self._events = events or []
         self._resources = resources or {}  # {"kind/name": {resource dict}}
         self._state_files = state_files or {}  # {relpath: text}
+        self._kube = kube or {}  # {"kind/name": {k8s object dict}}
 
     def get_nodes(self):
         return self._nodes
 
     def get_resource(self, kind, name):
         return self._resources.get(f"{kind}/{name}")
+
+    def kube_get(self, kind, name, namespace="teleport"):
+        return self._kube.get(f"{kind}/{name}")
 
     def state_file(self, relpath):
         return self._state_files.get(relpath)
@@ -407,6 +412,62 @@ def test_resource_field_missing_path_and_missing_resource_fail():
     assert _run(c, "resource_field token/t spec.generic_oidc.must_match_fields").status == "FAIL"
     # ...or, more often today, apply aborts and the token is never created at all.
     assert _run(FakeCluster(), "resource_field token/t spec.generic_oidc.must_match_fields x").status == "FAIL"
+
+
+# ---- k8s_resource_present / k8s_resource_field / k8s_condition ---------------
+# The k8s side of an operator test: what the API server accepted + what the operator
+# wrote back. `_CR_FLAT` is a TeleportProvisionToken the API server stored intact and
+# the operator reconciled; the nested-field CR is ABSENT because admission rejected it
+# (the crdgen google.protobuf.Struct bug), which is exactly a missing-object FAIL.
+_CR_FLAT = {
+    "apiVersion": "resources.teleport.dev/v2", "kind": "TeleportProvisionToken",
+    "metadata": {"name": "op-oidc-token", "namespace": "teleport"},
+    "spec": {"join_method": "generic_oidc",
+             "generic_oidc": {"must_match_fields": {"org": "ethernet-fyi"}}},
+    "status": {"conditions": [
+        {"type": "TeleportResourceReconciled", "status": "True", "message": "OK"},
+        {"type": "SuccessfullyReconciled", "status": "False",
+         "message": "unsupported field"},
+    ]},
+}
+
+
+def test_k8s_resource_present_pass_and_missing_fail():
+    c = FakeCluster(kube={"teleportprovisiontoken/op-oidc-token": _CR_FLAT})
+    res = _run(c, "k8s_resource_present teleportprovisiontoken/op-oidc-token")
+    assert res.status == "PASS"
+    (p,) = res.proofs
+    assert p.kind == "k8s-resource" and p.lang == "json" and '"op-oidc-token"' in p.content
+    # a CR the API server refused at admission never exists -> FAIL
+    assert _run(c, "k8s_resource_present teleportprovisiontoken/op-oidc-nested").status == "FAIL"
+
+
+def test_k8s_resource_field_presence_value_and_missing():
+    c = FakeCluster(kube={"teleportprovisiontoken/op-oidc-token": _CR_FLAT})
+    base = "k8s_resource_field teleportprovisiontoken/op-oidc-token"
+    assert _run(c, f"{base} spec.generic_oidc.must_match_fields").status == "PASS"
+    ok = _run(c, f"{base} spec.generic_oidc.must_match_fields.org ETHERNET-fyi")
+    assert ok.status == "PASS"  # case-insensitive, like resource_field
+    assert _run(c, f"{base} spec.generic_oidc.must_match_fields.org wrong-org").status == "FAIL"
+    # a path the API server pruned away -> FAIL
+    assert _run(c, f"{base} spec.generic_oidc.must_match_fields.nested.deep").status == "FAIL"
+    # missing object -> FAIL (and no proof to cite)
+    miss = _run(FakeCluster(), f"{base} spec.join_method")
+    assert miss.status == "FAIL" and miss.proofs == []
+
+
+def test_k8s_condition_defaults_to_true_and_surfaces_message():
+    c = FakeCluster(kube={"teleportprovisiontoken/op-oidc-token": _CR_FLAT})
+    ref = "k8s_condition teleportprovisiontoken/op-oidc-token"
+    assert _run(c, f"{ref} TeleportResourceReconciled").status == "PASS"  # implicit True
+    # a controller reporting failure -> FAIL, with its message in the msg
+    bad = _run(c, f"{ref} SuccessfullyReconciled")
+    assert bad.status == "FAIL" and "unsupported field" in bad.msg
+    # ...unless that's what the module expects
+    assert _run(c, f"{ref} SuccessfullyReconciled False").status == "PASS"
+    # a condition the controller never set at all -> FAIL, listing what it did set
+    absent = _run(c, f"{ref} NeverSet")
+    assert absent.status == "FAIL" and "TeleportResourceReconciled" in absent.msg
 
 
 # ---- agent_result (agent-driven tests: an AI agent's findings) ---------------

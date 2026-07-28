@@ -70,6 +70,23 @@ _SPECS: list[VerbSpec] = [
         "resource_field <kind/name> <dotted.path> [expected]  "
         "(a field on a live resource is present, and optionally equals a value)",
     ),
+    # In-cluster Kubernetes state (the k8s-runner component's k3s). `<kind/name>` is
+    # resolved in the component's fixed `teleport` namespace (see cluster.KUBE_NAMESPACE).
+    VerbSpec(
+        "k8s_resource_present", 1, 1,
+        "k8s_resource_present <kind/name>  (kubectl get <kind> <name> returns an object)",
+    ),
+    VerbSpec(
+        "k8s_resource_field", 2, 3,
+        "k8s_resource_field <kind/name> <dotted.path> [expected]  "
+        "(a field on a live k8s object is present, and optionally equals a value)",
+    ),
+    VerbSpec(
+        "k8s_condition", 2, 3,
+        "k8s_condition <kind/name> <condition-type> [expected-status]  "
+        "(a status.conditions[] entry — how a controller reports what it did; "
+        "expected-status defaults to True)",
+    ),
     VerbSpec(
         "agent_result", 0, 1,
         "agent_result [expected-status]  (surface an AI agent's findings from "

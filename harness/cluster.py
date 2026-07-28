@@ -13,6 +13,12 @@ import subprocess
 import time
 from pathlib import Path
 
+# Where the k8s-runner component deploys the operator and the namespace its CRs live in.
+# Fixed by convention (the component owns both sides), so the k8s_* verbs don't need to
+# carry a namespace argument. `KUBE_CONTAINER` is the nodename suffix of the k3s service.
+KUBE_NAMESPACE = "teleport"
+KUBE_CONTAINER = "k3s"
+
 
 class Cluster:
     """Interface used by harness/verify.py. Methods here are the test seam."""
@@ -37,6 +43,15 @@ class Cluster:
         absent/unreadable. The seam `agent_result` uses to read the agent's
         agent-result.json / transcript, which the workbench wrote to a state-dir bind
         mount. Overridden in tests."""
+        raise NotImplementedError
+
+    def kube_get(self, kind: str, name: str,
+                 namespace: str = KUBE_NAMESPACE) -> dict | None:  # pragma: no cover
+        """A single object from the in-cluster k8s API (the k8s-runner component's k3s),
+        via `kubectl get <kind> <name> -n <ns> -o json`. None if absent/unreadable — the
+        seam the k8s_* verbs use to inspect what the API server actually stored (e.g.
+        whether a CR was accepted at all) and what the operator wrote back to its status.
+        Overridden in tests."""
         raise NotImplementedError
 
     def logs(self, suffix: str) -> str:  # pragma: no cover
@@ -137,6 +152,22 @@ class DockerCluster(Cluster):
             return (self.state_dir / relpath).read_text()
         except (FileNotFoundError, OSError):
             return None
+
+    def kube_get(self, kind: str, name: str, namespace: str = KUBE_NAMESPACE) -> dict | None:
+        # kubectl ships inside the k3s image, and the k3s container already holds the
+        # admin kubeconfig at its default path — so no kubeconfig plumbing is needed to
+        # inspect the cluster, exactly like `tctl` runs inside the auth container.
+        cp = self._run([
+            "docker", "exec", self.container(KUBE_CONTAINER),
+            "kubectl", "get", kind, name, "-n", namespace, "-o", "json",
+        ])
+        if cp.returncode != 0 or not cp.stdout.strip():
+            return None
+        try:
+            doc = json.loads(cp.stdout)
+        except json.JSONDecodeError:
+            return None
+        return doc if isinstance(doc, dict) else None
 
     def logs(self, suffix: str) -> str:
         # mirrors: docker logs <id>-<suffix> 2>&1  (capture first — no pipefail trap)

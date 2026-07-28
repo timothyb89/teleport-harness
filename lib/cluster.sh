@@ -98,6 +98,10 @@ cluster_teardown() {
   hlog "tearing down $id"
   [ -n "$fqdn" ] && unregister_route "$fqdn" || true
   compose "teleport-harness-$id" "$out/docker-compose.yml" down -v >/dev/null 2>&1 || true
+  # Per-cluster images built by a component prebuild (today: the k8s-runner operator image,
+  # tagged with the cluster id so concurrent clusters never collide). `compose down` does
+  # not know about these — without this they'd accumulate one per run. No-op if absent.
+  docker image rm -f "teleport-harness-operator:$id" >/dev/null 2>&1 || true
   rm -rf "$out"
   hok "torn down $id"
 }

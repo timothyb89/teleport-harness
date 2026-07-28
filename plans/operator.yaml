@@ -1,0 +1,17 @@
+# Kubernetes-operator test plan: build the operator from the clone, run it inside a
+# disposable in-cluster k3s (the k8s-runner component), and drive Teleport resources
+# through it as CRs.
+#
+#   run-plan operator --repo ~/projects/teleport --features generic_oidc --version v19
+#
+# Today this is a single module; it is a plan so that further operator modules (other
+# resource kinds, deletion/adoption semantics, scoped resources) compose into ONE cluster
+# and share the single k3s node + operator rollout, which is by far the most expensive
+# part of the setup.
+name: operator
+description: >
+  Teleport Kubernetes operator (dev build) driven against a live cluster from a disposable
+  in-cluster k3s: operator_generic_oidc proves flat must_match_fields round-trips and is
+  enforced at join (PASS), and that nested values are rejected by the generated CRD schema
+  (FAIL until crdgen handles google.protobuf.Struct, then PASS).
+modules: [operator_generic_oidc]
