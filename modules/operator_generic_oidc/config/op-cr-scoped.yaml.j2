@@ -1,0 +1,43 @@
+{# The SCOPED twin of op-cr-flat/op-cr-nested. `must_match_fields` exists twice in the
+   protos — once on the classic ProvisionTokenV2 (api/proto/.../types.proto) and once on
+   the scoped ScopedToken (api/proto/teleport/scopes/joining/v1/token.proto) — and crdgen
+   generates a SEPARATE CRD for each. Both were broken identically, and both are fixed by
+   the same schemagen.go change, but nothing here would notice if only one of the two
+   generated CRDs were regenerated: teleportprovisiontokens and teleportscopedtokensv1
+   are independent files, and `make crd-manifests-diff` only compares what the current
+   generator produces against what is checked in.
+
+   Reconcile + round-trip only, no join test. Scoped generic_oidc joining is already
+   covered end-to-end by the `generic_oidc` module; what is unproven — and what this
+   asserts — is that the OPERATOR can carry a nested Struct into a scoped token.
+
+   Requires TELEPORT_UNSTABLE_SCOPES=yes on auth (set via auth_env in render.yaml). No
+   operator-side flag is needed: an unscoped operator runs every reconciler whose CRD is
+   installed (controllers/resources/setup.go filterEnabledReconcilers), the ScopedTokenV1
+   reconciler is AlwaysEnabled, and the operator bot's `editor` role already grants
+   scoped_token RW (lib/services/presets.go) — the scoped authorizer wraps an unscoped
+   identity's classic checker, so no scoped_role_assignment is involved. #}
+apiVersion: resources.teleport.dev/v1
+kind: TeleportScopedTokenV1
+metadata:
+  name: op-scoped-token
+  namespace: teleport
+scope: "{{ scoped_token_scope }}"
+spec:
+  roles: [Node]
+  assigned_scope: "{{ scoped_token_scope }}/agents"
+  join_method: generic_oidc
+  usage_mode: unlimited
+  generic_oidc:
+    issuer: "https://oidc.{{ lab_domain }}:8443"
+    audience: "{{ fqdn }}/generic-oidc"
+    must_match_fields:
+      # flat: worked even with the old `additionalProperties: true` schema
+      org: ethernet-fyi
+      # nested: pruned by the old schema, preserved by the fixed one
+      nested:
+        deep: {{ scoped_nested_value }}
+    allow_any:
+      - conditions:
+          - attribute: sub
+            eq: {value: "{{ oidc_subject }}"}

@@ -1,0 +1,32 @@
+{# Positive NESTED join: proves a nested must_match_fields matcher created by the
+   operator is EVALUATED at join, not merely stored.
+
+   This agent presents everything op-oidc-nested demands: sub={{ oidc_subject }}
+   (satisfies allow_any), the oidc-server's default org=ethernet-fyi (satisfies the
+   flat matcher), AND a nested OBJECT claim nested={"deep":"{{ nested_value }}"}
+   (satisfies the nested one). `?json=` is the only oidc-server param that can mint a
+   nested object — ?claim= produces strings, ?list= string arrays — and a nested rule
+   compares against a real sub-object (evaluateFieldRules recurses into StructValue).
+
+   Its counterpart op-agent-badnested differs ONLY in that claim's value, so a
+   difference in outcome is attributable to the nested matcher and nothing else. #}
+version: v3
+teleport:
+  nodename: {{ cluster_id }}-op-agent-oknested
+  data_dir: /var/lib/teleport
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: generic_oidc
+    token_name: op-oidc-nested
+    generic_oidc:
+      # --globoff is LOAD-BEARING: curl treats {...} in a URL as brace expansion and
+      # strips it, so without it the IdP receives `json=nested="deep":"…"` — no braces,
+      # invalid JSON, HTTP 400, and the agent fails to join for a reason that has
+      # nothing to do with what this test is about.
+      command: ['curl', '-fsSk', '--globoff', 'https://oidc:8443/token?sub={{ oidc_subject }}&json=nested={"deep":"{{ nested_value }}"}']
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: operator-generic-oidc, variant: oknested}

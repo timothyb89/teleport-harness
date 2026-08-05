@@ -11,6 +11,9 @@ set -u
 
 : "${MANIFEST_DIR:=/work}"
 : "${RECONCILE_WAIT:=15}"
+# Space-separated kinds to dump after reconciliation, for the log-side evidence a
+# k8s_condition failure is read against. A module applying other kinds overrides this.
+: "${REPORT_KINDS:=teleportprovisiontokens}"
 
 k8s_wait_ready || { echo "[apply] cluster never came up" >&2; k8s_done /tmp/apply-failed; }
 
@@ -36,8 +39,11 @@ echo "[apply] summary: $applied accepted, $rejected rejected"
 # The status conditions are what k8s_condition asserts against.
 echo "[apply] waiting ${RECONCILE_WAIT}s for reconciliation ..."
 sleep "$RECONCILE_WAIT"
-kubectl -n teleport get teleportprovisiontokens -o wide 2>&1 | sed 's/^/[apply] /'
-kubectl -n teleport get teleportprovisiontokens -o json 2>&1 \
-  | grep -iE '"(name|type|status|message|reason)"' | sed 's/^/[apply]   /'
+for kind in $REPORT_KINDS; do
+  echo "[apply] ---- $kind ----"
+  kubectl -n teleport get "$kind" -o wide 2>&1 | sed 's/^/[apply] /'
+  kubectl -n teleport get "$kind" -o json 2>&1 \
+    | grep -iE '"(name|type|status|message|reason)"' | sed 's/^/[apply]   /'
+done
 
 k8s_done /tmp/apply-done

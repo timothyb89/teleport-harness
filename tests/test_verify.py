@@ -606,3 +606,33 @@ def test_docs_bound_keypair_all_pass_simulated():
     results = verify(c, m.checks, module_dir=MODULES / "docs_bound_keypair")
     text, passed = render(results)
     assert passed, text
+
+
+def test_get_resource_uses_two_arg_form_for_scope_qualified_names():
+    """tctl's ONE-arg ref form splits on '/' and drops empty fields (services.ParseRef ->
+    strings.FieldsFunc), so a scope's leading '/' is eaten and a scoped kind then rejects
+    the ref as unqualified. get_resource must therefore pass `<scope>::<name>` as its own
+    positional argument — and match the returned doc on the BARE name."""
+    import json as _json
+    import subprocess as _sp
+
+    from harness.cluster import DockerCluster
+
+    token = {"kind": "scoped_token", "scope": "/opscope",
+             "metadata": {"name": "op-scoped-token"}}
+    seen: list[list[str]] = []
+
+    class RecordingCluster(DockerCluster):
+        def _run(self, argv):
+            seen.append(argv)
+            return _sp.CompletedProcess(argv, 0, _json.dumps([token]), "")
+
+    c = RecordingCluster("cid")
+
+    assert c.get_resource("scoped_token", "/opscope::op-scoped-token") == token
+    assert "scoped_token" in seen[-1] and "/opscope::op-scoped-token" in seen[-1]
+    assert "scoped_token//opscope::op-scoped-token" not in seen[-1]
+
+    # unscoped kinds keep the one-arg form every other module relies on
+    c.get_resource("token", "op-oidc-token")
+    assert "token/op-oidc-token" in seen[-1]

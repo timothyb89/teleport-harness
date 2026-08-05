@@ -1,31 +1,59 @@
 # operator_generic_oidc: drive the Teleport KUBERNETES OPERATOR (built from the clone,
-# running in a disposable in-cluster k3s) to create a generic_oidc join token carrying
-# `must_match_fields`, and find out how far the google.protobuf.Struct value survives.
+# running in a disposable in-cluster k3s) to create resources carrying a
+# google.protobuf.Struct field, and find out how far the Struct value survives.
 #
-# This is the operator's answer to the question terraform_generic_oidc asks of the
-# Terraform provider — and the answer is DIFFERENT, which is the point of running both:
+# ORIGIN. This module was written to find a crdgen bug, and did: crdgen emitted
+# `additionalProperties: true` for google.protobuf.Struct (schemagen.go, the
+# .google.protobuf.Struct case), which says "any key allowed, values unspecified". A
+# value with NO schema has no known sub-fields, so the API server pruned everything one
+# level below the Struct — strict clients saw `unknown field
+# "…must_match_fields.nested.deep"`, non-strict ones silently stored `nested: {}`. The
+# fix is one line: x-kubernetes-preserve-unknown-fields instead, which is what the Labels
+# custom type ~80 lines above already used. (The two cannot COEXIST:
+# preserve-unknown-fields only stops keys with no schema from being deleted, while a
+# non-nil additionalProperties gives every key a route into a nil schema — so pruning
+# still descends and empties anything one level down.) The module now GUARDS that fix
+# rather than demonstrating the bug.
+#
+# It is still the operator's answer to the question terraform_generic_oidc asks of the
+# Terraform provider, and the answers DIFFER, which is why both exist:
 #
 #   * Terraform  drops must_match_fields ENTIRELY and silently (the field is excluded
 #                from the generated provider schema).
-#   * The operator round-trips FLAT values correctly (api/types.Struct carries jsonpb
-#                Marshal/UnmarshalJSON, so the CR decodes properly) — but NESTED values
-#                are refused by the API SERVER, because crdgen emits
-#                `additionalProperties: true` for google.protobuf.Struct, which gives the
-#                map's values no schema at all. Nesting is explicitly supported by the
-#                proto and documented in the field's own comment.
+#   * The operator round-trips it correctly, flat AND nested (api/types.Struct carries
+#                jsonpb Marshal/UnmarshalJSON, so the CR decodes properly).
 #
-# So the flat checks below are a REGRESSION GUARD (they pass today, and prove the operator
-# path is sound end to end), and the nested checks are a KNOWN-FAILING probe that flips to
-# PASS with no edits once crdgen emits x-kubernetes-preserve-unknown-fields instead
-# (integrations/operator/crdgen/schemagen.go, the .google.protobuf.Struct case) AND the
-# CRDs are regenerated with `make -C integrations/operator crd-manifests`.
+# WHAT IS COVERED, and why no part of it is redundant:
+#
+#   flat + nested   the two shapes of must_match_fields on a classic provision token.
+#                   Flat worked even under the broken schema, so it guards against a
+#                   future change breaking what already worked; nested guards the fix.
+#   ENFORCEMENT     each shape has an ok/bad agent PAIR whose JWTs differ in exactly ONE
+#                   claim. This matters more than it looks: the non-strict failure mode
+#                   stored `nested: {}`, which degrades the matcher to an existence check
+#                   — a token that still exists, still reconciles, and still lets the
+#                   wrong agent in. Storage checks alone would call that green.
+#   scoped token    must_match_fields exists TWICE in the protos (classic
+#                   ProvisionTokenV2 and the scoped ScopedToken) and crdgen emits a
+#                   SEPARATE CRD for each. Nothing else here notices if only one is
+#                   regenerated.
+#   WorkloadIdent.  spec.spiffe.jwt.extra_claims is the THIRD Struct site and the only
+#                   one outside generic_oidc — it catches a fix narrowed to join tokens.
+#
+# The scoped and WorkloadIdentity cases are storage round-trips (CR accepted -> operator
+# reconciled -> value intact in Teleport), not join tests: the CRD schema is what is under
+# test, and scoped generic_oidc joining is already covered by the generic_oidc module.
+# Scoped resources need TELEPORT_UNSTABLE_SCOPES=yes on auth (auth_env in render.yaml);
+# nothing extra is needed operator-side, since an unscoped operator runs every reconciler
+# whose CRD is installed.
 name: operator_generic_oidc
 description: >
   Teleport Kubernetes operator (built from the clone, running in a disposable k3s) creates
-  a generic_oidc join token with must_match_fields. Flat values round-trip into Teleport
-  and are proven ENFORCED by a negative join test (PASS today). Nested values are rejected
-  by the generated CRD schema even though the API supports them (FAIL until crdgen is
-  fixed, then PASS).
+  generic_oidc join tokens (classic + scoped) with must_match_fields and a WorkloadIdentity
+  with extra_claims — every google.protobuf.Struct site in the generated CRDs. Flat AND
+  nested values must round-trip into Teleport, and both matchers are proven ENFORCED by
+  paired negative join tests. The regression guard for the crdgen
+  x-kubernetes-preserve-unknown-fields fix.
 provides_feature: operator_generic_oidc
 requires_features: [generic_oidc]
 min_version: v18                 # generic_oidc lands in v18
@@ -37,7 +65,18 @@ checks: |
   k8s_resource_present teleportprovisiontoken/op-oidc-token
   k8s_condition        teleportprovisiontoken/op-oidc-token SuccessfullyReconciled
 
-  # ---- FLAT must_match_fields: the operator gets this RIGHT (regression guard) ----
+  # ---- every CR was accepted ------------------------------------------------------
+  # NON-VACUITY GUARD, and the reason it precedes the eq-0 lines: if op-crs never ran,
+  # its log is empty and every "0 matches" assertion below would pass for the wrong
+  # reason. Four manifests, four acceptances.
+  log_count            op-crs eq 4 RESULT .*: accepted
+  log_count            op-crs eq 0 REJECTED by the API server
+  # The exact symptom the crdgen bug produced under strict field validation. This was a
+  # `log_contains` diagnostic that SKIPped once fixed (neutral — it gated nothing); as
+  # an eq-0 count it is a real gate.
+  log_count            op-crs eq 0 unknown field
+
+  # ---- FLAT must_match_fields (worked even before the fix) -----------------------
   # The CR reached Teleport as a real token...
   resource_present     token/op-oidc-token
   # ...carrying the Struct value intact, which is exactly what the Terraform provider
@@ -51,12 +90,40 @@ checks: |
   node_absent          op-agent-badorg
   log_contains         op-agent-badorg unable to (join via|validate) generic_oidc|denied
 
-  # ---- NESTED must_match_fields: the CRD cannot express it (known-failing) --------
-  # Diagnostic, not a gate: this matches TODAY and documents the exact rejection. Once
-  # crdgen is fixed there is no such log line and log_contains SKIPs, which is neutral.
-  log_contains         op-crs unknown field .*must_match_fields\.nested
-  # The gates. All three FAIL today because admission refused the CR outright, so it
-  # exists neither in Kubernetes nor in Teleport.
+  # ---- NESTED must_match_fields (the case the fix restored) ----------------------
   k8s_resource_present teleportprovisiontoken/op-oidc-nested
+  k8s_condition        teleportprovisiontoken/op-oidc-nested SuccessfullyReconciled
+  # stored by the API SERVER with its nesting intact (i.e. NOT pruned to `nested: {}`)...
   k8s_resource_field   teleportprovisiontoken/op-oidc-nested spec.generic_oidc.must_match_fields.nested.deep harness-nested
+  # ...and carried into Teleport by the operator.
   resource_field       token/op-oidc-nested spec.generic_oidc.must_match_fields.nested.deep harness-nested
+  # BEHAVIOURAL, and the pair that distinguishes a working matcher from one degraded to
+  # an existence check: both agents satisfy `sub` AND `org`, differing only in the
+  # NESTED claim (minted via the oidc-server's ?json= param — ?claim= can only produce
+  # strings). If the nesting were dropped, op-agent-badnested would wrongly join.
+  node_present         op-agent-oknested
+  node_absent          op-agent-badnested
+  # ge-1, not the neutral `log_contains` used for op-agent-badorg above, because
+  # node_absent ALONE cannot tell "denied by the matcher" from "never got a token".
+  # Observed for real: curl strips {...} from a URL as brace expansion, so the agent
+  # was rejected by the IdP (HTTP 400) and never reached Teleport — node_absent passed,
+  # and only this line's failure to match exposed it. Requiring a denial in the log
+  # makes the distinction a gate rather than a SKIP nobody reads. (op-agent-badorg keeps
+  # the softer form: its URL has no braces, so it cannot hit that trap.)
+  log_count            op-agent-badnested ge 1 unable to (join via|validate) generic_oidc|denied
+
+  # ---- SCOPED token: the SEPARATE scoped-token CRD, same crdgen code path ---------
+  k8s_resource_present teleportscopedtokenv1/op-scoped-token
+  k8s_condition        teleportscopedtokenv1/op-scoped-token SuccessfullyReconciled
+  k8s_resource_field   teleportscopedtokenv1/op-scoped-token spec.generic_oidc.must_match_fields.nested.deep harness-scoped-nested
+  # Scope-qualified ref (`kind//scope::name`): a scoped kind cannot be addressed by the
+  # plain kind/name form — see Cluster.get_resource for why.
+  resource_field       scoped_token//opscope::op-scoped-token spec.generic_oidc.must_match_fields.org ethernet-fyi
+  resource_field       scoped_token//opscope::op-scoped-token spec.generic_oidc.must_match_fields.nested.deep harness-scoped-nested
+
+  # ---- WorkloadIdentity extra_claims: the third Struct site, outside generic_oidc --
+  k8s_resource_present teleportworkloadidentityv1/op-workload-identity
+  k8s_condition        teleportworkloadidentityv1/op-workload-identity SuccessfullyReconciled
+  k8s_resource_field   teleportworkloadidentityv1/op-workload-identity spec.spiffe.jwt.extra_claims.nested.deep harness-wi-nested
+  resource_field       workload_identity/op-workload-identity spec.spiffe.jwt.extra_claims.team platform
+  resource_field       workload_identity/op-workload-identity spec.spiffe.jwt.extra_claims.nested.deep harness-wi-nested

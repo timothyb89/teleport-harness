@@ -1,0 +1,27 @@
+{# Negative NESTED join: identical to op-agent-oknested except the nested claim's
+   value is wrong, so it must be DENIED.
+
+   sub still satisfies allow_any and org still satisfies the flat matcher — the ONLY
+   difference from the positive case is nested.deep, which makes the denial
+   attributable solely to the nested must_match_fields rule. Without this agent the
+   module would prove that a nested value round-trips into Teleport while a matcher
+   that silently degraded to an existence check would still look green. #}
+version: v3
+teleport:
+  nodename: {{ cluster_id }}-op-agent-badnested
+  data_dir: /var/lib/teleport
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: generic_oidc
+    token_name: op-oidc-nested
+    generic_oidc:
+      # --globoff is LOAD-BEARING — see op-agent-oknested. It matters even more here:
+      # without it this agent is denied because it never obtains a token at all, which
+      # looks exactly like the denial the test wants and would be a FALSE PASS.
+      command: ['curl', '-fsSk', '--globoff', 'https://oidc:8443/token?sub={{ oidc_subject }}&json=nested={"deep":"wrong-nested-value"}']
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: operator-generic-oidc, variant: badnested}

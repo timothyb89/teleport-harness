@@ -211,6 +211,11 @@ func (s *server) handleCA(w http.ResponseWriter, _ *http.Request) {
 //	claim      repeatable key=value extra string claims (e.g. ?claim=team=infra)
 //	list       repeatable key=v1,v2,... extra STRING ARRAY claims, so token rules
 //	           can exercise list/set operations (e.g. ?list=groups=dev,ops)
+//	json       repeatable key=<json> extra claims of ARBITRARY shape, decoded as
+//	           JSON (e.g. ?json=nested={"deep":"v"}). The only way to mint a NESTED
+//	           OBJECT claim, which generic_oidc's `must_match_fields` recurses into
+//	           (lib/join/genericoidc/field_rules.go evaluateFieldRules) — `claim`
+//	           and `list` can only produce strings and string arrays.
 //
 // A couple of stable custom claims (org, environment) are always included so
 // the sample token rules match out of the box.
@@ -248,6 +253,23 @@ func (s *server) handleToken(w http.ResponseWriter, r *http.Request) {
 			}
 			claims[k] = arr
 		}
+	}
+	// Repeatable ?json=key=<json>. Unlike `claim`/`list` this places a value of any
+	// JSON shape — in particular a nested OBJECT, the shape a `must_match_fields`
+	// rule with sub-fields compares against. A malformed value is a test-authoring
+	// error, so fail loudly rather than minting a token that quietly lacks the claim.
+	for _, kv := range q["json"] {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		var decoded any
+		if err := json.Unmarshal([]byte(v), &decoded); err != nil {
+			http.Error(w, fmt.Sprintf("claim %q: invalid JSON %q: %v", k, v, err),
+				http.StatusBadRequest)
+			return
+		}
+		claims[k] = decoded
 	}
 
 	jwt, err := s.sign(claims)

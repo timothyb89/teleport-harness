@@ -19,6 +19,11 @@ from pathlib import Path
 KUBE_NAMESPACE = "teleport"
 KUBE_CONTAINER = "k3s"
 
+# Separator in a scope-qualified name (`<scope>::<name>`, scopes.QualifiedName). A
+# resource_* verb writes one as `kind//scope::name`; get_resource keys off this to pick
+# tctl's two-argument form, the only one that can carry a scope.
+SCOPE_SEP = "::"
+
 
 class Cluster:
     """Interface used by harness/verify.py. Methods here are the test seam."""
@@ -126,9 +131,17 @@ class DockerCluster(Cluster):
     def get_resource(self, kind: str, name: str) -> dict | None:
         # mirrors: docker exec <id>-auth tctl get <kind>/<name> --format json
         # (--format json emits a JSON array even for a single resource).
+        #
+        # SCOPED resources are addressed differently: tctl parses the one-arg form by
+        # splitting on '/' and DISCARDING empty fields (services.ParseRef ->
+        # strings.FieldsFunc), so a scope's leading '/' is eaten and the ref comes back
+        # scope-less — which a scoped kind rejects outright ("requires a scope-qualified
+        # name"). Scope qualification is only expressible in the TWO-arg form, so a name
+        # written as `<scope>::<name>` is passed as its own positional argument.
+        ref = [kind, name] if SCOPE_SEP in name else [f"{kind}/{name}"]
         cp = self._run(
             ["docker", "exec", self.container("auth"),
-             "tctl", "get", f"{kind}/{name}", "--format", "json"]
+             "tctl", "get", *ref, "--format", "json"]
         )
         if cp.returncode != 0 or not cp.stdout.strip():
             return None
@@ -137,10 +150,12 @@ class DockerCluster(Cluster):
         except json.JSONDecodeError:
             return None
         docs = data if isinstance(data, list) else [data]
+        # metadata.name is the BARE name, so compare against the unqualified part.
+        bare = name.rpartition(SCOPE_SEP)[2]
         for doc in docs:
             if not isinstance(doc, dict):
                 continue
-            if doc.get("metadata", {}).get("name") == name:
+            if doc.get("metadata", {}).get("name") == bare:
                 return doc
         # tctl already filtered to this name; fall back to the sole element if present.
         return docs[0] if docs and isinstance(docs[0], dict) else None

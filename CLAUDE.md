@@ -195,17 +195,27 @@ docbot bound_keypair` + `resource_present bot/docbot`/`token/docbot-token`. The 
 the agent to follow them); gated on bound_keypair, min v18),
 `operator_generic_oidc` (a NEW *kind* of module — **in-Kubernetes**: the Teleport OPERATOR,
 built from the clone and running in a disposable in-cluster k3s [the k8s-runner component],
-creates a generic_oidc token with `must_match_fields` from a CR. The operator's answer here
-DIFFERS from terraform's, which is why both exist: FLAT Struct values round-trip correctly
-[`api/types.Struct` carries jsonpb Marshal/UnmarshalJSON] and are proven ENFORCED by the same
-ok/badorg negative join test — PASS today, a regression guard. NESTED values are refused by the
-API SERVER because crdgen emits `additionalProperties: true` for google.protobuf.Struct, giving
-the map's values no schema at all [`crdgen/schemagen.go`, the `.google.protobuf.Struct` case],
-even though the proto + the field's own doc comment promise nesting. The 3 nested checks FAIL
-today and flip to PASS with NO edits once crdgen emits `x-kubernetes-preserve-unknown-fields`
-[as it already does for `Labels` ~80 lines above] AND the CRDs are regenerated. VERIFIED live:
-patching that one site on a running cluster flips 9/3 → 12/0, and the nested value reaches
-Teleport intact, so the schema change alone is sufficient. Write-up:
+creates resources carrying a `google.protobuf.Struct` field from CRs. FOUND A REAL BUG and is
+now the REGRESSION GUARD for its fix: crdgen emitted `additionalProperties: true` for Struct
+[`crdgen/schemagen.go`, the `.google.protobuf.Struct` case], which gives the map's values NO
+schema — so the API server pruned everything one level down. Strict clients saw `unknown field
+"…must_match_fields.nested.deep"`; non-strict ones silently stored `nested: {}`, degrading a
+security matcher to an existence check. Fix is one line —
+`x-kubernetes-preserve-unknown-fields`, as `Labels` ~80 lines above already used. The two
+CANNOT coexist: preserve-unknown-fields only stops keys with no schema being DELETED, while a
+non-nil additionalProperties gives every key a route into a nil schema, so pruning still
+descends. Covers ALL THREE Struct sites, because ONE crdgen path generates them and they live
+in SEPARATE generated CRDs: classic provision token [flat + nested `must_match_fields`], the
+scoped-token CRD [same field, different proto + different CRD file], and WorkloadIdentity's
+`spec.spiffe.jwt.extra_claims` [the only one outside generic_oidc — catches a fix narrowed to
+join tokens]. Each `must_match_fields` shape has an ok/bad agent PAIR differing in exactly ONE
+claim, so ENFORCEMENT is proven and not merely storage — the `nested: {}` failure mode leaves a
+token that exists, reconciles, and still admits the wrong agent. Nested claims are minted via
+the oidc-server's `?json=` param [`?claim=` can only produce strings]. Scoped + WorkloadIdentity
+are storage round-trips, not join tests. Needs `TELEPORT_UNSTABLE_SCOPES=yes` on auth
+[auth_env]; nothing operator-side, since an unscoped operator runs every reconciler whose CRD is
+installed. VERIFIED live on `~/projects/teleport` v19 master: 28/28 with the fix, and auth's own
+denial reads `nested.deep must be "harness-nested" but got wrong-nested-value`. Write-up:
 `~/projects/teleport/operator-crdgen-struct-bug.md`; gated on generic_oidc, min v18).
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
@@ -302,6 +312,12 @@ if the cluster enforces it, an MFA device).
   containers, so label discovery is impossible. Route via `*.map` files + `nginx -s reload`.
 - **Never verify TLS with macOS system `curl`** (LibreSSL → bogus 000 / "bad decrypt"). Use
   `python3`/`tsh`/an in-network `curlimages/curl` container. `curl --resolve` needs an IP, not a name.
+- **`curl` globs `{}` (and `[]`) in URLs** — brace expansion is on by default, so a JSON query
+  value like `?json=nested={"deep":"v"}` reaches the server as `nested="deep":"v"`, braces gone.
+  Pass **`--globoff`**. This bites hardest in a NEGATIVE test: the agent is then denied because
+  it never got a token, `node_absent` passes, and the test is green for the wrong reason — which
+  is why op-agent-badnested asserts a denial with `log_count … ge 1` rather than the neutral
+  `log_contains` (a SKIP would have hidden it).
 - **`pipefail` + `grep -q`**: the harness runs `set -o pipefail`, so `docker logs X | grep -q RE`
   returns the producer's SIGPIPE (non-zero) on an early match — looks like "no match". Always
   capture first: `logs="$(docker logs X 2>&1)"; grep -qiE RE <<<"$logs"`. (assert_log_contains does this.)
@@ -393,13 +409,17 @@ if the cluster enforces it, an MFA device).
   k3s runs as an ordinary compose service (no kind/k3d/minikube, no host kubectl/helm), so
   `teardown` already collects it and concurrent runs coexist. The operator is cross-built CGO-free
   from the clone, side-loaded as an image tarball, and rolled out against the Teleport cluster next
-  door on the docker network. Verified live on `~/projects/teleport` (v19 master): 9 PASS / 3 FAIL,
-  the 3 being the crdgen google.protobuf.Struct nested-value bug it was written to find; patching
-  that one schema site on a live cluster flips it to 12/0. Design + host requirements:
-  `docs/kubernetes.md`. NEXT for this surface: other resource kinds (`extra_claims` on
-  WorkloadIdentity hits the SAME bug), deletion/adoption semantics, scoped resources, and — if a
-  module ever needs an operator that survives a pod restart — the `kubernetes`+`static_jwks`
-  join method instead of single-use `token`.
+  door on the docker network. Found the crdgen google.protobuf.Struct nested-value bug it was
+  written to find (9 PASS / 3 FAIL on the broken schema), and has since been widened into the
+  regression guard for the fix: all three Struct sites (classic + scoped provision tokens,
+  WorkloadIdentity `extra_claims`), with nested matching proven ENFORCED and not merely stored.
+  28/28 on `~/projects/teleport` v19 master with the fix in place. Design + host requirements:
+  `docs/kubernetes.md`. NEXT for this surface: deletion/adoption semantics; scoped resources
+  BEYOND the storage round-trip already covered (a scoped agent actually joining via an
+  operator-created scoped token); asserting a nested `extra_claims` value reaches an ISSUED
+  JWT-SVID rather than only the stored resource (needs a bot + a workload-identity-jwt output);
+  and — if a module ever needs an operator that survives a pod restart — the
+  `kubernetes`+`static_jwks` join method instead of single-use `token`.
 - **More join methods**: `github`, `iam`/`ec2`, `azure`, etc. — each ~ a `services.yml.j2` fragment
   + `bootstrap/` + `checks:` now that composition + shared components exist.
 - **Deepen `tbot`**: multiple output types (`ssh`, `kubernetes`, `database`, `application`) with

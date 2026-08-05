@@ -1,17 +1,23 @@
-{# NESTED must_match_fields — the case the generated CRD cannot express.
+{# NESTED must_match_fields — the case the generated CRD could not express until
+   crdgen was fixed.
 
    The proto type is google.protobuf.Struct and the field's own doc comment promises
-   "strings, numbers, booleans, and nested fields". But crdgen emits
+   "strings, numbers, booleans, and nested fields". crdgen used to emit
    `additionalProperties: true` for Struct (schemagen.go, the .google.protobuf.Struct
-   case), i.e. "any key allowed, values unspecified" — and a value with no schema has no
-   known sub-fields, so the API server's strict decoding refuses this manifest with:
+   case), i.e. "any key allowed, values unspecified" — and a value with NO schema has no
+   known sub-fields, so the API server pruned everything one level down. Strict clients
+   saw that as a rejection:
 
      unknown field "spec.generic_oidc.must_match_fields.nested.deep"
 
-   Nothing here is otherwise invalid; it is the same token as op-cr-flat with one extra
-   level of nesting. Once crdgen emits x-kubernetes-preserve-unknown-fields instead (as
-   it already does for the Labels custom type just above that case), this is accepted and
-   round-trips all the way into Teleport. #}
+   while non-strict ones silently stored `nested: {}` — which degrades this matcher to a
+   mere existence check. crdgen now emits x-kubernetes-preserve-unknown-fields instead
+   (as it already did for the Labels custom type just above that case), so the whole
+   tree survives.
+
+   This CR is the REGRESSION GUARD for that fix. The op-agent-oknested /
+   op-agent-badnested pair then proves the nested rule is ENFORCED rather than merely
+   stored — precisely the failure the pruned-to-`{}` case would otherwise hide. #}
 apiVersion: resources.teleport.dev/v2
 kind: TeleportProvisionToken
 metadata:
@@ -26,7 +32,7 @@ spec:
     must_match_fields:
       org: ethernet-fyi
       nested:
-        deep: harness-nested
+        deep: {{ nested_value }}
     allow_any:
       - conditions:
           - attribute: sub

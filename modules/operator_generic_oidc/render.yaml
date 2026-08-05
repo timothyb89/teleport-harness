@@ -9,6 +9,26 @@ components: [k8s-runner, oidc-server]
 # reason generic_oidc re-declares oidc_image) — this module owns its own runner container.
 k3s_version: v1.31.5-k3s1
 
-# The `sub` both join-test agents present; satisfies allow_any on its own, so the only
-# thing that can distinguish them is the `org` claim in must_match_fields.
+# Scoped resources (op-cr-scoped.yaml) need this on AUTH. Nothing extra is needed on the
+# operator side: an unscoped operator runs every reconciler whose CRD is installed.
+auth_env:
+  TELEPORT_UNSTABLE_SCOPES: "yes"
+
+# The `sub` EVERY join-test agent presents; satisfies allow_any on its own, so the only
+# thing that can distinguish a pair of agents is the must_match_fields claim under test.
 oidc_subject: op-oidc-subject
+
+# Struct values under test, declared once so a CR and the agent that has to satisfy it
+# cannot drift apart. module.yaml repeats these literals (a `checks:` block is not
+# templated) — keep them in sync.
+#
+#   nested_value         op-oidc-nested's must_match_fields.nested.deep, and the value
+#                        op-agent-oknested presents (op-agent-badnested presents another).
+#   scoped_*             the same values on the SEPARATE scoped-token CRD.
+#   wi_*                 spec.spiffe.jwt.extra_claims on WorkloadIdentity — the third
+#                        google.protobuf.Struct site in the generated CRDs.
+nested_value: harness-nested
+scoped_token_scope: /opscope
+scoped_nested_value: harness-scoped-nested
+wi_flat_value: platform
+wi_nested_value: harness-wi-nested

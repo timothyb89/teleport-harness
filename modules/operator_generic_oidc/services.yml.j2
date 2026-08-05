@@ -1,12 +1,17 @@
-{# operator_generic_oidc: apply two TeleportProvisionToken CRs (flat + nested
-   must_match_fields) into the k8s-runner component's disposable cluster, then have two
-   Teleport agents try to join with the token the OPERATOR created.
+{# operator_generic_oidc: apply this module's CRs into the k8s-runner component's
+   disposable cluster, then have four Teleport agents try to join with the tokens the
+   OPERATOR created.
 
-   The oidc-server component mints both agents' JWTs over the system-trusted wildcard cert
-   at oidc.<lab_domain>, so the token validates discovery over system trust — no tls_ca.
-   The agents' JWTs are identical except for the `org` claim (the must_match_fields
-   matcher): op-agent-ok keeps the default (ethernet-fyi, matches) and op-agent-badorg
-   overrides it (wrong, must be denied). #}
+   The CRs cover every google.protobuf.Struct site in the generated CRDs — the classic
+   provision token (flat + nested must_match_fields), the SEPARATE scoped-token CRD, and
+   WorkloadIdentity's extra_claims — because one crdgen code path generates all of them.
+
+   The oidc-server component mints the agents' JWTs over the system-trusted wildcard cert
+   at oidc.<lab_domain>, so the tokens validate discovery over system trust — no tls_ca.
+   The agents come in two pairs, each differing in exactly ONE claim so a difference in
+   outcome is attributable to exactly one matcher:
+     op-agent-ok       / op-agent-badorg     — the FLAT `org` matcher
+     op-agent-oknested / op-agent-badnested  — the NESTED `nested.deep` matcher #}
 services:
   # Applies this module's CRs. Runs the k3s image (kubectl + a shell already inside).
   op-crs:
@@ -15,12 +20,17 @@ services:
     entrypoint: ["/bin/sh", "/scripts/k8s-apply-entrypoint.sh"]
     environment:
       K3S_HOST: "{{ cluster_id }}-k3s"
+      # Dump every kind this module applies, not just provision tokens, so a reconcile
+      # failure on any of them is readable straight off the log.
+      REPORT_KINDS: "teleportprovisiontokens teleportscopedtokensv1 teleportworkloadidentitiesv1"
     volumes:
       - {{ shared_scripts }}/k8s-common.sh:/scripts/k8s-common.sh:ro
       - {{ shared_scripts }}/k8s-apply-entrypoint.sh:/scripts/k8s-apply-entrypoint.sh:ro
       # Applied in filename order: the flat token (which the join test depends on) first.
       - {{ out }}/config/op-cr-flat.yaml:/work/10-flat.yaml:ro
       - {{ out }}/config/op-cr-nested.yaml:/work/20-nested.yaml:ro
+      - {{ out }}/config/op-cr-scoped.yaml:/work/30-scoped.yaml:ro
+      - {{ out }}/config/op-cr-workload-identity.yaml:/work/40-workload-identity.yaml:ro
       - k8s-kubeconfig:/kubeconfig:ro
     networks: [internal]
     depends_on:
@@ -34,10 +44,10 @@ services:
       timeout: 3s
       retries: 100
       start_period: 5s
-{% for name in ["op-agent-ok", "op-agent-badorg"] %}
+{% for name in ["op-agent-ok", "op-agent-badorg", "op-agent-oknested", "op-agent-badnested"] %}
 
-  # {{ name }}: a Node joining with the operator-created token (see config/{{ name }}.yaml
-  # for the JWT it presents).
+  # {{ name }}: a Node joining with an operator-created token (see config/{{ name }}.yaml
+  # for the token it uses and the JWT it presents).
   {{ name }}:
     image: {{ image }}
     platform: linux/amd64

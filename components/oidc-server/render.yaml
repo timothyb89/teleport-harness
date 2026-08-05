@@ -1,3 +1,6 @@
 # Context for the oidc-server component (merged into the render when a module lists
 # it under `components:`).
-oidc_image: teleport-harness-oidc:v3
+# The tag is a CACHE KEY, not a version: prebuild.sh only builds when the tag is
+# absent, so any change to build/main.go needs a bump here or stale images win.
+# v4 added ?json=key=<json> (nested object claims).
+oidc_image: teleport-harness-oidc:v4

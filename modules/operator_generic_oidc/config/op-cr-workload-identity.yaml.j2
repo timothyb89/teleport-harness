@@ -1,0 +1,35 @@
+{# The THIRD google.protobuf.Struct site in the generated CRDs, and the reason this
+   module is not only about generic_oidc: `spec.spiffe.jwt.extra_claims` on
+   WorkloadIdentity hits the exact same crdgen code path as must_match_fields
+   (schemagen.go, the .google.protobuf.Struct case), so it was broken the same way and
+   is fixed by the same one-line change.
+
+   Its job here is a DIFFERENT-RESOURCE regression guard: if a future change reverts
+   the Struct handling, or narrows the fix to provision tokens only, the nested check
+   below breaks even though every generic_oidc check still passes. The flat claim
+   alongside it guards the other direction — that whatever replaces the fix does not
+   break the case that already worked.
+
+   Storage round-trip only. Proving the nested claim reaches an ISSUED JWT-SVID would
+   need a bot, a workload-identity-jwt output and a JWT decoder; the CRD schema is what
+   is under test here, and it is fully exercised by "the API server stored the whole
+   tree and the operator wrote it to Teleport intact".
+
+   Only spec.spiffe.id is required (lib/services/workload_identity.go
+   ValidateWorkloadIdentity), and creating the resource needs no enterprise license —
+   the operator's editor role already grants workload_identity RW. #}
+apiVersion: resources.teleport.dev/v1
+kind: TeleportWorkloadIdentityV1
+metadata:
+  name: op-workload-identity
+  namespace: teleport
+spec:
+  spiffe:
+    id: /harness/op-workload-identity
+    jwt:
+      extra_claims:
+        # flat: worked even with the old `additionalProperties: true` schema
+        team: {{ wi_flat_value }}
+        # nested: pruned by the old schema, preserved by the fixed one
+        nested:
+          deep: {{ wi_nested_value }}
