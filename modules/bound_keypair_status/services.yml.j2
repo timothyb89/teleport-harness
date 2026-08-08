@@ -1,0 +1,76 @@
+{# bound_keypair_status: a bot binds a real keypair (populating server-owned
+   .status.bound_keypair), then a mutator re-applies the token the way tctl/terraform/the
+   operator would and proves the status survived. Composed onto the base auth. #}
+services:
+  # The bot under test. Joins via bound_keypair with a preset registration secret; the join
+  # ceremony is what writes status.bound_keypair.{bound_public_key,bound_bot_instance_id}
+  # and increments recovery_count. Everything the mutator asserts about is created here.
+  bksbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-bksbot
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    volumes:
+      - {{ out }}/config/bks-tbot.yaml:/etc/tbot.yaml:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+
+  # Privileged identity so the mutator can run tctl with no login/MFA (bots are exempt from
+  # admin-action MFA — the lib/admin.sh trick, mirrored by terraform-runner/agent-runner).
+  bks-idbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-bks-idbot
+    command: [tbot, start, -c, /etc/tbot.yaml, "--token={{ admin_token }}", "--join-method=token"]
+    volumes:
+      - {{ out }}/config/bks-idbot.yaml:/etc/tbot.yaml:ro
+      - bks-identity:/idents
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /idents/identity"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+  # The mutator: waits for the bot to bind a key, snapshots status, then re-applies the
+  # token several ways and prints one `RESULT <case>: PASS|FAIL` line per case. It never
+  # aborts on a failed case — a failure IS the finding, and stopping early would leave the
+  # later cases silently unreported (which log_count would read as a regression anyway).
+  bkstatus:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-bkstatus
+    entrypoint: ["sh", "/scripts/mutate.sh"]
+    environment:
+      AUTH_ADDR: auth:3025
+      IDENTITY: /id/identity
+      TOKEN_NAME: bks-token
+      SPARE_TOKEN: bks-recreate
+      NEW_RECOVERY_LIMIT: "{{ new_recovery_limit }}"
+      MARKER_A: {{ marker_a }}
+      MARKER_B: {{ marker_b }}
+    volumes:
+      - {{ module_dir }}/scripts:/scripts:ro
+      - {{ out }}/config/token-spec-only.yaml:/work/token-spec-only.yaml:ro
+      - {{ out }}/config/token-tampered.yaml:/work/token-tampered.yaml:ro
+      - {{ out }}/config/spare-marker-a.yaml:/work/spare-marker-a.yaml:ro
+      - {{ out }}/config/spare-marker-b.yaml:/work/spare-marker-b.yaml:ro
+      - bks-identity:/id:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+      bks-idbot: {condition: service_healthy}
+      bksbot: {condition: service_started}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/mutate-done"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+
+volumes:
+  bks-identity:

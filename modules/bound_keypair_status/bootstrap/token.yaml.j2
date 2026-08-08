@@ -1,0 +1,18 @@
+{# The bound_keypair join token under test, authorized by a preset registration secret.
+   bots.manifest's `bots add --token=bks-token` references this existing token.
+
+   recovery.limit is set EXPLICITLY to 1 (which is also the CheckAndSetDefaults default) so
+   that the mutator later bumping it to {{ new_recovery_limit }} is an unambiguous "the spec
+   edit landed" signal rather than a default-vs-set ambiguity. #}
+kind: token
+version: v2
+metadata: {name: bks-token}
+spec:
+  roles: [Bot]
+  bot_name: bks-bot
+  join_method: bound_keypair
+  bound_keypair:
+    onboarding:
+      registration_secret: {{ reg_secret }}
+    recovery:
+      limit: 1

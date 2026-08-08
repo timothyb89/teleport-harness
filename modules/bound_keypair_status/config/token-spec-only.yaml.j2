@@ -1,0 +1,22 @@
+{# THE COMMON CASE. What `tctl get token/bks-token | <strip status> | tctl create -f` — or a
+   terraform apply, or an operator reconcile — actually sends: the full spec, no status.
+
+   `onboarding.registration_secret` is present exactly as a real roundtrip would carry it.
+   That matters: on a build without the fix, the nil status means populateRegistrationSecret
+   builds a FRESH status and copies this secret into it, so the write lands a token whose
+   status has a registration secret and NO bound_public_key — the bot is now unjoinable.
+
+   recovery.limit is bumped to {{ new_recovery_limit }} (from 1) so the same apply also
+   carries a legitimate spec edit that MUST still take effect. #}
+kind: token
+version: v2
+metadata: {name: bks-token}
+spec:
+  roles: [Bot]
+  bot_name: bks-bot
+  join_method: bound_keypair
+  bound_keypair:
+    onboarding:
+      registration_secret: {{ reg_secret }}
+    recovery:
+      limit: {{ new_recovery_limit }}

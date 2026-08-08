@@ -1,0 +1,20 @@
+# Render context for bound_keypair_status (see harness/render.py).
+#
+# No `components:` — this module rolls its own admin idbot rather than pulling in
+# agent-runner/terraform-runner, whose identity volumes are named for their own use cases.
+# It's the same ~20-line shape both of those components use.
+
+reg_secret: harness-bks-regsecret      # the bot's preset registration secret
+admin_token: harness-bks-admin         # classic token the admin idbot joins with
+
+# The spec edit the mutator makes in the same apply as the status wipe attempt. Must differ
+# from the bootstrap token's recovery.limit so "the edit landed" is an unambiguous signal.
+new_recovery_limit: 7
+
+# Markers used by the spare-token (create/upsert/delete+recreate) sequence.
+marker_a: harness-bks-marker-a
+marker_b: harness-bks-marker-b
+
+bots:
+  - {name: bks-bot, roles: bks-tester, token: bks-token}
+  - {name: bks-admin, roles: "editor,access,auditor", token: harness-bks-admin}

@@ -1,0 +1,10 @@
+{# Classic token the privileged idbot joins with, so the mutator gets a tctl identity with
+   no login/MFA. Mirrors components/agent-runner/bootstrap/token.yaml.j2. #}
+kind: token
+version: v2
+metadata:
+  name: {{ admin_token }}
+spec:
+  roles: [Bot]
+  bot_name: bks-admin
+  join_method: token

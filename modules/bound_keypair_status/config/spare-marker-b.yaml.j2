@@ -1,0 +1,18 @@
+{# Same spare token, different status marker. Applied twice by the mutator:
+     - as an UPSERT over the marker-A copy -> must be DISCARDED (status stays marker A)
+     - after a delete             -> must be ACCEPTED (status becomes marker B)
+   One file, two opposite expected outcomes; the only difference is whether the token
+   already existed. That contrast is the whole rule in one pair of applies. #}
+kind: token
+version: v2
+metadata: {name: bks-recreate}
+spec:
+  roles: [Bot]
+  bot_name: bks-bot
+  join_method: bound_keypair
+  bound_keypair:
+    recovery:
+      limit: 1
+status:
+  bound_keypair:
+    registration_secret: {{ marker_b }}

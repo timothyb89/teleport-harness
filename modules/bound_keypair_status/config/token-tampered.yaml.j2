@@ -1,0 +1,28 @@
+{# The explicit-tampering case: an incoming copy that carries a status of its own. The rule
+   says it is ALWAYS discarded on update — you cannot rebind a key, reset the recovery
+   counter, or pin a registration secret by editing a live token.
+
+   Every value here is deliberately wrong: a key the bot does not hold, a nil-UUID instance,
+   a recovery counter reset far above the real one, and a secret nobody issued. If any of
+   them reaches storage, the server let a client write server-owned state.
+
+   recovery.limit stays at {{ new_recovery_limit }} so this apply does not disturb the spec
+   assertion made by the previous one. #}
+kind: token
+version: v2
+metadata: {name: bks-token}
+spec:
+  roles: [Bot]
+  bot_name: bks-bot
+  join_method: bound_keypair
+  bound_keypair:
+    onboarding:
+      registration_secret: {{ reg_secret }}
+    recovery:
+      limit: {{ new_recovery_limit }}
+status:
+  bound_keypair:
+    bound_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHarnessTamperedKeyNotHeldByAnyBot0000 tampered@harness"
+    bound_bot_instance_id: "00000000-0000-0000-0000-000000000000"
+    recovery_count: 99
+    registration_secret: harness-bks-tampered

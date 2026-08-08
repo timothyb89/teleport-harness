@@ -1,0 +1,11 @@
+# Minimal role for the bot under test: enough to prove its produced identity actually
+# authenticates and performs an authorized action (list tokens) via tctl --identity.
+kind: role
+version: v7
+metadata:
+  name: bks-tester
+spec:
+  allow:
+    rules:
+      - resources: [token]
+        verbs: [read, list]

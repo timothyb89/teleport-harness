@@ -1,0 +1,10 @@
+version: v2
+proxy_server: {{ fqdn }}:{{ port }}
+storage:
+  type: directory
+  path: /var/lib/tbot
+outputs:
+  - type: identity
+    destination:
+      type: directory
+      path: /idents

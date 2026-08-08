@@ -1,0 +1,20 @@
+{# Spare token for the create / upsert / delete+recreate sequence. Nothing ever joins with
+   it, so its status is whatever the admin last legitimately set — which makes it the clean
+   way to prove the escape hatch without disturbing the live bot's token.
+
+   NOTE there is deliberately no `onboarding.registration_secret`: the ONLY source for
+   status.bound_keypair.registration_secret here is the status block below, so the marker is
+   an unambiguous signal of whose status won. #}
+kind: token
+version: v2
+metadata: {name: bks-recreate}
+spec:
+  roles: [Bot]
+  bot_name: bks-bot
+  join_method: bound_keypair
+  bound_keypair:
+    recovery:
+      limit: 1
+status:
+  bound_keypair:
+    registration_secret: {{ marker_a }}
