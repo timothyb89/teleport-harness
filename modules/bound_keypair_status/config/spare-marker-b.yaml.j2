@@ -12,7 +12,7 @@ spec:
   join_method: bound_keypair
   bound_keypair:
     recovery:
-      limit: 1
+      limit: {{ marker_b_recovery_limit }}
 status:
   bound_keypair:
     registration_secret: {{ marker_b }}

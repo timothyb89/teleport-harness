@@ -465,6 +465,37 @@ def _resource_field(c, nodes, args):
                        proofs=[proof], assertions=asserts)
 
 
+def _resource_field_not(c, nodes, args):
+    """Assert a field is present AND does NOT match <rejected> (case-insensitive substring).
+
+    The discriminating counterpart to resource_field. Presence alone is a weak assertion
+    whenever a test's failure mode SUPPLIES a value: bound_keypair_status re-applies a
+    token carrying a forged bound_public_key, and a bare `resource_field …bound_public_key`
+    passes on the WORST outcome, because the forgery is still a value. Naming the rejected
+    sentinel makes the check fail exactly when the bad value lands.
+
+    A missing resource or missing path FAILs too — "absent" is not "not the bad value",
+    and for a wiped status it is its own defect.
+    """
+    kind, name = _split_ref(args[0])
+    path, rejected = args[1], args[2]
+    asserts = [f"{kind}/{name}.{path} present and != {rejected}"]
+    doc = c.get_resource(kind, name)
+    if not doc:
+        return CheckResult(FAIL, f"resource {kind}/{name} not found (cannot read {path})",
+                           assertions=asserts)
+    found, value = _dig(doc, path)
+    proof = _resource_proof(kind, name, doc)
+    if not found:
+        return CheckResult(FAIL, f"{kind}/{name}: field {path} absent",
+                           proofs=[proof], assertions=asserts)
+    if rejected.lower() in str(value).lower():
+        return CheckResult(FAIL, f"{kind}/{name}: {path}={value!r} is the rejected {rejected!r}",
+                           proofs=[proof], assertions=asserts)
+    return CheckResult(PASS, f"{kind}/{name}: {path} = {value} (not {rejected})",
+                       proofs=[proof], assertions=asserts)
+
+
 # --- in-cluster Kubernetes state (the k8s-runner component's k3s) -------------
 # These inspect the k8s side of an operator test: what the API SERVER accepted and
 # stored, and what the operator wrote back to a CR's status. They pair with the
@@ -608,6 +639,7 @@ IMPLS: dict[str, Impl] = {
     "tsh_ssh_as": _tsh_ssh_as,
     "resource_present": _resource_present,
     "resource_field": _resource_field,
+    "resource_field_not": _resource_field_not,
     "k8s_resource_present": _k8s_resource_present,
     "k8s_resource_field": _k8s_resource_field,
     "k8s_condition": _k8s_condition,

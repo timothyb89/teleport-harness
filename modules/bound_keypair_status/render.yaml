@@ -7,9 +7,16 @@
 reg_secret: harness-bks-regsecret      # the bot's preset registration secret
 admin_token: harness-bks-admin         # classic token the admin idbot joins with
 
-# The spec edit the mutator makes in the same apply as the status wipe attempt. Must differ
-# from the bootstrap token's recovery.limit so "the edit landed" is an unambiguous signal.
-new_recovery_limit: 7
+# Every apply carries a DISTINCT recovery.limit, and the mutator waits for it to appear
+# before asserting anything about status. This is not cosmetic: `tctl get` reads through
+# the auth CACHE, so a read taken straight after a write can return the pre-write value —
+# which makes "status was preserved" indistinguishable from "I read a stale copy". A run
+# against the pre-fix build passed a case for exactly that reason before these were added.
+# The sentinel is the barrier: once the new limit is visible, the write has landed and the
+# status alongside it is the real post-write status.
+new_recovery_limit: 7        # spec-only re-apply (from the bootstrap token's 1)
+tampered_recovery_limit: 9   # tampered-status re-apply
+marker_b_recovery_limit: 5   # spare token's marker-B copy (marker A leaves it at 1)
 
 # Markers used by the spare-token (create/upsert/delete+recreate) sequence.
 marker_a: harness-bks-marker-a

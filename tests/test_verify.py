@@ -405,6 +405,34 @@ def test_resource_field_presence_and_value_match():
     assert _run(c, "resource_field token/tf-oidc-token spec.join_method token").status == "FAIL"
 
 
+def test_resource_field_not_rejects_a_known_bad_value():
+    # The bound_keypair_status case: an update that must be IGNORED instead supplies its
+    # own bound_public_key. Presence alone passes on that worst outcome...
+    forged = {"metadata": {"name": "bks-token"},
+              "status": {"bound_keypair": {"bound_public_key": "ssh-ed25519 AAAATamperedKey x"}}}
+    c = FakeCluster(resources={"token/bks-token": forged})
+    assert _run(c, "resource_field token/bks-token status.bound_keypair.bound_public_key").status == "PASS"
+    # ...while naming the rejected sentinel catches it.
+    bad = _run(c, "resource_field_not token/bks-token status.bound_keypair.bound_public_key TamperedKey")
+    assert bad.status == "FAIL"
+    assert bad.assertions == ["token/bks-token.status.bound_keypair.bound_public_key present and != TamperedKey"]
+    # a genuine key (the bot's own) is present and differs -> PASS
+    real = {"metadata": {"name": "bks-token"},
+            "status": {"bound_keypair": {"bound_public_key": "ssh-ed25519 AAAARealBotKey x"}}}
+    ok = _run(FakeCluster(resources={"token/bks-token": real}),
+              "resource_field_not token/bks-token status.bound_keypair.bound_public_key TamperedKey")
+    assert ok.status == "PASS" and ok.proofs
+
+
+def test_resource_field_not_fails_when_absent_or_wiped():
+    # A WIPED status is its own defect, so absent must not read as "not the bad value".
+    wiped = {"metadata": {"name": "bks-token"}, "status": {"bound_keypair": {}}}
+    c = FakeCluster(resources={"token/bks-token": wiped})
+    assert _run(c, "resource_field_not token/bks-token status.bound_keypair.bound_public_key Tampered").status == "FAIL"
+    # ...and so is a token that does not exist at all.
+    assert _run(FakeCluster(), "resource_field_not token/bks-token status.bound_keypair.bound_public_key T").status == "FAIL"
+
+
 def test_resource_field_missing_path_and_missing_resource_fail():
     # the must_match_fields bug today: the field is absent from the created token...
     no_mmf = {"metadata": {"name": "t"}, "spec": {"generic_oidc": {"issuer": "x"}}}

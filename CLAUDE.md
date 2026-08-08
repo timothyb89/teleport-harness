@@ -147,6 +147,12 @@ returns it; FULL JSON proof; e.g. asserting what a terraform apply created),
 `resource_field <kind/name> <dotted.path> [expected]` (a field on a live resource is present,
 and — with `expected` — equals it by case-insensitive substring; missing resource OR path FAILs —
 how `terraform_generic_oidc` surfaces the must_match_fields bug),
+`resource_field_not <kind/name> <dotted.path> <rejected>` (a field is present AND does not
+match `rejected` — the discriminating counterpart to `resource_field`, for when the failure
+mode SUPPLIES a value rather than leaving a hole. `bound_keypair_status` re-applies a token
+carrying a forged `bound_public_key`, and a bare `resource_field …bound_public_key` PASSES on
+that worst outcome because the forgery is still a value; naming the rejected sentinel is what
+makes it fail. Absent/missing FAILs too — "absent" is not "not the bad value"),
 `k8s_resource_present <kind/name>`/`k8s_resource_field <kind/name> <dotted.path> [expected]`/
 `k8s_condition <kind/name> <condition-type> [expected-status]` (the KUBERNETES side of an
 operator test, via `kubectl get -o json` inside the k8s-runner component's k3s — `<kind/name>`
@@ -216,7 +222,21 @@ are storage round-trips, not join tests. Needs `TELEPORT_UNSTABLE_SCOPES=yes` on
 [auth_env]; nothing operator-side, since an unscoped operator runs every reconciler whose CRD is
 installed. VERIFIED live on `~/projects/teleport` v19 master: 28/28 with the fix, and auth's own
 denial reads `nested.deep must be "harness-nested" but got wrong-nested-value`. Write-up:
-`~/projects/teleport/operator-crdgen-struct-bug.md`; gated on generic_oidc, min v18).
+`~/projects/teleport/operator-crdgen-struct-bug.md`; gated on generic_oidc, min v18),
+`bound_keypair_status` (the bound_keypair token `.status` rule on the **UpsertToken RPC** path —
+what `tctl create -f`, the Terraform provider and the operator all reach; complements
+`bound_keypair_apply_on_startup`, which covers the restart path. A real tbot binds a keypair,
+then a `bkstatus` mutator re-applies the token over a bot identity and proves that for an
+EXISTING token `.status` is preserved and an incoming `.status` is discarded, while spec edits
+still land; a spare token proves create-accepts / upsert-discards / delete+recreate-sets by
+applying ONE file twice with opposite expected outcomes. Two lessons are baked in. (1) `tctl
+get` reads through the auth CACHE, so a read straight after an apply can return the PRE-write
+token — "status preserved" and "stale read" are indistinguishable, and a pre-fix run passed a
+case for exactly that reason. Every apply therefore carries a DISTINCT `recovery.limit`
+sentinel and the mutator blocks until it is visible before asserting; the barrier doubles as
+the spec-edit assertion. (2) Presence-only checks are unsound when the failure mode SUPPLIES a
+value — hence `resource_field_not`. NEGATIVE-CONTROLLED: 6 FAIL / 10 PASS at the pre-fix commit
+`e98f39c334e` (twice, identical) and 16/16 with the fix; gated on bound_keypair, min v17).
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
@@ -431,8 +451,12 @@ if the cluster enforces it, an MFA device).
 ### Build / deploy
 - `--target homelab`: enterprise amd64 binary + the scp/systemctl swap one-liner for the
   long-lived homelab cluster (the builder already supports `ent`).
-- **Worktree-based build isolation**: build arbitrary branches in a `git worktree` without
-  touching the clone's checkout (today `build` uses the clone's currently-checked-out tree).
+- **Worktree-based build isolation — DONE**: `build_image` asks `git rev-parse --git-dir`
+  instead of testing for a `.git` DIRECTORY, so a `git worktree` (whose `.git` is a FILE) is
+  a valid `--repo`. Nothing else needed changing — rev-parse resolves and `go build` already
+  passes `-buildvcs=false`. This is how `bound_keypair_status` was negative-controlled against
+  its pre-fix commit without disturbing the clone's checkout. Copy the gitignored `webassets/`
+  (~8 MB) into the worktree first, or the build dies on the prebuilt-assets check.
 
 ### Access / TLS / DNS
 - Admin CLI via a privileged bot identity is **DONE** (`cluster admin/tctl/tsh`). Remaining

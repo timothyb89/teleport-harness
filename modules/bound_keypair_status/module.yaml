@@ -30,12 +30,15 @@ checks: |
   output_file         bksbot /out/id/identity
 
   # --- THE RULE: status survived a spec-only re-apply AND a tampered-status re-apply -----
-  # These read the LIVE token after the mutator finished. Without the fix the spec-only
-  # apply nils status and re-mints a registration secret, so bound_public_key /
-  # bound_bot_instance_id are simply gone -> FAIL.
-  resource_field      token/bks-token status.bound_keypair.bound_public_key
-  resource_field      token/bks-token status.bound_keypair.bound_bot_instance_id
-  # exactly one join happened, so the counter must still read 1 (a wipe resets it to absent)
+  # These read the LIVE token after the mutator finished. They name the TAMPERED sentinels
+  # rather than merely asserting presence: the pre-fix run proved a bare
+  # `resource_field …bound_public_key` PASSES on the worst outcome, because the forged key
+  # the tampered apply supplied is still a value sitting at that path. Presence is only a
+  # sound assertion when the failure mode leaves a HOLE; here it fills one.
+  resource_field_not  token/bks-token status.bound_keypair.bound_public_key HarnessTamperedKey
+  resource_field_not  token/bks-token status.bound_keypair.bound_bot_instance_id 00000000-0000-0000-0000-000000000000
+  # exactly one join happened, so the counter must still read 1 — this catches BOTH failure
+  # shapes: a wipe (absent/0) and the tampered apply's 99.
   resource_field      token/bks-token status.bound_keypair.recovery_count 1
 
   # the mutator's own before/after EXACT-value comparison agrees (stronger than presence:
@@ -46,7 +49,9 @@ checks: |
 
   # --- ...while a legitimate SPEC edit in the very same apply DID land -------------------
   # Guards the over-correction: preserving status must not mean ignoring the whole update.
-  resource_field      token/bks-token spec.bound_keypair.recovery.limit 7
+  # 9 is the LAST apply's sentinel (case 2); each apply carries a distinct one so the
+  # mutator can tell "the write landed" from "I read a stale cached copy".
+  resource_field      token/bks-token spec.bound_keypair.recovery.limit 9
   log_count           bkstatus ge 1 RESULT spec-edit-applied: PASS
 
   # --- delete + recreate is the sanctioned escape hatch (proved on a spare token) --------

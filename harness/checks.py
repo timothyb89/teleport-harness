@@ -70,6 +70,12 @@ _SPECS: list[VerbSpec] = [
         "resource_field <kind/name> <dotted.path> [expected]  "
         "(a field on a live resource is present, and optionally equals a value)",
     ),
+    VerbSpec(
+        "resource_field_not", 3, 3,
+        "resource_field_not <kind/name> <dotted.path> <rejected>  "
+        "(a field is present and does NOT match <rejected> — use when the failure mode "
+        "supplies a value, so mere presence would pass on the worst outcome)",
+    ),
     # In-cluster Kubernetes state (the k8s-runner component's k3s). `<kind/name>` is
     # resolved in the component's fixed `teleport` namespace (see cluster.KUBE_NAMESPACE).
     VerbSpec(

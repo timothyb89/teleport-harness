@@ -19,7 +19,7 @@ spec:
     onboarding:
       registration_secret: {{ reg_secret }}
     recovery:
-      limit: {{ new_recovery_limit }}
+      limit: {{ tampered_recovery_limit }}
 status:
   bound_keypair:
     bound_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHarnessTamperedKeyNotHeldByAnyBot0000 tampered@harness"
