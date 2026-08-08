@@ -10,7 +10,11 @@
 build_image() {
   local repo ent variant sha bincache image target tags assetdir
   repo="$(cd "$1" && pwd)"; ent="${2:-0}"
-  [ -d "$repo/.git" ] || die "not a git repo: $repo"
+  # Ask git rather than testing for a .git DIRECTORY: in a `git worktree` .git is a
+  # FILE pointing at the main clone, and a worktree is exactly how you build an
+  # arbitrary commit without disturbing the clone's checkout (everything else here
+  # already works in one — rev-parse resolves, and go build passes -buildvcs=false).
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || die "not a git repo: $repo"
   command -v "$HARNESS_CC" >/dev/null 2>&1 || die "cross compiler '$HARNESS_CC' not found (brew install messense/macos-cross-toolchains/x86_64-unknown-linux-gnu)"
 
   sha="$(git -C "$repo" rev-parse --short=12 HEAD)"
