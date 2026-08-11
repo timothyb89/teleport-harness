@@ -24,6 +24,14 @@ class Check(BaseModel):
     args: list[str]
     raw: str
     lineno: int  # 1-based line within the checks block
+    # Set by Module.all_checks(), not by the YAML: which claim this check serves (empty for
+    # preconditions and for the flat legacy `checks:` block) and whether it is evidence or
+    # scaffolding. Carried through to CheckResult so the report can group by claim.
+    claim: str = ""
+    role: str = "evidence"  # evidence | precondition
+
+    def tagged(self, role: str, claim: str = "") -> "Check":
+        return self.model_copy(update={"role": role, "claim": claim})
 
     def validate_against_registry(self) -> list[str]:
         """Return human-readable problems (empty == ok)."""
@@ -59,8 +67,40 @@ def parse_checks(block: str | None) -> list[Check]:
     return checks
 
 
+class Claim(BaseModel):
+    """A single thing a module asserts about the system, and the checks that establish it.
+
+    The layer the report was missing. A check on its own rarely means anything to a reader
+    without context — `resource_field_not …bound_bot_instance_id 000…` is only meaningful
+    beside "a real bot bound a key first" and "an apply carrying that nil UUID was accepted".
+    The argument is a property of the GROUP, so the group is the thing that gets a name, a
+    statement and a rationale.
+
+    Checks nest inside the claim rather than being cross-referenced by id: there is no way to
+    reference a claim that does not exist, and no way to leave a check orphaned.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str                       # short slug; becomes the report anchor
+    statement: str                # what is being claimed, in plain prose
+    why: str = ""                 # HOW the checks below establish it — the logical chain
+    checks: list[Check] = Field(default_factory=list)
+
+    @field_validator("checks", mode="before")
+    @classmethod
+    def _parse(cls, v):
+        return parse_checks(v) if isinstance(v, str) else v
+
+
 class Module(BaseModel):
-    """A test module's gating metadata + parsed verification checks."""
+    """A test module's gating metadata + parsed verification checks.
+
+    Two shapes are supported. The flat `checks:` block is the original and still works
+    unchanged. `preconditions:` + `claims:` is the structured form: it says WHAT the module
+    proves and WHY the evidence suffices, which is what a reader without context needs and
+    what a bare list of verdicts cannot convey. Modules may use either or both.
+    """
 
     model_config = ConfigDict(extra="forbid")  # typo'd keys are errors, not silently ignored
 
@@ -70,6 +110,12 @@ class Module(BaseModel):
     requires_features: list[str] = Field(default_factory=list)
     min_version: str | None = None
     checks: list[Check] = Field(default_factory=list)
+    # Scaffolding, not evidence: these establish that the scenario was actually set up
+    # (a bot really joined, an identity was really written). A failing PRECONDITION means the
+    # claims below were never exercised — untested, which is not the same as disproven — so
+    # the report says so instead of reporting a claim failure it cannot support.
+    preconditions: list[Check] = Field(default_factory=list)
+    claims: list[Claim] = Field(default_factory=list)
 
     # populated by load_module, not from YAML
     path: Path | None = Field(default=None, exclude=True)
@@ -84,12 +130,42 @@ class Module(BaseModel):
             raise ValueError(f"min_version '{v}' is not a vNN[.x.y] version")
         return v
 
+    def all_checks(self) -> list[Check]:
+        """Every check to run, in report order, tagged with its role and owning claim.
+
+        Preconditions first: they are what makes the claims meaningful, and running them
+        first means a broken setup surfaces before a pile of claim failures it caused.
+        """
+        out: list[Check] = []
+        for chk in self.preconditions:
+            out.append(chk.tagged(role="precondition"))
+        for claim in self.claims:
+            for chk in claim.checks:
+                out.append(chk.tagged(role="evidence", claim=claim.id))
+        out.extend(chk.tagged(role="evidence") for chk in self.checks)
+        return out
+
     def validate_semantics(self) -> list[str]:
         """Problems beyond schema/type validity: bad verbs, arity, missing files."""
         problems: list[str] = []
         for chk in self.checks:
             for msg in chk.validate_against_registry():
                 problems.append(f"checks[{chk.lineno}] {msg}: '{chk.raw}'")
+        for chk in self.preconditions:
+            for msg in chk.validate_against_registry():
+                problems.append(f"preconditions[{chk.lineno}] {msg}: '{chk.raw}'")
+        seen: set[str] = set()
+        for claim in self.claims:
+            if claim.id in seen:
+                problems.append(f"claims: duplicate id '{claim.id}'")
+            seen.add(claim.id)
+            if not claim.checks:
+                # A claim with no evidence would render as vacuously PROVEN, which is worse
+                # than not making the claim at all.
+                problems.append(f"claims[{claim.id}]: has no checks (a claim needs evidence)")
+            for chk in claim.checks:
+                for msg in chk.validate_against_registry():
+                    problems.append(f"claims[{claim.id}][{chk.lineno}] {msg}: '{chk.raw}'")
         if not (self.has_compose_template or self.has_render_sh):
             problems.append("missing services.yml.j2 (or a legacy render.sh)")
         return problems
@@ -116,7 +192,9 @@ def load_module(module_dir: Path) -> Module:
         raise ValueError(f"{yaml_path}: top level must be a mapping")
 
     checks_block = raw.pop("checks", None)
-    mod = Module(**raw, checks=parse_checks(checks_block))
+    precond_block = raw.pop("preconditions", None)
+    mod = Module(**raw, checks=parse_checks(checks_block),
+                 preconditions=parse_checks(precond_block))
     mod.path = module_dir
     mod.has_checks_sh = (module_dir / "checks.sh").is_file()
     mod.has_render_sh = (module_dir / "render.sh").is_file()

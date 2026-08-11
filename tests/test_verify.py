@@ -664,3 +664,48 @@ def test_get_resource_uses_two_arg_form_for_scope_qualified_names():
     # unscoped kinds keep the one-arg form every other module relies on
     c.get_resource("token", "op-oidc-token")
     assert "token/op-oidc-token" in seen[-1]
+
+
+# ---- claim roll-up ----------------------------------------------------------
+# A claim has THREE outcomes. Collapsing UNTESTED into FAIL would assert a disproof the run
+# cannot support; collapsing it into PASS would report a green claim nothing exercised.
+class _FakeClaim:
+    def __init__(self, cid, statement="s", why="w"):
+        self.id, self.statement, self.why = cid, statement, why
+
+
+class _FakeModule:
+    def __init__(self, *claims):
+        self.claims = list(claims)
+
+
+def _res(status, claim="", role="evidence"):
+    return CheckResult(status, "m", "v", [], claim=claim, role=role)
+
+
+def test_claim_proven_when_all_its_checks_pass():
+    from harness.verify import claim_verdicts
+    mod = _FakeModule(_FakeClaim("a"))
+    out = claim_verdicts(mod, [_res("PASS", "a"), _res("PASS", "a"),
+                               _res("PASS", role="precondition")])
+    assert out[0]["verdict"] == "PROVEN" and out[0]["passed"] == 2 and out[0]["total"] == 2
+
+
+def test_claim_disproven_when_one_of_its_checks_fails():
+    from harness.verify import claim_verdicts
+    out = claim_verdicts(_FakeModule(_FakeClaim("a")), [_res("PASS", "a"), _res("FAIL", "a")])
+    assert out[0]["verdict"] == "DISPROVEN" and out[0]["passed"] == 1
+
+
+def test_failed_precondition_makes_every_claim_untested_not_disproven():
+    from harness.verify import claim_verdicts
+    mod = _FakeModule(_FakeClaim("a"), _FakeClaim("b"))
+    # the bot never joined, so status was never populated: the claims were not exercised.
+    results = [_res("FAIL", role="precondition"), _res("PASS", "a"), _res("FAIL", "b")]
+    assert [c["verdict"] for c in claim_verdicts(mod, results)] == ["UNTESTED", "UNTESTED"]
+
+
+def test_claim_rollup_ignores_checks_belonging_to_other_claims():
+    from harness.verify import claim_verdicts
+    out = claim_verdicts(_FakeModule(_FakeClaim("a")), [_res("PASS", "a"), _res("FAIL", "b")])
+    assert out[0]["verdict"] == "PROVEN" and out[0]["total"] == 1

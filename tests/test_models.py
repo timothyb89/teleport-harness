@@ -133,3 +133,78 @@ def test_shipped_module_gating_matches_yaml():
     assert oidc.provides_feature == "generic_oidc"
     assert oidc.requires_features == ["generic_oidc"]
     assert oidc.min_version == "v18"
+
+
+# ---- claims + preconditions -------------------------------------------------
+# The structured form: a module says WHAT it proves and WHY the evidence establishes it,
+# instead of emitting a flat list of verdicts a reader has to reverse-engineer.
+_CLAIM_YAML = """
+name: demo
+description: demo
+claims:
+  - id: preserved
+    statement: status survives an update
+    why: a bot bound a key first, then an accepted update left it unchanged
+    checks: |
+      resource_field token/t status.x
+      log_count svc ge 1 RESULT foo: PASS
+  - id: honored
+    statement: status is honored on create
+    checks: |
+      resource_field token/u status.y
+preconditions: |
+  bot_joined b bound_keypair
+"""
+
+
+def _demo_module(tmp_path: Path, body: str) -> Module:
+    d = tmp_path / "demo"
+    d.mkdir()
+    (d / "module.yaml").write_text(body)
+    (d / "services.yml.j2").write_text("services: {}\n")
+    return load_module(d)
+
+
+def test_claims_parse_with_nested_checks(tmp_path):
+    m = _demo_module(tmp_path, _CLAIM_YAML)
+    assert [c.id for c in m.claims] == ["preserved", "honored"]
+    assert m.claims[0].why.startswith("a bot bound a key")
+    assert len(m.claims[0].checks) == 2
+    assert m.validate_semantics() == []
+
+
+def test_all_checks_tags_role_and_claim_in_report_order(tmp_path):
+    m = _demo_module(tmp_path, _CLAIM_YAML)
+    got = [(c.verb, c.role, c.claim) for c in m.all_checks()]
+    # preconditions first — a broken setup should surface before the failures it caused
+    assert got == [
+        ("bot_joined", "precondition", ""),
+        ("resource_field", "evidence", "preserved"),
+        ("log_count", "evidence", "preserved"),
+        ("resource_field", "evidence", "honored"),
+    ]
+
+
+def test_claim_without_checks_is_rejected(tmp_path):
+    # would render as vacuously PROVEN, which is worse than not claiming it at all
+    m = _demo_module(tmp_path, "name: demo\nclaims:\n  - id: empty\n    statement: nothing\n")
+    assert any("has no checks" in p for p in m.validate_semantics())
+
+
+def test_duplicate_claim_ids_rejected(tmp_path):
+    body = ("name: demo\nclaims:\n"
+            "  - {id: dup, statement: a, checks: 'node_present x'}\n"
+            "  - {id: dup, statement: b, checks: 'node_present y'}\n")
+    assert any("duplicate id 'dup'" in p for p in _demo_module(tmp_path, body).validate_semantics())
+
+
+def test_bad_verb_inside_a_claim_is_flagged_with_its_claim_id(tmp_path):
+    body = "name: demo\nclaims:\n  - {id: c1, statement: s, checks: 'nope_verb x'}\n"
+    problems = _demo_module(tmp_path, body).validate_semantics()
+    assert any("claims[c1]" in p and "unknown check verb" in p for p in problems)
+
+
+def test_legacy_flat_checks_still_work_and_stay_ungrouped(tmp_path):
+    m = _demo_module(tmp_path, "name: demo\nchecks: |\n  node_present agent\n")
+    assert not m.claims
+    assert [(c.role, c.claim) for c in m.all_checks()] == [("evidence", "")]

@@ -24,6 +24,10 @@ cluster_report() {
   # apply-on-startup resources (fed to `teleport start --apply-on-startup`), so setup.json's
   # rendered/apply-on-startup/… source links resolve in the shared bundle.
   cp -R "$out/apply-on-startup" "$bundle/rendered/" 2>/dev/null || true
+  # the scripts modules RUN (copied here by the renderer from each unit's scripts/). Without
+  # these a script-backed check is unreviewable: the report cites the script's output while
+  # the script itself was never published.
+  cp -R "$out/scripts" "$bundle/rendered/" 2>/dev/null || true
   # structured verification results (per-module, written by the Python verifier)
   cp "$out"/results-*.json "$bundle/" 2>/dev/null || true
   # setup provenance manifest (roles/tokens/bots/services + source links), for inspection

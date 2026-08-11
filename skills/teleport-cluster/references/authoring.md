@@ -54,6 +54,56 @@ shared component + bootstrap hook). A module directory:
     log_contains        my-bot-deny denied|not found|unauthorized   # negative case
     no_output_file      my-bot-deny /out/id/identity
   ```
+
+### Write claims, not just checks
+Reports are read by people with none of your context (that's the whole point of `share`). A
+flat check list gives them verdicts and makes them reverse-engineer the argument. Prefer
+`preconditions:` + `claims:` — see `modules/bound_keypair_status/` for a worked example:
+
+```yaml
+preconditions: |             # scaffolding: proves the SCENARIO was set up
+  bot_joined  my-bot bound_keypair
+  log_count   mutator ge 1 RESULT mutator: DONE
+
+claims:
+  - id: preserved-on-update
+    statement: If the token already exists, .status is preserved across any update.
+    why: >                   # the LOGICAL CHAIN — how these checks establish the statement,
+      The bot bound a key first, so status is server-owned and non-empty. Two updates were
+      then ACCEPTED (each carries a distinct sentinel the mutator waits for), and after each,
+      every status field still reads its pre-update value. So this is preservation through a
+      SUCCESSFUL update, not one that was rejected.
+    checks: |
+      resource_field_not token/t status.bound_keypair.bound_public_key ForgedKey
+      log_count          mutator ge 1 RESULT preserved: PASS
+```
+
+- **A claim is what a reviewer would write down as the test item.** If you keep a list of
+  manual test items for a fix, those are your claims — one each, verbatim.
+- **`why` is the deliverable.** Checks say what held; `why` says why that's sufficient. State
+  what the checks rule OUT (a rejected update, a stale read, a forged value passing a presence
+  check), because that's the part a reader can't infer.
+- **Preconditions are not evidence.** If one fails the claims are marked UNTESTED, not
+  DISPROVEN. Put "did the scenario even happen" checks here (`bot_joined`, the actor ran to
+  completion) and keep claim checks to things that actually discriminate.
+- **A claim with no checks is a validation error** — it would render as vacuously PROVEN.
+
+### Scripts: act and record, don't assert
+Driving state from a script is fine and often necessary, but keep the script out of the
+judging seat. `log_count svc ge 1 RESULT foo: PASS` makes the report cite a magic string whose
+meaning lives outside it. Two rules:
+- Mount from **`{{ scripts }}`**, never `{{ module_dir }}/scripts` — the renderer copies
+  `scripts/` into the bundle, so the actor ships with the report and appears in `share` gists.
+  Otherwise a reviewer sees the inputs and the verdicts but not the thing connecting them.
+- Have the script **log its inputs and observed values**, not just a verdict, and put the
+  interpretation in the claim's `why`. Better still, where a declarative verb can assert the
+  same fact against live cluster state (`resource_field`, `resource_field_not`), prefer that:
+  it carries its own proof. Reserve script output for facts only the script can know — e.g.
+  a before/after comparison across a mutation it performed.
+- **Say WHEN.** Cluster state is time-dependent; a check reads state at verify time, which may
+  be long after the script ran and after anything else the plan did to the cluster. If a claim
+  depends on ordering, say so in `why` — and prefer asserting on state nothing else rewrites
+  (see the bound_keypair_status note about bootstrap re-application reverting a spec edit).
 - **`services.yml.j2`** — a compose FRAGMENT (`services:` + optional `volumes:`), your bots/agents
   only (no auth — that's the base). Jinja context: `cluster_id fqdn port image out module_dir
   lab_domain harness_domain` + everything in `render.yaml`. Container names become

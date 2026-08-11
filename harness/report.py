@@ -26,6 +26,10 @@ from pathlib import Path
 import yaml
 
 _BADGE = {"PASS": "✅ PASS", "FAIL": "❌ FAIL", "SKIP": "⏭️ SKIP"}
+# A claim has three outcomes, not two: UNTESTED means a precondition failed, so the scenario
+# was never set up and the run can neither prove nor disprove the claim. Rendering that as a
+# plain FAIL would assert a disproof the evidence does not support.
+_CLAIM_BADGE = {"PROVEN": "✅ PROVEN", "DISPROVEN": "❌ DISPROVEN", "UNTESTED": "⚠️ UNTESTED"}
 
 
 def _read_meta(state_dir: Path) -> dict:
@@ -278,6 +282,10 @@ def _anchor(module: str, pid: str) -> str:
     return f"proof-{module}-{pid}"
 
 
+def _claim_anchor(module: str, cid: str) -> str:
+    return f"claim-{module}-{cid}"
+
+
 def _checks_section(L: list[str], modules: list[dict]) -> None:
     L.append("## Checks")
     L.append("")
@@ -298,15 +306,57 @@ def _checks_section(L: list[str], modules: list[dict]) -> None:
                 return _link("↳ findings", f"#{_findings_anchor(module)}")
             return _link("↳", f"#{_anchor(module, pid)}")
 
-        # check table, linking each check to its proof section(s)
-        L.append("| status | check | detail | proof |")
-        L.append("|--------|-------|--------|-------|")
-        for i, r in enumerate(results):
-            verb_args = " ".join([r.get("verb", "")] + r.get("args", [])).strip()
-            links = " ".join(_proof_link(pid) for pid in refs.get(i, []) if pid in proofs) or "—"
-            L.append(f"| {_BADGE.get(r['status'], r['status'])} | `{_cell(verb_args)}` "
-                     f"| {_cell(r.get('msg', ''))} | {links} |")
-        L.append("")
+        def _table(rows: list[int]) -> None:
+            L.append("| status | check | detail | proof |")
+            L.append("|--------|-------|--------|-------|")
+            for i in rows:
+                r = results[i]
+                verb_args = " ".join([r.get("verb", "")] + r.get("args", [])).strip()
+                links = " ".join(_proof_link(pid) for pid in refs.get(i, []) if pid in proofs) or "—"
+                L.append(f"| {_BADGE.get(r['status'], r['status'])} | `{_cell(verb_args)}` "
+                         f"| {_cell(r.get('msg', ''))} | {links} |")
+            L.append("")
+
+        claims = m.get("claims") or []
+        if claims:
+            # Claim-structured module: lead with WHAT is claimed and WHY the evidence
+            # establishes it, then the checks as evidence beneath. A reader without context
+            # should be able to stop after the summary table and still know what was proven.
+            L.append("| verdict | claim | evidence |")
+            L.append("|---------|-------|----------|")
+            for cl in claims:
+                L.append(f"| {_CLAIM_BADGE.get(cl['verdict'], cl['verdict'])} "
+                         f"| {_link(_cell(cl['statement']), '#' + _claim_anchor(module, cl['id']))} "
+                         f"| {cl['passed']}/{cl['total']} checks |")
+            L.append("")
+
+            pre = [i for i, r in enumerate(results) if r.get("role") == "precondition"]
+            if pre:
+                L.append("<details><summary><b>Preconditions</b> — the scenario was set up "
+                         "as intended (scaffolding, not evidence for any claim)</summary>")
+                L.append("")
+                _table(pre)
+                L.append("</details>")
+                L.append("")
+
+            for cl in claims:
+                L.append(f'<a id="{_claim_anchor(module, cl["id"])}"></a>')
+                L.append("")
+                L.append(f"#### {_CLAIM_BADGE.get(cl['verdict'], cl['verdict'])} {cl['statement']}")
+                L.append("")
+                if cl.get("why"):
+                    L.append("**How this is established.** " + cl["why"].strip())
+                    L.append("")
+                _table([i for i, r in enumerate(results) if r.get("claim") == cl["id"]])
+
+            ungrouped = [i for i, r in enumerate(results)
+                         if r.get("role") != "precondition" and not r.get("claim")]
+            if ungrouped:
+                L.append("#### Other checks")
+                L.append("")
+                _table(ungrouped)
+        else:
+            _table(list(range(len(results))))
 
         # proof sections — each rendered once, in first-reference order, untruncated,
         # with the checks made against it spelled out (audit-event field=value assertions).

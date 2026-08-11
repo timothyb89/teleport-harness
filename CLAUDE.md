@@ -69,13 +69,31 @@ brain owns decisions + rendering, the shell owns orchestration.
 
 ### Module contract (`modules/<name>/`)
 - `module.yaml` — gating (`provides_feature`, `requires_features`, `min_version`)
-  **plus** the verification spec: a `checks: |` block of `<assert-verb> <args...>` lines
-  (the source of truth). `#` comment lines allowed. Parsed + validated by the Python
-  brain (`harness/models.py`); run `cluster validate <name>` to check it.
+  **plus** the verification spec. `#` comment lines allowed. Parsed + validated by the Python
+  brain (`harness/models.py`); run `cluster validate <name>` to check it. Two shapes:
+  - **`claims:` + `preconditions:` (preferred for new modules)** — say WHAT the module proves
+    and WHY the evidence establishes it. Each claim is `{id, statement, why, checks: |}` with
+    its checks NESTED inside it (not cross-referenced by id, so a claim can't reference a
+    missing check and a check can't be orphaned). `preconditions:` is scaffolding — the
+    checks that prove the scenario was set up (a bot really joined, an identity was really
+    written). Rationale: a check rarely means anything alone. `resource_field_not
+    …bound_bot_instance_id 000…` is only meaningful beside "a real bot bound a key first" and
+    "an apply carrying that nil UUID was accepted" — the argument is a property of the GROUP,
+    so the group is what gets a name, a statement and a rationale. Without this the report is
+    evidence with no argument, and a reviewer has to reverse-engineer which verdicts add up
+    to what. A failing PRECONDITION marks its claims **UNTESTED**, not DISPROVEN — the run
+    never exercised them, and asserting a disproof it can't support is worse than saying so.
+  - **flat `checks: |`** — the original shape, still fully supported (most modules use it).
+    A module may use both; flat checks render under "Other checks".
 - `services.yml.j2` — a jinja **fragment** (a partial compose: `services:` + optional `volumes:`)
   with just this module's bots/agents. The renderer (`harness/render.py`) deep-merges it onto the
   base auth scaffold + any shared components. Context = cluster vars (`cluster_id`/`fqdn`/`port`/
-  `image`/`out`/`module_dir`) merged with the module's `render.yaml`.
+  `image`/`out`/`module_dir`/`scripts`) merged with the module's `render.yaml`.
+  **Mount scripts from `{{ scripts }}`, never `{{ module_dir }}/scripts`.** The renderer copies
+  a unit's `scripts/` into `$OUT/scripts/<unit>/` and points `{{ scripts }}` there, so the
+  script ships inside the run bundle (`rendered/scripts/…`) and therefore in a `share` gist —
+  `harness share` walks `rendered/` recursively. A script-backed check is otherwise
+  unreviewable: it cites a log line whose meaning lives in a file that was never published.
 - `render.yaml` *(optional)* — render context: `components: [oidc-server]` (shared deps to pull in),
   `auth_env: {…}` (unioned onto the auth service), `bots: [{name,roles,token}]` (bootstrapped bots),
   and any template vars. `config/*.j2` — teleport/tbot configs. `bootstrap/*.yaml[.j2]` — roles +
@@ -300,7 +318,12 @@ check TABLE linking to anchored, untruncated proof sections; and — for agent-d
 dedicated **Agent findings** section rendering the agent's verdict as formatted, severity-sorted
 issues [markdown preserved] + a steps list, with the raw JSON + transcript collapsed), per-module
 `results-*.json`, the renderer's `setup.json` provenance manifest, the raw `console.txt`,
-per-service `logs/`, and `rendered/` (compose + config + bootstrap). Leaves the cluster up.
+per-service `logs/`, and `rendered/` (compose + config + bootstrap + scripts). Leaves the cluster up.
+For a module with `claims:`, the per-module section leads with a **claim summary table**
+(verdict · statement · N/M checks) linking to one section per claim: the statement, a
+**"How this is established"** rationale, and only then the checks that serve it — with
+preconditions collapsed separately as scaffolding. That ordering is the point: a reviewer with
+no context reads what was proven and why before meeting a single verb.
 `share <run-bundle|id>` publishes a bundle as a GitHub gist (`gh gist create`, secret by default;
 `--public` opts in with a secrets warning): the brain (`harness gist-stage` → `harness/share.py`)
 flattens the bundle (gists are flat — `rendered/config/x.yaml` → `rendered--config--x.yaml`) and

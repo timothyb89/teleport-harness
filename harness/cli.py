@@ -68,8 +68,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
             for p in problems:
                 print(f"FAIL {m.name}: {p}", file=sys.stderr)
         else:
-            n = len(m.checks)
-            print(f"ok   {m.name}: {n} check(s), gates={m.requires_features or '[]'}"
+            n = len(m.all_checks())
+            claims = f", {len(m.claims)} claim(s)" if m.claims else ""
+            print(f"ok   {m.name}: {n} check(s){claims}, gates={m.requires_features or '[]'}"
                   f" min_version={m.min_version or '-'}")
     return rc
 
@@ -100,7 +101,7 @@ def cmd_checks(args: argparse.Namespace) -> int:
         for p in problems:
             print(f"FAIL {m.name}: {p}", file=sys.stderr)
         return EXIT_ERR
-    for chk in m.checks:
+    for chk in m.all_checks():
         print(" ".join([chk.verb, *chk.args]))
     return EXIT_OK
 
@@ -110,7 +111,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     `PASS/FAIL/SKIP` + `RESULT:` text lib/verify.sh used, optionally write JSON.
     Exit 1 on any FAIL (so plan.sh's retry loop keeps working)."""
     from .cluster import DockerCluster
-    from .verify import collect_proofs, node_summary, render, verify
+    from .verify import claim_verdicts, collect_proofs, node_summary, render, verify
 
     mdir = _modules_dir(args.modules_dir) / args.module
     m = load_module(mdir)
@@ -123,16 +124,18 @@ def cmd_verify(args: argparse.Namespace) -> int:
     state_dir = Path(args.state_dir) if args.state_dir else None
     cluster = DockerCluster(args.cluster_id, state_dir=state_dir)
     nodes = cluster.get_nodes()  # captured once for both verification + the report inventory
-    results = verify(cluster, m.checks, module_dir=mdir, nodes=nodes)
+    results = verify(cluster, m.all_checks(), module_dir=mdir, nodes=nodes)
     text, passed = render(results)
     print(text)
 
     if args.json_out:
         payload = {
             "module": m.name,
+            "description": m.description,
             "cluster_id": args.cluster_id,
             "passed": passed,
             "nodes": node_summary(nodes),
+            "claims": claim_verdicts(m, results),
             "results": [r.as_dict() for r in results],
             "proofs": [p.as_dict() for p in collect_proofs(results)],
         }

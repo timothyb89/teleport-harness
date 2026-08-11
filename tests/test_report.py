@@ -200,3 +200,58 @@ def test_no_agent_findings_section_without_agent_module(tmp_path):
     # the standard (non-agent) bundle must not grow an empty Agent findings section
     md = build_markdown(_state_dir(tmp_path))
     assert "## Agent findings" not in md
+
+
+# ---- claim-structured modules ------------------------------------------------
+# The layer the report was missing: WHAT is claimed and WHY the checks establish it. A
+# reviewer with no context should be able to read the summary and stop there.
+def _claim_state_dir(tmp_path: Path, verdict="PROVEN", precondition="PASS") -> Path:
+    (tmp_path / "meta.env").write_text("CLUSTER_ID=c1\nMODULES=demo\n")
+    (tmp_path / "results-demo.json").write_text(json.dumps({
+        "module": "demo", "cluster_id": "c1", "passed": verdict == "PROVEN",
+        "nodes": [],
+        "claims": [{"id": "preserved", "statement": "status survives an update",
+                    "why": "a bot bound a key first, then an accepted update left it unchanged",
+                    "verdict": verdict, "passed": 1, "total": 1}],
+        "results": [
+            {"status": precondition, "verb": "bot_joined", "args": ["b", "bound_keypair"],
+             "msg": "joined", "proof_refs": [], "assertions": [],
+             "claim": "", "role": "precondition"},
+            {"status": "PASS" if verdict == "PROVEN" else "FAIL",
+             "verb": "resource_field_not", "args": ["token/t", "status.x", "forged"],
+             "msg": "not forged", "proof_refs": ["resource-aaa111"], "assertions": [],
+             "claim": "preserved", "role": "evidence"},
+        ],
+        "proofs": [{"id": "resource-aaa111", "kind": "resource", "title": "token/t",
+                    "content": "{}", "lang": "json", "source": ""}],
+    }))
+    return tmp_path
+
+
+def test_claims_render_statement_rationale_and_verdict(tmp_path):
+    md = build_markdown(_claim_state_dir(tmp_path))
+    assert "✅ PROVEN" in md
+    assert "status survives an update" in md
+    # the rationale — the logical chain a bare verdict list cannot convey
+    assert "How this is established." in md
+    assert "a bot bound a key first" in md
+    # preconditions are labelled as scaffolding, not presented as evidence for the claim
+    assert "Preconditions" in md and "scaffolding" in md
+
+
+def test_failed_precondition_renders_untested_not_disproven(tmp_path):
+    md = build_markdown(_claim_state_dir(tmp_path, verdict="UNTESTED", precondition="FAIL"))
+    assert "⚠️ UNTESTED" in md
+    assert "DISPROVEN" not in md  # the run cannot support a disproof it never exercised
+
+
+def test_disproven_claim_is_marked(tmp_path):
+    md = build_markdown(_claim_state_dir(tmp_path, verdict="DISPROVEN"))
+    assert "❌ DISPROVEN" in md
+
+
+def test_module_without_claims_still_renders_flat_table(tmp_path):
+    # every pre-existing module keeps its current report shape — claims are opt-in
+    md = build_markdown(_state_dir(tmp_path))
+    assert "| status | check | detail | proof |" in md
+    assert "PROVEN" not in md

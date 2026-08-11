@@ -1,4 +1,4 @@
-# bound_keypair token .status preservation on update.
+# bound_keypair token .status preservation on the UpsertToken RPC path.
 #
 # Server-side state for a bound_keypair token lives in `.status.bound_keypair` — the bound
 # public key, the bound bot instance, the recovery counter. That state is written by the JOIN
@@ -8,12 +8,10 @@
 #   incoming copy is ALWAYS discarded; to change status you must delete and recreate.
 #
 # Without it, re-applying a local copy of a token (`tctl create -f`, a terraform apply, an
-# operator reconcile) wipes the bound key and knocks the bot offline. This module proves the
-# rule end to end against a REAL bot that has actually bound a key.
+# operator reconcile) wipes the bound key and knocks the bot offline.
 #
 # KNOWN-FAILING PROBE (the terraform_generic_oidc pattern): against a build without the fix,
-# the spec-only re-apply wipes status and the `status.bound_keypair.*` checks FAIL. They flip
-# to PASS with no edits to this module once UpsertBoundKeypairToken preserves status.
+# claims 1 and 2 come back DISPROVEN. They flip to PROVEN with no edits to this module.
 name: bound_keypair_status
 description: >
   bound_keypair token .status is server-owned: re-applying a token (spec-only, or carrying a
@@ -23,57 +21,77 @@ provides_feature: bound_keypair_status
 requires_features: [bound_keypair]
 min_version: v17
 
-checks: |
-  # --- precondition: a real bot bound a real key, so status is server-populated ----------
+# Scaffolding. If any of these fail the claims below were never exercised, so the report
+# marks them UNTESTED rather than reporting failures it cannot attribute.
+preconditions: |
+  # a real bot really joined via bound_keypair, so status.bound_keypair is server-populated
+  # and non-empty — without this every "preserved" assertion below is vacuous.
   bot_joined          bks-bot bound_keypair
   audit_event         bot.join bot_name=bks-bot method=bound_keypair success=true
   output_file         bksbot /out/id/identity
-
-  # --- THE RULE: status survived a spec-only re-apply AND a tampered-status re-apply -----
-  # These read the LIVE token after the mutator finished. They name the TAMPERED sentinels
-  # rather than merely asserting presence: the pre-fix run proved a bare
-  # `resource_field …bound_public_key` PASSES on the worst outcome, because the forged key
-  # the tampered apply supplied is still a value sitting at that path. Presence is only a
-  # sound assertion when the failure mode leaves a HOLE; here it fills one.
-  resource_field_not  token/bks-token status.bound_keypair.bound_public_key HarnessTamperedKey
-  resource_field_not  token/bks-token status.bound_keypair.bound_bot_instance_id 00000000-0000-0000-0000-000000000000
-  # exactly one join happened, so the counter must still read 1 — this catches BOTH failure
-  # shapes: a wipe (absent/0) and the tampered apply's 99.
-  resource_field      token/bks-token status.bound_keypair.recovery_count 1
-
-  # the mutator's own before/after EXACT-value comparison agrees (stronger than presence:
-  # it proves the key is the SAME key, not merely some key). log_count, not log_contains —
-  # log_contains SKIPs when it finds nothing, which would hide a regression.
-  log_count           bkstatus ge 1 RESULT spec-only-reapply-preserves-status: PASS
-  log_count           bkstatus ge 1 RESULT tampered-status-discarded: PASS
-
-  # --- ...while a legitimate SPEC edit in the very same apply DID land -------------------
-  # Guards the over-correction: preserving status must not mean ignoring the whole update.
-  # This is the mutator's barrier (it polls until the new recovery.limit is readable), so
-  # it proves the update was ACCEPTED, at the moment it happened.
-  #
-  # Deliberately NOT a resource_field on token/bks-token's recovery.limit. That would
-  # assert the edit PERSISTS, which is a different and much weaker-held property: bks-token
-  # comes from bootstrap/, and the shared auth-entrypoint re-applies every module's
-  # bootstrap YAML on every auth start. Composed with a module that restarts auth (e.g.
-  # bound_keypair_apply_on_startup, which does so to exercise its own re-apply path) the
-  # original limit is legitimately restored and the check fails on correct behaviour.
-  # Observed live: 9 restarts, 9 re-applies, spec back to 1 — while status survived all of
-  # them, which is the property this module actually exists to guard.
-  log_count           bkstatus ge 1 RESULT spec-edit-applied: PASS
-  # An objective spec assertion that IS restart-safe: bks-recreate is created by the
-  # mutator, never by bootstrap, so nothing re-applies it behind our back.
-  resource_field      token/bks-recreate spec.bound_keypair.recovery.limit 5
-
-  # --- delete + recreate is the sanctioned escape hatch (proved on a spare token) --------
-  # create trusts incoming status; upsert discards it; delete+recreate sets it.
-  log_count           bkstatus ge 1 RESULT create-accepts-status: PASS
-  log_count           bkstatus ge 1 RESULT upsert-discards-status: PASS
-  log_count           bkstatus ge 1 RESULT recreate-sets-status: PASS
-  resource_field      token/bks-recreate status.bound_keypair.registration_secret harness-bks-marker-b
-
-  # --- usability: the bot's identity still authenticates after all the re-applies --------
-  identity_authorized bksbot /out/id/identity
-
-  # --- the mutator ran to completion (a crashed mutator must not read as a pass) ---------
+  # the mutator ran to completion; a crashed mutator must not read as a pass.
   log_count           bkstatus ge 1 RESULT mutator: DONE
+
+claims:
+  - id: preserved-on-update
+    statement: If the token already exists, .status is preserved across any update.
+    why: >
+      The bot bound a key during onboarding, so `status.bound_keypair` holds a real public
+      key, bot instance and recovery counter before anything is applied (see Preconditions).
+      The mutator then applies two updates that a real admin tool would send — one carrying
+      NO status at all (the `tctl get | apply`, terraform and operator roundtrip), and one
+      carrying a fully forged status — and after each, re-reads the token and compares every
+      status field against the values captured beforehand.
+      Both applies were ACCEPTED: each carries a distinct `recovery.limit` sentinel and the
+      mutator blocks until that sentinel is readable before comparing, which proves the write
+      landed AND defeats a stale cached read (`tctl get` resolves through the auth cache, so
+      an immediate read can return the pre-write token — a run once passed for exactly that
+      reason). So this is preservation through a SUCCESSFUL update, not an update that was
+      rejected or silently dropped.
+      The two `resource_field_not` checks name the forged sentinels rather than merely
+      asserting the fields are present, because the tampered apply SUPPLIES values: a bare
+      presence check passes on the worst outcome, since a forgery is still a value.
+    checks: |
+      log_count           bkstatus ge 1 RESULT spec-only-reapply-preserves-status: PASS
+      log_count           bkstatus ge 1 RESULT tampered-status-discarded: PASS
+      resource_field_not  token/bks-token status.bound_keypair.bound_public_key HarnessTamperedKey
+      resource_field_not  token/bks-token status.bound_keypair.bound_bot_instance_id 00000000-0000-0000-0000-000000000000
+      resource_field      token/bks-token status.bound_keypair.recovery_count 1
+      log_count           bkstatus ge 1 RESULT upsert-discards-status: PASS
+
+  - id: status-honored-on-create
+    statement: If the token does NOT already exist, .status on the incoming copy is honored.
+    why: >
+      This is the other half of the rule, and the reason the rule is usable at all: delete +
+      recreate is the sanctioned way to change status, and backup/restore depends on a create
+      accepting the status it is given.
+      Proved on a spare token nothing ever joins with, so the live bot's token is undisturbed.
+      The mutator creates it carrying status marker A and confirms A landed; the identical
+      marker-B file is then applied twice — once as an UPDATE, where it must be discarded, and
+      once after a DELETE, where it must be accepted. One file, two opposite outcomes, the
+      only difference being whether the token already existed. That contrast is what
+      distinguishes "status is honored on create" from "status is honored always".
+    checks: |
+      log_count           bkstatus ge 1 RESULT create-accepts-status: PASS
+      log_count           bkstatus ge 1 RESULT recreate-sets-status: PASS
+      resource_field      token/bks-recreate status.bound_keypair.registration_secret harness-bks-marker-b
+      resource_field      token/bks-recreate spec.bound_keypair.recovery.limit 5
+
+  - id: updates-still-work
+    statement: Preserving status does not block legitimate spec edits, and the bot stays usable.
+    why: >
+      Guards the over-correction. "Never touch status" must not degrade into "ignore the
+      update", and preserving status is worthless if the bot it belongs to is broken anyway.
+      The spec check is the mutator's own barrier: it polls until the new `recovery.limit` is
+      readable, so the edit is observed to have landed at the moment it happened.
+      It is deliberately NOT asserted against the live token at verify time — `bks-token`
+      comes from `bootstrap/`, and the shared auth-entrypoint re-applies every module's
+      bootstrap YAML on every auth start, so a sibling module that restarts auth legitimately
+      restores the original limit. Observed live: 9 restarts, 9 re-applies, spec back to its
+      bootstrap value while status survived all of them.
+      The identity check closes the loop behaviourally: a status wipe would leave the bot
+      unable to re-join, so an identity that still authenticates is end-to-end evidence that
+      preservation worked.
+    checks: |
+      log_count           bkstatus ge 1 RESULT spec-edit-applied: PASS
+      identity_authorized bksbot /out/id/identity

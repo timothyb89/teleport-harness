@@ -71,6 +71,8 @@ class CheckResult:
     proofs: list[ProofItem] = field(default_factory=list)  # proof items this check cites
     assertions: list[str] = field(default_factory=list)     # the individual conditions asserted
     # (e.g. audit-event `field = value` pairs) — published by the verb, shown under the proof.
+    claim: str = ""          # id of the claim this check serves ("" = precondition/ungrouped)
+    role: str = "evidence"   # evidence | precondition
 
     def line(self) -> str:
         return f"  {self.status:<4} {self.msg}"
@@ -78,7 +80,34 @@ class CheckResult:
     def as_dict(self) -> dict:
         return {"status": self.status, "verb": self.verb, "args": self.args,
                 "msg": self.msg, "proof_refs": [p.id for p in self.proofs],
-                "assertions": self.assertions}
+                "assertions": self.assertions, "claim": self.claim, "role": self.role}
+
+
+def claim_verdicts(module, results: list["CheckResult"]) -> list[dict]:
+    """Roll each claim up from its checks, for the report.
+
+    Three outcomes, not two. A claim whose own checks pass is PROVEN and one with a failing
+    check is DISPROVEN — but if a PRECONDITION failed, the scenario was never set up, so the
+    claim is UNTESTED. Collapsing that into PASS/FAIL would either invent a disproof the run
+    cannot support or, worse, report a green claim that nothing exercised.
+    """
+    setup_ok = all(r.status != FAIL for r in results if r.role == "precondition")
+    out = []
+    for claim in getattr(module, "claims", []):
+        mine = [r for r in results if r.claim == claim.id]
+        failed = [r for r in mine if r.status == FAIL]
+        if not setup_ok:
+            verdict = "UNTESTED"
+        elif failed:
+            verdict = "DISPROVEN"
+        else:
+            verdict = "PROVEN"
+        out.append({
+            "id": claim.id, "statement": claim.statement, "why": claim.why,
+            "verdict": verdict,
+            "passed": sum(1 for r in mine if r.status == PASS), "total": len(mine),
+        })
+    return out
 
 
 def collect_proofs(results: list[CheckResult]) -> list[ProofItem]:
@@ -650,9 +679,11 @@ IMPLS: dict[str, Impl] = {
 def run_check(cluster: Cluster, nodes: list[dict], chk: Check) -> CheckResult:
     impl = IMPLS.get(chk.verb)
     if impl is None:
-        return CheckResult(FAIL, f"unknown check verb '{chk.verb}'", chk.verb, chk.args)
-    res = impl(cluster, nodes, chk.args)
-    res.verb, res.args = chk.verb, chk.args
+        res = CheckResult(FAIL, f"unknown check verb '{chk.verb}'", chk.verb, chk.args)
+    else:
+        res = impl(cluster, nodes, chk.args)
+        res.verb, res.args = chk.verb, chk.args
+    res.claim, res.role = chk.claim, chk.role
     return res
 
 

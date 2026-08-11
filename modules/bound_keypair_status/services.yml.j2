@@ -56,7 +56,10 @@ services:
       MARKER_A: {{ marker_a }}
       MARKER_B: {{ marker_b }}
     volumes:
-      - {{ module_dir }}/scripts:/scripts:ro
+      {# {{ scripts }} (not {{ module_dir }}/scripts) so mutate.sh is copied into the run
+         bundle and ships with `harness share` — a reviewer can read the actor behind the
+         checks that cite its output, instead of taking the log line on faith. #}
+      - {{ scripts }}:/scripts:ro
       - {{ out }}/config/token-spec-only.yaml:/work/token-spec-only.yaml:ro
       - {{ out }}/config/token-tampered.yaml:/work/token-tampered.yaml:ro
       - {{ out }}/config/spare-marker-a.yaml:/work/spare-marker-a.yaml:ro

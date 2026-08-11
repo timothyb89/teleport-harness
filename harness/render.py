@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -76,6 +77,31 @@ def _render_unit_configs(unit_dir: Path, ctx: dict, cfg_out: Path) -> None:
     env = _env(cdir, TEMPLATES)
     for tmpl in sorted(cdir.glob("*.j2")):
         (cfg_out / tmpl.name[:-3]).write_text(_render_str(env, tmpl.name, ctx))
+
+
+def _collect_scripts(unit_dir: Path, out_dir: Path, origin: str) -> Path | None:
+    """Copy a unit's `scripts/` into $OUT/scripts/<origin>/, returning that dir (or None).
+
+    Fragments mount `{{ scripts }}:/scripts:ro` rather than `{{ module_dir }}/scripts`, so the
+    scripts a module RUNS end up inside the run bundle (`rendered/scripts/…`) alongside the
+    configs it applies. That matters for sharing: `harness share` walks rendered/ recursively,
+    so a reviewer opening a gist can read the actor, not just its inputs and its verdicts. A
+    script-backed check is otherwise unreviewable — it cites a log line whose meaning lives in
+    a file that was never published.
+
+    Copied verbatim, not rendered: these are shell, `{{ }}` in them is not jinja, and values
+    they need arrive as environment in the compose fragment.
+    """
+    sdir = unit_dir / "scripts"
+    if not sdir.is_dir():
+        return None
+    dest = out_dir / "scripts" / origin
+    dest.mkdir(parents=True, exist_ok=True)
+    for f in sorted(sdir.iterdir()):
+        if f.is_file():
+            shutil.copyfile(f, dest / f.name)
+            (dest / f.name).chmod(0o755)
+    return dest
 
 
 def _collect_bootstrap(unit_dir: Path, ctx: dict, boot_out: Path, origin: str) -> None:
@@ -184,7 +210,11 @@ def render_cluster(
     origins: dict[str, str] = {svc: "base" for svc in compose["services"]}
     bots: list[dict] = []
     for unit_dir, rv in units:
-        ctx = {**base_ctx, **rv, "module_dir": str(unit_dir)}
+        scripts_dir = _collect_scripts(unit_dir, out_dir, unit_dir.name)
+        ctx = {**base_ctx, **rv, "module_dir": str(unit_dir),
+               # `scripts` points INTO the bundle; `module_dir` points at the source tree.
+               # Prefer `scripts` in fragments so the actor ships with the report.
+               "scripts": str(scripts_dir) if scripts_dir else str(unit_dir / "scripts")}
         if run_prebuild:
             _run_prebuild(unit_dir, ctx)
         env = _env(unit_dir, unit_dir / "config", TEMPLATES)
