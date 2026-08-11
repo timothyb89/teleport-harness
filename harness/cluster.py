@@ -87,6 +87,20 @@ class Cluster:
         except ValueError:
             return None
 
+    def read_json(self, suffix: str, path: str):
+        """Parse a JSON file from inside a container, or None if absent/unreadable.
+
+        The seam the observation_* verbs use. Defined in terms of exec_out so it works
+        against a FakeCluster with no extra plumbing.
+        """
+        rc, out = self.exec_out(suffix, ["cat", path])
+        if rc != 0:
+            return None
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError:
+            return None
+
     def tsh_ssh(self, host_suffix: str, login: str) -> bool:  # pragma: no cover
         raise NotImplementedError
 

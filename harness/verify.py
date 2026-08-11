@@ -520,6 +520,90 @@ def _resource_field(c, nodes, args):
                        proofs=[proof], assertions=asserts)
 
 
+# --- observations: what an in-cluster actor RECORDED, rather than what it concluded ------
+# A script that drives cluster state is often the only thing that can see a before/after
+# across its own mutation. The failure mode is letting it also JUDGE: the module then greps
+# its log for `RESULT foo: PASS`, and the report cites a magic string whose meaning lives in
+# the script. The detail cell can only restate the check, and an author-written note is
+# unverified prose that silently goes stale when the script's logic changes.
+#
+# So the script ACTS and RECORDS — one JSON record per case, with the values it observed and
+# when — and these verbs do the judging. The proof becomes the recorded before/after itself,
+# so the report shows the actual values, and the detail is generated rather than asserted.
+OBSERVATIONS_PATH = "/out/observations.json"
+
+
+def _observations(c, suffix: str) -> list[dict] | None:
+    doc = c.read_json(suffix, OBSERVATIONS_PATH)
+    return doc if isinstance(doc, list) else None
+
+
+def _observation_proof(rec: dict) -> ProofItem:
+    return ProofItem("observation", f"observed: {rec.get('case', '?')}",
+                     json.dumps(rec, indent=2, sort_keys=True), lang="json")
+
+
+def _find_case(c, suffix: str, case: str):
+    """(record, error-CheckResult). Exactly one of the two is None."""
+    obs = _observations(c, suffix)
+    if obs is None:
+        return None, CheckResult(FAIL, f"{c.container(suffix)}: no {OBSERVATIONS_PATH} "
+                                       f"(did the actor run?)")
+    rec = next((r for r in obs if r.get("case") == case), None)
+    if rec is None:
+        cases = ", ".join(sorted(str(r.get("case")) for r in obs)) or "none"
+        return None, CheckResult(FAIL, f"no observation for case '{case}' (recorded: {cases})")
+    return rec, None
+
+
+def _observation_unchanged(c, nodes, args):
+    """Assert one or more fields hold the SAME value before and after a recorded case."""
+    suffix, case, fields = args[0], args[1], args[2:]
+    rec, err = _find_case(c, suffix, case)
+    if err:
+        return err
+    before, after = rec.get("before", {}), rec.get("after", {})
+    asserts, bad = [], []
+    for f in fields:
+        b, a = before.get(f), after.get(f)
+        asserts.append(f"{f}: unchanged")
+        if f not in before or f not in after:
+            bad.append(f"{f} was not recorded")
+        elif b != a:
+            bad.append(f"{f}: {b!r} -> {a!r}")
+    proof = _observation_proof(rec)
+    if bad:
+        return CheckResult(FAIL, f"{case}: " + "; ".join(bad), proofs=[proof], assertions=asserts)
+    shown = ", ".join(f.rsplit(".", 1)[-1] for f in fields)
+    return CheckResult(PASS, f"{case}: {shown} unchanged across the apply",
+                       proofs=[proof], assertions=asserts)
+
+
+def _observation_equals(c, nodes, args):
+    """Assert a field's AFTER value in a recorded case equals `expected`.
+
+    The counterpart to observation_unchanged: proves a mutation that SHOULD have taken effect
+    did (a spec edit landing, a status marker being accepted), so "nothing changed" can be
+    distinguished from "the write never happened".
+    """
+    suffix, case, field, expected = args[0], args[1], args[2], args[3]
+    rec, err = _find_case(c, suffix, case)
+    if err:
+        return err
+    after = rec.get("after", {})
+    asserts = [f"{field} = {expected}"]
+    proof = _observation_proof(rec)
+    if field not in after:
+        return CheckResult(FAIL, f"{case}: {field} was not recorded",
+                           proofs=[proof], assertions=asserts)
+    got = after[field]
+    if str(got) != expected:
+        return CheckResult(FAIL, f"{case}: {field} = {got!r}, expected {expected!r}",
+                           proofs=[proof], assertions=asserts)
+    return CheckResult(PASS, f"{case}: {field.rsplit('.', 1)[-1]} = {got}",
+                       proofs=[proof], assertions=asserts)
+
+
 def _resource_field_not(c, nodes, args):
     """Assert a field is present AND does NOT match <rejected> (case-insensitive substring).
 
@@ -695,6 +779,8 @@ IMPLS: dict[str, Impl] = {
     "resource_present": _resource_present,
     "resource_field": _resource_field,
     "resource_field_not": _resource_field_not,
+    "observation_unchanged": _observation_unchanged,
+    "observation_equals": _observation_equals,
     "k8s_resource_present": _k8s_resource_present,
     "k8s_resource_field": _k8s_resource_field,
     "k8s_condition": _k8s_condition,

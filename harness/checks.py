@@ -71,6 +71,18 @@ _SPECS: list[VerbSpec] = [
         "(a field on a live resource is present, and optionally equals a value)",
     ),
     VerbSpec(
+        "observation_unchanged", 3, None,
+        "observation_unchanged <container-suffix> <case> <field...>  "
+        "(fields an in-cluster actor RECORDED as identical before and after a case, read from "
+        "/out/observations.json — the actor acts and records, these verbs judge)",
+    ),
+    VerbSpec(
+        "observation_equals", 4, 4,
+        "observation_equals <container-suffix> <case> <field> <expected>  "
+        "(a recorded case's AFTER value for a field; proves a mutation that SHOULD take "
+        "effect did, so 'unchanged' is distinguishable from 'the write never happened')",
+    ),
+    VerbSpec(
         "resource_field_not", 3, 3,
         "resource_field_not <kind/name> <dotted.path> <rejected>  "
         "(a field is present and does NOT match <rejected> — use when the failure mode "

@@ -1,44 +1,62 @@
 #!/bin/sh
-# bound_keypair_status mutator.
+# bound_keypair_status actor.
 #
-# Proves the rule: for an EXISTING bound_keypair token, `.status` is always preserved and any
-# `.status` on an incoming copy is always discarded; delete + recreate is the only way to set
-# it. Everything here runs the way a real admin tool does — `tctl create -f` over a bot
-# identity — so it exercises the same UpsertToken RPC that tctl, the Terraform provider and
-# the Kubernetes operator all reach.
+# Drives the scenario and RECORDS what it observed. It does not judge: no PASS/FAIL is
+# emitted here. Each case appends a record to /out/observations.json —
+#
+#   {case, at, token, applied, before: {field: value}, after: {field: value}}
+#
+# — and the module's `observation_unchanged` / `observation_equals` checks do the asserting.
+#
+# Why the split: a script that mutates cluster state is often the only thing that can see a
+# before/after across its own mutation, so it has to run. But if it also decides the verdict,
+# the module can only grep its log for `RESULT foo: PASS`, and the report ends up citing a
+# magic string whose meaning lives in a file the reader may never open. Recording instead
+# means the proof IS the observed values, the detail line is generated from them, and editing
+# the comparison logic can't silently invalidate a hand-written explanation.
 #
 # READ-AFTER-WRITE IS NOT COHERENT HERE. `tctl get` resolves through the auth server's CACHE
 # (Server embeds both *Services and authclient.Cache, and Cache wins for GetToken), so a read
-# taken straight after an apply can still return the PRE-write token. That makes "status was
-# preserved" indistinguishable from "I read a stale copy of the old status" — a pre-fix run
-# passed upsert-discards-status for exactly that reason, a false green on a build with the
-# bug. So every apply carries a DISTINCT spec sentinel (recovery.limit) and every assertion
-# waits for that sentinel to become visible first. Once the new limit is readable the write
-# has landed, and the status read alongside it is the real post-write status.
+# taken straight after an apply can still return the PRE-write token — which would make
+# "unchanged" indistinguishable from "I read a stale copy". Every apply therefore carries a
+# distinct spec sentinel (recovery.limit) and the `after` snapshot is taken only once that
+# sentinel is visible. The sentinel is recorded too, so `observation_equals` can assert the
+# write actually landed rather than taking the barrier on trust.
 #
-# Emits one `RESULT <case>: PASS|FAIL` line per case; module.yaml gates on those with
-# log_count (NOT log_contains, which SKIPs on no match and would hide a regression).
-#
-# Deliberately does NOT `set -e`: a failing case is the finding, and aborting would leave the
-# later cases unreported — which reads identically to "the mutator crashed".
+# Deliberately no `set -e`: a case that goes wrong must still be RECORDED (a timed-out
+# barrier records what it last saw), because a missing record is indistinguishable from a
+# crashed actor, while a recorded bad value is a finding.
 
 set -u
 
 TCTL="tctl --identity ${IDENTITY} --auth-server ${AUTH_ADDR}"
+OBS=/out/observations.json
 BARRIER_TRIES=40        # × 1s; cache lag is sub-second, this is pure headroom
 
-log()    { echo "[mutate] $*"; }
-result() { echo "RESULT $1: $2"; }
+# The server-owned fields under test, plus the spec sentinel that proves an apply landed.
+FIELDS="status.bound_keypair.bound_public_key
+status.bound_keypair.bound_bot_instance_id
+status.bound_keypair.recovery_count
+status.bound_keypair.registration_secret
+spec.bound_keypair.recovery.limit"
 
-# `tctl get token/<name> --format json` emits a JSON ARRAY even for one resource, hence .[0].
-# Tokens are always fetched with secrets (tctl forces it: "tokens cannot be retrieved without
-# secrets"), and a BOT identity is exempt from admin-action MFA, so this needs no login.
+log() { echo "[mutate] $*"; }
+
 field() { # field <token-name> <jq-path-after-.[0]>
     $TCTL get "token/$1" --format json 2>/dev/null | jq -r ".[0].$2 // empty" 2>/dev/null
 }
 
-# Barrier: block until <path> reads <expected>. Returns 1 on timeout, and the caller reports
-# the case FAILed — a write that never becomes visible is a real defect, not a flake to skip.
+# Snapshot every field under test as a JSON object.
+snapshot() { # snapshot <token-name>
+    _out="{}"
+    for f in $FIELDS; do
+        _v=$(field "$1" "$f")
+        _out=$(printf '%s' "$_out" | jq --arg k "$f" --arg v "$_v" '. + {($k): $v}')
+    done
+    printf '%s' "$_out"
+}
+
+# Block until <field> reads <expected>; returns 1 on timeout (the caller records anyway).
 wait_field() { # wait_field <token> <jq-path> <expected>
     _i=0
     while [ "$_i" -lt "$BARRIER_TRIES" ]; do
@@ -49,169 +67,85 @@ wait_field() { # wait_field <token> <jq-path> <expected>
     return 1
 }
 
-wait_present() { # wait_present <token>
-    _i=0
-    while [ "$_i" -lt "$BARRIER_TRIES" ]; do
-        [ -n "$(field "$1" 'metadata.name')" ] && return 0
-        _i=$((_i + 1)); sleep 1
-    done
-    log "  TIMEOUT waiting for $1 to exist"; return 1
-}
+wait_present() { _i=0; while [ "$_i" -lt "$BARRIER_TRIES" ]; do
+    [ -n "$(field "$1" 'metadata.name')" ] && return 0; _i=$((_i + 1)); sleep 1; done; return 1; }
+wait_absent()  { _i=0; while [ "$_i" -lt "$BARRIER_TRIES" ]; do
+    [ -z "$(field "$1" 'metadata.name')" ] && return 0; _i=$((_i + 1)); sleep 1; done; return 1; }
 
-wait_absent() { # wait_absent <token>
-    _i=0
-    while [ "$_i" -lt "$BARRIER_TRIES" ]; do
-        [ -z "$(field "$1" 'metadata.name')" ] && return 0
-        _i=$((_i + 1)); sleep 1
-    done
-    log "  TIMEOUT waiting for $1 to disappear"; return 1
-}
-
-expect_eq() { # expect_eq <case> <what> <expected> <actual>
-    if [ "$3" = "$4" ]; then
-        result "$1" "PASS"; log "  ok   $2: $4"
-    else
-        result "$1" "FAIL"; log "  BAD  $2: expected '$3', got '$4'"
-    fi
-}
-
-# Compare the whole server-owned triple against the baseline captured before any apply.
-compare_status() { # compare_status <case>
-    _key=$(field "$TOKEN_NAME" 'status.bound_keypair.bound_public_key')
-    _inst=$(field "$TOKEN_NAME" 'status.bound_keypair.bound_bot_instance_id')
-    _cnt=$(field "$TOKEN_NAME" 'status.bound_keypair.recovery_count')
-    _sec=$(field "$TOKEN_NAME" 'status.bound_keypair.registration_secret')
-    if [ "$_key" = "$KEY0" ] && [ "$_inst" = "$INST0" ] && [ "$_cnt" = "$CNT0" ] && [ "$_sec" = "$SEC0" ]; then
-        result "$1" "PASS"
-        log "  ok   bound key, bot instance, recovery counter and secret all unchanged"
-    else
-        result "$1" "FAIL"
-        log "  BAD  bound_public_key      '${KEY0}' -> '${_key}'"
-        log "  BAD  bound_bot_instance_id '${INST0}' -> '${_inst}'"
-        log "  BAD  recovery_count        '${CNT0}' -> '${_cnt}'"
-        log "  BAD  registration_secret   '${SEC0}' -> '${_sec}'"
-    fi
+mkdir -p /out
+echo '[]' > "$OBS"
+record() { # record <case> <token> <applied> <before-json> <after-json>
+    jq --arg case "$1" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg token "$2" \
+       --arg applied "$3" --argjson before "$4" --argjson after "$5" \
+       '. + [{case: $case, at: $at, token: $token, applied: $applied,
+              before: $before, after: $after}]' "$OBS" > "$OBS.tmp" && mv "$OBS.tmp" "$OBS"
+    log "recorded '$1'"
 }
 
 ###############################################################################
-# 0. Precondition — wait for the bot to actually bind a keypair.
-#    Until the join ceremony completes there is no server-owned status to preserve, and
-#    every case below would trivially "pass" against an empty status.
+# 0. Precondition — the bot must actually bind a keypair first, or there is no
+#    server-owned status to preserve and every comparison below is vacuous.
 ###############################################################################
 log "waiting for ${TOKEN_NAME} to have a bound public key (bot join in progress)"
-i=0
-KEY0=""
+i=0; KEY0=""
 while [ "$i" -lt 120 ]; do
     KEY0=$(field "$TOKEN_NAME" 'status.bound_keypair.bound_public_key')
     [ -n "$KEY0" ] && break
     i=$((i + 1)); sleep 2
 done
-
 if [ -z "$KEY0" ]; then
     log "FATAL: ${TOKEN_NAME} never got a bound_public_key; the bot did not join."
-    result "mutator" "ABORTED-NO-BOUND-KEY"
     touch /tmp/mutate-done
     exec sleep infinity
 fi
-
-INST0=$(field "$TOKEN_NAME" 'status.bound_keypair.bound_bot_instance_id')
-CNT0=$(field "$TOKEN_NAME" 'status.bound_keypair.recovery_count')
-SEC0=$(field "$TOKEN_NAME" 'status.bound_keypair.registration_secret')
-log "baseline status.bound_keypair:"
-log "  bound_public_key      = ${KEY0}"
-log "  bound_bot_instance_id = ${INST0}"
-log "  recovery_count        = ${CNT0}"
-log "  registration_secret   = ${SEC0}"
+log "bot bound key: ${KEY0}"
 
 ###############################################################################
-# 1. Spec-only re-apply — the tctl/terraform/operator roundtrip.
-#    The incoming copy has NO status at all. This is the case that knocks bots offline:
-#    without the fix the server builds a fresh status, copies the spec's registration
-#    secret into it, and the bound key is simply gone.
+# 1. Spec-only re-apply — the `tctl get | apply`, terraform and operator roundtrip.
 ###############################################################################
-log "case 1: re-applying ${TOKEN_NAME} with NO status (recovery.limit -> ${NEW_RECOVERY_LIMIT})"
-if ! $TCTL create -f /work/token-spec-only.yaml; then
-    log "  apply FAILED (an update should be accepted; only the status must be ignored)"
-    result "spec-only-reapply-preserves-status" "FAIL"
-    result "spec-edit-applied" "FAIL"
-elif ! wait_field "$TOKEN_NAME" 'spec.bound_keypair.recovery.limit' "$NEW_RECOVERY_LIMIT"; then
-    result "spec-only-reapply-preserves-status" "FAIL"
-    result "spec-edit-applied" "FAIL"
-else
-    # The barrier IS the spec-edit assertion: the new limit is readable, so the update
-    # landed. Guards the over-correction where "preserve status" degrades into "ignore
-    # the whole update".
-    result "spec-edit-applied" "PASS"
-    log "  ok   spec.bound_keypair.recovery.limit: ${NEW_RECOVERY_LIMIT}"
-    compare_status "spec-only-reapply-preserves-status"
-fi
+log "case spec-only-reapply: applying ${TOKEN_NAME} with NO status (recovery.limit -> ${NEW_RECOVERY_LIMIT})"
+BEFORE=$(snapshot "$TOKEN_NAME")
+$TCTL create -f /work/token-spec-only.yaml
+wait_field "$TOKEN_NAME" 'spec.bound_keypair.recovery.limit' "$NEW_RECOVERY_LIMIT"
+record spec-only-reapply "$TOKEN_NAME" config/token-spec-only.yaml "$BEFORE" "$(snapshot "$TOKEN_NAME")"
 
 ###############################################################################
-# 2. Tampered-status re-apply — explicit attempt to write server-owned state.
-#    Every status value in this copy is wrong (a key the bot does not hold, a nil-UUID
-#    instance, a reset counter, an unissued secret). None may reach storage.
+# 2. Tampered-status re-apply — an explicit attempt to write server-owned state.
 ###############################################################################
-log "case 2: re-applying ${TOKEN_NAME} WITH a tampered status (recovery.limit -> ${TAMPERED_RECOVERY_LIMIT})"
-if ! $TCTL create -f /work/token-tampered.yaml; then
-    # A hard rejection is a defensible design too, but it is not the rule this module
-    # encodes (silent discard, so terraform/operator do not reconcile-loop forever).
-    log "  apply was REJECTED outright; the rule under test is silent discard"
-    result "tampered-status-discarded" "FAIL"
-elif ! wait_field "$TOKEN_NAME" 'spec.bound_keypair.recovery.limit' "$TAMPERED_RECOVERY_LIMIT"; then
-    result "tampered-status-discarded" "FAIL"
-else
-    compare_status "tampered-status-discarded"
-fi
+log "case tampered-reapply: applying ${TOKEN_NAME} WITH a forged status (recovery.limit -> ${TAMPERED_RECOVERY_LIMIT})"
+BEFORE=$(snapshot "$TOKEN_NAME")
+$TCTL create -f /work/token-tampered.yaml
+wait_field "$TOKEN_NAME" 'spec.bound_keypair.recovery.limit' "$TAMPERED_RECOVERY_LIMIT"
+record tampered-reapply "$TOKEN_NAME" config/token-tampered.yaml "$BEFORE" "$(snapshot "$TOKEN_NAME")"
 
 ###############################################################################
-# 3. The escape hatch, on a spare token nothing joins with.
-#    create accepts status -> upsert discards it -> delete+recreate sets it. Same marker-B
-#    file in steps b and c; the ONLY difference is whether the token already existed.
+# 3. The escape hatch, on a spare token nothing joins with. The SAME marker-B file is
+#    applied as an update (must be discarded) and after a delete (must be accepted).
 ###############################################################################
-log "case 3a: creating ${SPARE_TOKEN} with status marker A"
-$TCTL rm "token/${SPARE_TOKEN}" >/dev/null 2>&1   # idempotent: tolerate a re-run
-wait_absent "$SPARE_TOKEN" >/dev/null 2>&1
-if ! $TCTL create -f /work/spare-marker-a.yaml; then
-    log "  create FAILED"; result "create-accepts-status" "FAIL"
-elif ! wait_present "$SPARE_TOKEN"; then
-    result "create-accepts-status" "FAIL"
-else
-    expect_eq "create-accepts-status" "status.bound_keypair.registration_secret" \
-        "$MARKER_A" "$(field "$SPARE_TOKEN" 'status.bound_keypair.registration_secret')"
-fi
+log "case create-with-status: creating ${SPARE_TOKEN} with status marker A"
+$TCTL rm "token/${SPARE_TOKEN}" >/dev/null 2>&1; wait_absent "$SPARE_TOKEN"
+BEFORE=$(snapshot "$SPARE_TOKEN")
+$TCTL create -f /work/spare-marker-a.yaml
+wait_present "$SPARE_TOKEN"
+record create-with-status "$SPARE_TOKEN" config/spare-marker-a.yaml "$BEFORE" "$(snapshot "$SPARE_TOKEN")"
 
-log "case 3b: upserting ${SPARE_TOKEN} with status marker B (must be discarded)"
-if ! $TCTL create -f /work/spare-marker-b.yaml; then
-    log "  upsert FAILED"; result "upsert-discards-status" "FAIL"
-elif ! wait_field "$SPARE_TOKEN" 'spec.bound_keypair.recovery.limit' "$MARKER_B_RECOVERY_LIMIT"; then
-    # Without this barrier the next read can return the pre-upsert token and marker A
-    # "survives" on a build that in fact overwrote it. This is the exact false green.
-    result "upsert-discards-status" "FAIL"
-else
-    expect_eq "upsert-discards-status" "status.bound_keypair.registration_secret (still A)" \
-        "$MARKER_A" "$(field "$SPARE_TOKEN" 'status.bound_keypair.registration_secret')"
-fi
+log "case update-with-status: applying marker B OVER the existing ${SPARE_TOKEN}"
+BEFORE=$(snapshot "$SPARE_TOKEN")
+$TCTL create -f /work/spare-marker-b.yaml
+wait_field "$SPARE_TOKEN" 'spec.bound_keypair.recovery.limit' "$MARKER_B_RECOVERY_LIMIT"
+record update-with-status "$SPARE_TOKEN" config/spare-marker-b.yaml "$BEFORE" "$(snapshot "$SPARE_TOKEN")"
 
-log "case 3c: deleting ${SPARE_TOKEN}, then recreating with marker B (must be accepted)"
-if ! $TCTL rm "token/${SPARE_TOKEN}"; then
-    log "  delete FAILED"; result "recreate-sets-status" "FAIL"
-elif ! wait_absent "$SPARE_TOKEN"; then
-    result "recreate-sets-status" "FAIL"
-elif ! $TCTL create -f /work/spare-marker-b.yaml; then
-    log "  recreate FAILED"; result "recreate-sets-status" "FAIL"
-elif ! wait_present "$SPARE_TOKEN"; then
-    result "recreate-sets-status" "FAIL"
-else
-    expect_eq "recreate-sets-status" "status.bound_keypair.registration_secret" \
-        "$MARKER_B" "$(field "$SPARE_TOKEN" 'status.bound_keypair.registration_secret')"
-fi
+log "case recreate-with-status: deleting ${SPARE_TOKEN}, then applying marker B again"
+BEFORE=$(snapshot "$SPARE_TOKEN")
+$TCTL rm "token/${SPARE_TOKEN}"; wait_absent "$SPARE_TOKEN"
+$TCTL create -f /work/spare-marker-b.yaml
+wait_present "$SPARE_TOKEN"
+record recreate-with-status "$SPARE_TOKEN" config/spare-marker-b.yaml "$BEFORE" "$(snapshot "$SPARE_TOKEN")"
 
 ###############################################################################
-# Done. Stay alive so the container is inspectable; the checks read these logs, which
-# survive exit either way, but a healthy long-lived service keeps `compose ps` honest.
+# Done. Stay alive so the container stays inspectable; the checks read $OBS from it.
 ###############################################################################
-log "final ${TOKEN_NAME} status.bound_keypair:"
-$TCTL get "token/${TOKEN_NAME}" --format json 2>/dev/null | jq '.[0].status.bound_keypair'
-result "mutator" "DONE"
+log "observations:"
+jq . "$OBS"
 touch /tmp/mutate-done
 exec sleep infinity

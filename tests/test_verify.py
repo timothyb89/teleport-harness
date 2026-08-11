@@ -3,6 +3,7 @@ the docker seam that made the assert library testable at all (it never was in ba
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from harness.cluster import Cluster
@@ -709,3 +710,65 @@ def test_claim_rollup_ignores_checks_belonging_to_other_claims():
     from harness.verify import claim_verdicts
     out = claim_verdicts(_FakeModule(_FakeClaim("a")), [_res("PASS", "a"), _res("FAIL", "b")])
     assert out[0]["verdict"] == "PROVEN" and out[0]["total"] == 1
+
+
+# ---- observation verbs (the actor records; these judge) ----------------------
+_OBS = [
+    {"case": "spec-only-reapply", "at": "2026-08-11T04:00:00Z", "token": "t",
+     "applied": "config/token-spec-only.yaml",
+     "before": {"status.k": "ssh-real", "spec.limit": "1"},
+     "after": {"status.k": "ssh-real", "spec.limit": "7"}},
+    {"case": "wiped", "at": "2026-08-11T04:01:00Z", "token": "t", "applied": "x.yaml",
+     "before": {"status.k": "ssh-real"}, "after": {"status.k": ""}},
+]
+
+
+def _obs_cluster(records=None, rc=0):
+    payload = json.dumps(_OBS if records is None else records)
+    return FakeCluster(execs={("act", ("cat", "/out/observations.json")): (rc, payload)})
+
+
+def test_observation_unchanged_passes_and_proves_with_the_record():
+    c = _obs_cluster()
+    res = _run(c, "observation_unchanged act spec-only-reapply status.k")
+    assert res.status == "PASS"
+    (p,) = res.proofs
+    # the proof is the RECORDED values, not a log line whose meaning lives in the script
+    assert p.kind == "observation" and p.lang == "json"
+    assert "ssh-real" in p.content and "2026-08-11T04:00:00Z" in p.content
+
+
+def test_observation_unchanged_fails_and_reports_the_actual_transition():
+    res = _run(_obs_cluster(), "observation_unchanged act wiped status.k")
+    assert res.status == "FAIL"
+    assert "'ssh-real' -> ''" in res.msg  # generated from data, not author prose
+
+
+def test_observation_unchanged_fails_on_an_unrecorded_field():
+    # a field the actor never captured must not read as "unchanged"
+    res = _run(_obs_cluster(), "observation_unchanged act spec-only-reapply status.missing")
+    assert res.status == "FAIL" and "not recorded" in res.msg
+
+
+def test_observation_unchanged_checks_every_field_given():
+    c = _obs_cluster([{"case": "c", "before": {"a": "1", "b": "2"}, "after": {"a": "1", "b": "9"}}])
+    res = _run(c, "observation_unchanged act c a b")
+    assert res.status == "FAIL" and "b" in res.msg and "'2' -> '9'" in res.msg
+
+
+def test_observation_equals_asserts_the_after_value():
+    c = _obs_cluster()
+    assert _run(c, "observation_equals act spec-only-reapply spec.limit 7").status == "PASS"
+    # proves the write LANDED, so "unchanged" is distinguishable from "never happened"
+    assert _run(c, "observation_equals act spec-only-reapply spec.limit 1").status == "FAIL"
+
+
+def test_observation_missing_case_lists_what_was_recorded():
+    res = _run(_obs_cluster(), "observation_unchanged act never-ran status.k")
+    assert res.status == "FAIL"
+    assert "spec-only-reapply" in res.msg and "wiped" in res.msg
+
+
+def test_observation_missing_file_is_a_clear_failure():
+    res = _run(_obs_cluster(rc=1), "observation_unchanged act spec-only-reapply status.k")
+    assert res.status == "FAIL" and "observations.json" in res.msg

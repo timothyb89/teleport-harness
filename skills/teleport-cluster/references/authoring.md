@@ -104,9 +104,44 @@ claims:
 - **A claim with no checks is a validation error** — it would render as vacuously PROVEN.
 
 ### Scripts: act and record, don't assert
-Driving state from a script is fine and often necessary, but keep the script out of the
-judging seat. `log_count svc ge 1 RESULT foo: PASS` makes the report cite a magic string whose
-meaning lives outside it. Two rules:
+Driving state from a script is fine and often necessary — a script mutating the cluster is
+frequently the only thing that can see a before/after across its own mutation. But keep it out
+of the judging seat. If it decides the verdict, the module can only grep for `RESULT foo: PASS`,
+the report cites a magic string whose meaning lives in the script, and the detail column can do
+no better than restate the check.
+
+**The pattern:** the script appends one record per case to `/out/observations.json` —
+
+```json
+{"case": "spec-only-reapply", "at": "2026-08-11T04:00:00Z", "token": "bks-token",
+ "applied": "config/token-spec-only.yaml",
+ "before": {"status.bound_keypair.bound_public_key": "ssh-ed25519 AAAA…", "spec.bound_keypair.recovery.limit": "1"},
+ "after":  {"status.bound_keypair.bound_public_key": "ssh-ed25519 AAAA…", "spec.bound_keypair.recovery.limit": "7"}}
+```
+
+— and the checks do the asserting:
+
+```
+observation_unchanged bkstatus spec-only-reapply status.bound_keypair.bound_public_key status.bound_keypair.recovery_count
+observation_equals    bkstatus spec-only-reapply spec.bound_keypair.recovery.limit 7
+```
+
+What this buys over a `log_count` on the script's own verdict:
+- **The proof is the observed values**, rendered as JSON, not a log line.
+- **The detail is generated** from the data (`bound_public_key: 'ssh-real' -> ''`), so it can't
+  go stale the way a hand-written `# note` can when the script's logic changes.
+- **`at` is recorded**, so *when* each mutation happened is in the report.
+- **Missing data fails loudly** — an unrecorded field is a FAIL, not a silent pass, and a
+  missing case lists the cases that *were* recorded.
+- **`observation_equals` proves a write LANDED**, so "unchanged" is distinguishable from "the
+  mutation never happened" — a distinction a preservation test lives or dies on.
+
+Keep an `output_file <actor> /out/observations.json` precondition so a crashed actor reads as
+scaffolding failure (claims UNTESTED) rather than claim failures it caused. And still record
+on the unhappy path: a timed-out barrier should record what it last saw, because a missing
+record is indistinguishable from a crash while a recorded bad value is a finding.
+
+Two rules that apply to any script, observations or not:
 - Mount from **`{{ scripts }}`**, never `{{ module_dir }}/scripts` — the renderer copies
   `scripts/` into the bundle, so the actor ships with the report and appears in `share` gists.
   Otherwise a reviewer sees the inputs and the verdicts but not the thing connecting them.

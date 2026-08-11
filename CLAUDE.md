@@ -174,6 +174,16 @@ returns it; FULL JSON proof; e.g. asserting what a terraform apply created),
 `resource_field <kind/name> <dotted.path> [expected]` (a field on a live resource is present,
 and — with `expected` — equals it by case-insensitive substring; missing resource OR path FAILs —
 how `terraform_generic_oidc` surfaces the must_match_fields bug),
+`observation_unchanged <suffix> <case> <field…>` / `observation_equals <suffix> <case> <field>
+<expected>` (assert over what an in-cluster ACTOR RECORDED, read from `/out/observations.json`:
+one `{case, at, token, applied, before{}, after{}}` record per case. The act-and-record split —
+a script that mutates state is often the only thing that can see a before/after across its own
+mutation, but if it also JUDGES, the module can only grep its log for `RESULT foo: PASS` and the
+report cites a magic string whose meaning lives in the script. Recording instead makes the proof
+the observed VALUES, the detail generated from them rather than author-asserted prose that goes
+stale, and `at` gives per-case timing for free. `observation_equals` proves a write LANDED, so
+"unchanged" is distinguishable from "the mutation never happened". Unrecorded field or missing
+case = FAIL, listing what WAS recorded. `bound_keypair_status` is the worked example),
 `resource_field_not <kind/name> <dotted.path> <rejected>` (a field is present AND does not
 match `rejected` — the discriminating counterpart to `resource_field`, for when the failure
 mode SUPPLIES a value rather than leaving a hole. `bound_keypair_status` re-applies a token

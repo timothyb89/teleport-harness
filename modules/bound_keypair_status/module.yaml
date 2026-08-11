@@ -27,35 +27,40 @@ preconditions: |
   bot_joined          bks-bot bound_keypair          # a real bot joined, so status is server-populated
   audit_event         bot.join bot_name=bks-bot method=bound_keypair success=true
   output_file         bksbot /out/id/identity
-  log_count           bkstatus ge 1 RESULT mutator: DONE   # the mutator finished; a crash must not read as a pass
+  output_file         bkstatus /out/observations.json      # the actor ran and recorded what it saw
 
 claims:
   - id: preserved-on-update
     statement: If the token already exists, .status is preserved across any update.
     why: |
-      `mutate.sh` applies two updates a real admin tool would send, then re-reads and compares
-      every status field against values captured before either apply:
+      `mutate.sh` applies two updates a real admin tool would send, recording every status
+      field before and after each — the `observation_*` checks below do the comparing, so the
+      proof is the recorded values themselves:
 
       - **spec-only** — no `status` at all: the `tctl get | apply`, terraform and operator roundtrip.
       - **tampered** — a fully forged `status`: a key the bot does not hold, a nil-UUID instance,
         `recovery_count: 99`, an unissued secret.
 
-      Two things make the comparison meaningful:
+      Three things make the comparison meaningful:
 
-      - **Both applies were accepted.** Each carries a distinct `recovery.limit` sentinel and the
-        mutator blocks until it is readable, so this is preservation through a *successful*
-        update — not one that was rejected or dropped. The wait also defeats a stale read
-        (`tctl get` goes through the auth cache; a run once passed for exactly that reason).
+      - **The applies were accepted.** Each carries a distinct `recovery.limit` sentinel and the
+        `after` snapshot is taken only once that sentinel is readable, so this is preservation
+        through a *successful* update — not one rejected or dropped. `observation_equals` on the
+        tampered case asserts that sentinel rather than taking the barrier on trust.
+      - **A stale read cannot fake it.** `tctl get` goes through the auth cache, so a read taken
+        straight after an apply can return the pre-write token; a run once passed for exactly
+        that reason. The sentinel wait is what rules it out.
       - **The live checks name the forged values.** A bare presence check passes on the worst
         outcome here, because the tampered apply *supplies* values and a forgery is still a value.
     artifacts: [scripts/mutate.sh, config/token-spec-only.yaml.j2, config/token-tampered.yaml.j2]
     checks: |
-      log_count           bkstatus ge 1 RESULT spec-only-reapply-preserves-status: PASS   # after the spec-only apply, key/instance/counter all match their pre-apply values
-      log_count           bkstatus ge 1 RESULT tampered-status-discarded: PASS            # after the forged apply, every status field still matches
-      resource_field_not  token/bks-token status.bound_keypair.bound_public_key HarnessTamperedKey   # live token holds the bot's real key, not the forged one
-      resource_field_not  token/bks-token status.bound_keypair.bound_bot_instance_id 00000000-0000-0000-0000-000000000000   # live token holds the real bot instance, not the nil UUID
-      resource_field      token/bks-token status.bound_keypair.recovery_count 1           # counter still reads its post-join value, not the forged 99
-      log_count           bkstatus ge 1 RESULT upsert-discards-status: PASS               # an update to the spare token left its existing status untouched
+      observation_unchanged bkstatus spec-only-reapply status.bound_keypair.bound_public_key status.bound_keypair.bound_bot_instance_id status.bound_keypair.recovery_count status.bound_keypair.registration_secret
+      observation_unchanged bkstatus tampered-reapply status.bound_keypair.bound_public_key status.bound_keypair.bound_bot_instance_id status.bound_keypair.recovery_count status.bound_keypair.registration_secret
+      observation_equals    bkstatus tampered-reapply spec.bound_keypair.recovery.limit 9
+      observation_unchanged bkstatus update-with-status status.bound_keypair.registration_secret
+      resource_field_not    token/bks-token status.bound_keypair.bound_public_key HarnessTamperedKey
+      resource_field_not    token/bks-token status.bound_keypair.bound_bot_instance_id 00000000-0000-0000-0000-000000000000
+      resource_field        token/bks-token status.bound_keypair.recovery_count 1
 
   - id: status-honored-on-create
     statement: If the token does NOT already exist, .status on the incoming copy is honored.
@@ -73,10 +78,10 @@ claims:
       which is what separates "honored on create" from "honored always".
     artifacts: [scripts/mutate.sh, config/spare-marker-a.yaml.j2, config/spare-marker-b.yaml.j2]
     checks: |
-      log_count           bkstatus ge 1 RESULT create-accepts-status: PASS    # create kept the status marker it was given
-      log_count           bkstatus ge 1 RESULT recreate-sets-status: PASS     # after delete, the same file's status was accepted
-      resource_field      token/bks-recreate status.bound_keypair.registration_secret harness-bks-marker-b   # live spare token ended up with the recreated status
-      resource_field      token/bks-recreate spec.bound_keypair.recovery.limit 5                             # ...and its spec, confirming the whole resource round-tripped
+      observation_equals bkstatus create-with-status status.bound_keypair.registration_secret harness-bks-marker-a
+      observation_equals bkstatus recreate-with-status status.bound_keypair.registration_secret harness-bks-marker-b
+      resource_field     token/bks-recreate status.bound_keypair.registration_secret harness-bks-marker-b   # live spare token ended up with the recreated status
+      resource_field     token/bks-recreate spec.bound_keypair.recovery.limit 5                             # ...and its spec, confirming the whole resource round-tripped
 
   - id: updates-still-work
     statement: Preserving status does not block legitimate spec edits, and the bot stays usable.
@@ -94,5 +99,5 @@ claims:
         to re-join, so an identity that still authenticates is end-to-end evidence.
     artifacts: [scripts/mutate.sh, bootstrap/token.yaml.j2]
     checks: |
-      log_count           bkstatus ge 1 RESULT spec-edit-applied: PASS   # recovery.limit 1 -> 7 became readable, so the update was accepted
+      observation_equals  bkstatus spec-only-reapply spec.bound_keypair.recovery.limit 7
       identity_authorized bksbot /out/id/identity                        # the bot's identity still authenticates after both re-applies
