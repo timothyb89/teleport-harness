@@ -7,16 +7,34 @@
    are independent files, and `make crd-manifests-diff` only compares what the current
    generator produces against what is checked in.
 
-   Reconcile + round-trip only, no join test. Scoped generic_oidc joining is already
-   covered end-to-end by the `generic_oidc` module; what is unproven — and what this
-   asserts — is that the OPERATOR can carry a nested Struct into a scoped token.
+   No join test: scoped generic_oidc joining is already covered end-to-end by the
+   `generic_oidc` module.
 
-   Requires TELEPORT_UNSTABLE_SCOPES=yes on auth (set via auth_env in render.yaml). No
-   operator-side flag is needed: an unscoped operator runs every reconciler whose CRD is
-   installed (controllers/resources/setup.go filterEnabledReconcilers), the ScopedTokenV1
-   reconciler is AlwaysEnabled, and the operator bot's `editor` role already grants
-   scoped_token RW (lib/services/presets.go) — the scoped authorizer wraps an unscoped
-   identity's classic checker, so no scoped_role_assignment is involved. #}
+   RECONCILE IS GATED, NOT COMPLETED, and the checks say so. The reconciler does run — an
+   unscoped operator starts every reconciler whose CRD is installed
+   (controllers/resources/setup.go filterEnabledReconcilers) — but since RFD 328 (#69074,
+   in master and v18 alike) reconcilers/generic.go checkScope sets ValidScope=False
+   ("Resource is scoped but operator is not. Refusing to reconcile.") and returns BEFORE
+   the upsert, so this CR never reaches Teleport. What is asserted is therefore CR-level:
+   the generated scopedtokensv1 CRD accepts the nested Struct, and the operator decodes it
+   (ValidStructure=True) on the way to the gate. That still exercises the crdgen change,
+   which is what this fixture is for.
+
+   Restoring the full round trip needs a SECOND, scoped operator deployment — it cannot be
+   this one, because a scoped operator refuses UNSCOPED resources (the mirror case in
+   checkScope), i.e. every other CR in this module. Such a deployment needs:
+     * `-scope /opscope -owner-email <addr>`, plus KUBE_NAMESPACE and RELEASE_NAME in the
+       env (the helm chart injects both; scoped mode reads them via operator/state, and
+       exits at startup without them).
+     * a SCOPED join token. The harness bot token will not do: tbot rejects the identity
+       with "received unscoped identity upon join, but tbot is configured in scoped mode"
+       (lib/tbot/internal/identity/service.go checkScopeCorrectness). The operator chart's
+       values.yaml states the requirement outright. Note each attempt CONSUMES the
+       single-use bot token, so a crashlooping scoped operator cannot retry.
+
+   Requires TELEPORT_UNSTABLE_SCOPES=yes on auth (set via auth_env in render.yaml). The
+   operator bot's `editor` role already grants scoped_token RW (lib/services/presets.go),
+   so authorization is not what blocks the write here. #}
 apiVersion: resources.teleport.dev/v1
 kind: TeleportScopedTokenV1
 metadata:

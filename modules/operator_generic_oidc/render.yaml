@@ -9,8 +9,9 @@ components: [k8s-runner, oidc-server]
 # reason generic_oidc re-declares oidc_image) — this module owns its own runner container.
 k3s_version: v1.31.5-k3s1
 
-# Scoped resources (op-cr-scoped.yaml) need this on AUTH. Nothing extra is needed on the
-# operator side: an unscoped operator runs every reconciler whose CRD is installed.
+# Scoped resources (op-cr-scoped.yaml) need this on AUTH. The operator is left UNSCOPED
+# (no `-scope` flag), so since RFD 328 it decodes the scoped CR and then refuses to
+# reconcile it — the behaviour module.yaml's scoped block asserts.
 auth_env:
   TELEPORT_UNSTABLE_SCOPES: "yes"
 

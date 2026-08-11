@@ -265,11 +265,19 @@ scoped-token CRD [same field, different proto + different CRD file], and Workloa
 join tokens]. Each `must_match_fields` shape has an ok/bad agent PAIR differing in exactly ONE
 claim, so ENFORCEMENT is proven and not merely storage — the `nested: {}` failure mode leaves a
 token that exists, reconciles, and still admits the wrong agent. Nested claims are minted via
-the oidc-server's `?json=` param [`?claim=` can only produce strings]. Scoped + WorkloadIdentity
-are storage round-trips, not join tests. Needs `TELEPORT_UNSTABLE_SCOPES=yes` on auth
-[auth_env]; nothing operator-side, since an unscoped operator runs every reconciler whose CRD is
-installed. VERIFIED live on `~/projects/teleport` v19 master: 28/28 with the fix, and auth's own
-denial reads `nested.deep must be "harness-nested" but got wrong-nested-value`. Write-up:
+the oidc-server's `?json=` param [`?claim=` can only produce strings]. WorkloadIdentity is a
+storage round-trip, not a join test. Needs `TELEPORT_UNSTABLE_SCOPES=yes` on auth [auth_env].
+The SCOPED case stops one step short of a round trip, and that is now asserted rather than
+worked around: since RFD 328 [#69074, in master and v18 alike] an operator with no `-scope`
+flag decodes a scoped CR and then REFUSES to reconcile it [`reconcilers/generic.go`
+checkScope], so the module asserts `ValidStructure=True` + `ValidScope=False` — the decode is
+what exercises crdgen; only the write is gated. Making the write observable needs a SECOND,
+scoped operator [a scoped one refuses every UNSCOPED CR here] joined with a SCOPED token
+[tbot rejects an unscoped identity in scoped mode] plus KUBE_NAMESPACE/RELEASE_NAME —
+written up atop `config/op-cr-scoped.yaml.j2`. Structured as `preconditions:` + four
+`claims:`. VERIFIED live: 28/28 on `~/projects/teleport` v19 master pre-RFD-328, and 27/27 on
+the v18 backport `83616d67b317` after the restructure; auth's own denial reads `nested.deep
+must be "harness-nested" but got wrong-nested-value`. Write-up:
 `~/projects/teleport/operator-crdgen-struct-bug.md`; gated on generic_oidc, min v18),
 `bound_keypair_status` (the bound_keypair token `.status` rule on the **UpsertToken RPC** path —
 what `tctl create -f`, the Terraform provider and the operator all reach; complements
@@ -488,10 +496,12 @@ if the cluster enforces it, an MFA device).
   written to find (9 PASS / 3 FAIL on the broken schema), and has since been widened into the
   regression guard for the fix: all three Struct sites (classic + scoped provision tokens,
   WorkloadIdentity `extra_claims`), with nested matching proven ENFORCED and not merely stored.
-  28/28 on `~/projects/teleport` v19 master with the fix in place. Design + host requirements:
-  `docs/kubernetes.md`. NEXT for this surface: deletion/adoption semantics; scoped resources
-  BEYOND the storage round-trip already covered (a scoped agent actually joining via an
-  operator-created scoped token); asserting a nested `extra_claims` value reaches an ISSUED
+  28/28 on `~/projects/teleport` v19 master with the fix in place; 27/27 on the v18 backport
+  after RFD 328 bounded the scoped case to a decode (see the module entry above). Design + host
+  requirements: `docs/kubernetes.md`. NEXT for this surface: deletion/adoption semantics; a
+  SCOPED operator deployment (second operator + scoped join token) to restore the scoped
+  round-trip and let a scoped agent join via an operator-created scoped token; asserting a
+  nested `extra_claims` value reaches an ISSUED
   JWT-SVID rather than only the stored resource (needs a bot + a workload-identity-jwt output);
   and — if a module ever needs an operator that survives a pod restart — the
   `kubernetes`+`static_jwks` join method instead of single-use `token`.
