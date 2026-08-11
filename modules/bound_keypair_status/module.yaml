@@ -49,10 +49,21 @@ checks: |
 
   # --- ...while a legitimate SPEC edit in the very same apply DID land -------------------
   # Guards the over-correction: preserving status must not mean ignoring the whole update.
-  # 9 is the LAST apply's sentinel (case 2); each apply carries a distinct one so the
-  # mutator can tell "the write landed" from "I read a stale cached copy".
-  resource_field      token/bks-token spec.bound_keypair.recovery.limit 9
+  # This is the mutator's barrier (it polls until the new recovery.limit is readable), so
+  # it proves the update was ACCEPTED, at the moment it happened.
+  #
+  # Deliberately NOT a resource_field on token/bks-token's recovery.limit. That would
+  # assert the edit PERSISTS, which is a different and much weaker-held property: bks-token
+  # comes from bootstrap/, and the shared auth-entrypoint re-applies every module's
+  # bootstrap YAML on every auth start. Composed with a module that restarts auth (e.g.
+  # bound_keypair_apply_on_startup, which does so to exercise its own re-apply path) the
+  # original limit is legitimately restored and the check fails on correct behaviour.
+  # Observed live: 9 restarts, 9 re-applies, spec back to 1 — while status survived all of
+  # them, which is the property this module actually exists to guard.
   log_count           bkstatus ge 1 RESULT spec-edit-applied: PASS
+  # An objective spec assertion that IS restart-safe: bks-recreate is created by the
+  # mutator, never by bootstrap, so nothing re-applies it behind our back.
+  resource_field      token/bks-recreate spec.bound_keypair.recovery.limit 5
 
   # --- delete + recreate is the sanctioned escape hatch (proved on a spare token) --------
   # create trusts incoming status; upsert discards it; delete+recreate sets it.

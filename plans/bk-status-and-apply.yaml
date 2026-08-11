@@ -1,0 +1,5 @@
+name: bk-status-and-apply
+description: >
+  bound_keypair_status + bound_keypair_apply_on_startup in one cluster — the composition
+  that surfaced the bootstrap-re-apply interaction.
+modules: [bound_keypair_status, bound_keypair_apply_on_startup]
