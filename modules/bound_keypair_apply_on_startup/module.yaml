@@ -13,9 +13,12 @@ description: >
   status.bound_keypair — pre-fix it was nil and joins were rejected). A wrong registration
   secret is denied. checks.py then restarts auth and records what the re-apply did to the
   token, and the observation checks assert status survived while spec was updated.
-provides_feature: bound_keypair
 requires_features: [bound_keypair]
 min_version: v19
+# checks.py restarts auth on every verify attempt (~every 30s for the length of a run),
+# so auth is repeatedly unavailable. Any sibling reading or writing through auth sees
+# failed calls and a moving target — composing this into a multi-module plan is refused.
+exclusive: true
 
 # Scaffolding: the scenario has to have happened for the claims to mean anything. A real bot
 # must have joined against the apply-on-startup token — which is itself the first half of the

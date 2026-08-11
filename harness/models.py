@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .checks import REGISTRY
 
@@ -126,6 +126,14 @@ class Module(BaseModel):
     requires_features: list[str] = Field(default_factory=list)
     min_version: str | None = None
     checks: list[Check] = Field(default_factory=list)
+    # A module that DISRUPTS the shared cluster — today, one that restarts auth to exercise a
+    # startup-only code path. It cannot share a cluster: while it runs, auth is unavailable
+    # every ~30s, so any sibling that reads or writes through auth sees failed calls and a
+    # moving target. Composing one into a multi-module plan is refused outright rather than
+    # left to surface as unexplained sibling failures — which is exactly what it did before
+    # this existed (a mutator's applies silently failed against a restarting auth, and only a
+    # barrier timeout hinted at why).
+    exclusive: bool = False
     # Scaffolding, not evidence: these establish that the scenario was actually set up
     # (a bot really joined, an identity was really written). A failing PRECONDITION means the
     # claims below were never exercised — untested, which is not the same as disproven — so
@@ -262,6 +270,27 @@ def load_plan(plan_path: Path) -> Plan:
     if plan.name != plan_path.stem:
         raise ValueError(f"{plan_path}: name '{plan.name}' != file '{plan_path.stem}'")
     return plan
+
+
+def check_plan_exclusivity(plan: Plan, modules_dir: Path) -> list[str]:
+    """Problems from composing an `exclusive: true` module with siblings (see Module)."""
+    problems: list[str] = []
+    if len(plan.modules) < 2:
+        return problems
+    for name in plan.modules:
+        d = modules_dir / name
+        if not (d / "module.yaml").is_file():
+            continue
+        try:
+            if load_module(d).exclusive:
+                others = [m for m in plan.modules if m != name]
+                problems.append(
+                    f"module '{name}' is exclusive (it disrupts the shared cluster — e.g. by "
+                    f"restarting auth) and cannot be composed with {others}. Run it as its own "
+                    f"plan/module; siblings would see failed auth calls and a moving target.")
+        except (ValidationError, ValueError):
+            continue  # a broken module surfaces via validate, not here
+    return problems
 
 
 class GateResult(BaseModel):

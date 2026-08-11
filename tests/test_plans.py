@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -82,3 +83,56 @@ def test_duplicate_service_across_modules_raises(tmp_path):
     with pytest.raises(ValueError):
         render_cluster([MODULES / "tbot", MODULES / "tbot"], CTX, tmp_path,
                        components_dir=COMPONENTS, run_prebuild=False)
+
+
+# ---- exclusivity: a module that disrupts the cluster can't share one -------------
+def _plan(tmp_path, name, modules):
+    d = tmp_path / "plans"; d.mkdir(exist_ok=True)
+    f = d / f"{name}.yaml"
+    f.write_text(f"name: {name}\ndescription: x\nmodules: {json.dumps(modules)}\n")
+    return f
+
+
+def _mod(tmp_path, name, exclusive=False):
+    d = tmp_path / "modules" / name
+    d.mkdir(parents=True)
+    (d / "module.yaml").write_text(
+        f"name: {name}\n" + ("exclusive: true\n" if exclusive else "") +
+        "checks: |\n  node_present a\n")
+    (d / "services.yml.j2").write_text("services: {}\n")
+    return d
+
+
+def test_exclusive_module_cannot_be_composed_with_siblings(tmp_path):
+    from harness.models import check_plan_exclusivity, load_plan
+    _mod(tmp_path, "restarter", exclusive=True)
+    _mod(tmp_path, "bystander")
+    plan = load_plan(_plan(tmp_path, "mixed", ["restarter", "bystander"]))
+    problems = check_plan_exclusivity(plan, tmp_path / "modules")
+    # the failures it causes land on the SIBLING, so the plan must be refused by name
+    assert len(problems) == 1
+    assert "'restarter' is exclusive" in problems[0] and "bystander" in problems[0]
+
+
+def test_exclusive_module_alone_in_a_plan_is_fine(tmp_path):
+    from harness.models import check_plan_exclusivity, load_plan
+    _mod(tmp_path, "restarter", exclusive=True)
+    plan = load_plan(_plan(tmp_path, "solo", ["restarter"]))
+    assert check_plan_exclusivity(plan, tmp_path / "modules") == []
+
+
+def test_non_exclusive_modules_compose_freely(tmp_path):
+    from harness.models import check_plan_exclusivity, load_plan
+    _mod(tmp_path, "a"); _mod(tmp_path, "b")
+    plan = load_plan(_plan(tmp_path, "pair", ["a", "b"]))
+    assert check_plan_exclusivity(plan, tmp_path / "modules") == []
+
+
+def test_shipped_plans_do_not_compose_an_exclusive_module():
+    """Guards the real regression: plans/bound-keypair-status.yaml paired
+    bound_keypair_status with the auth-restarting apply-on-startup module, and the
+    restarts made the sibling's applies fail against an unavailable auth."""
+    from harness.models import check_plan_exclusivity, load_plan
+    root = Path(__file__).resolve().parent.parent
+    for f in sorted((root / "plans").glob("*.yaml")):
+        assert check_plan_exclusivity(load_plan(f), root / "modules") == [], f.name

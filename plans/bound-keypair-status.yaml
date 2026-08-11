@@ -1,0 +1,14 @@
+name: bound-keypair-status
+description: >
+  creation and update/upsert of bound keypair tokens such that status is
+  preserved
+# NOTE: bound_keypair_apply_on_startup is deliberately NOT here. It is `exclusive: true` —
+# its checks.py restarts auth on every verify attempt (~every 30s for the whole run), so any
+# sibling reading or writing through auth hits failed calls and a moving target. Composed,
+# this module's mutator had two `tctl create` calls fail silently against a restarting auth,
+# and the plan reported "status was not honored on create" — a defect in neither module.
+# `harness plan-resolve` now refuses such a composition outright.
+#
+# Run the startup path separately (it needs its own cluster either way):
+#   ./bin/cluster run-plan bound_keypair_apply_on_startup --repo <clone> --features bound_keypair --version v19
+modules: [bound_keypair_status]

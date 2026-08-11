@@ -34,7 +34,8 @@ OBS=/out/observations.json
 BARRIER_TRIES=40        # × 1s; cache lag is sub-second, this is pure headroom
 
 # The server-owned fields under test, plus the spec sentinel that proves an apply landed.
-FIELDS="status.bound_keypair.bound_public_key
+FIELDS="metadata.revision
+status.bound_keypair.bound_public_key
 status.bound_keypair.bound_bot_instance_id
 status.bound_keypair.recovery_count
 status.bound_keypair.registration_secret
@@ -42,33 +43,74 @@ spec.bound_keypair.recovery.limit"
 
 log() { echo "[mutate] $*"; }
 
+# A FAILED read and an EMPTY value are different facts, and conflating them is dangerous:
+# when auth is briefly unavailable `tctl get` errors, and returning "" for that makes a token
+# look absent (so wait_absent returns immediately) or a field look cleared (so a comparison
+# "passes"). But `tctl get` ALSO exits non-zero for a token that simply does not exist, which
+# is a normal, frequent observation here — so the two cases must be told apart without
+# retrying the common one (blind retries made an absent-token read cost 10s, and a snapshot
+# 60s, which starved the later cases entirely).
+#
+# `tctl get tokens` is the cheap discriminator: if it succeeds, auth is up and the token is
+# genuinely absent; only if it also fails do we retry.
+UNREADABLE="<unreadable>"
+
+read_token() { # read_token <name> -> token JSON | "" if absent | $UNREADABLE if auth is down
+    if _j=$($TCTL get "token/$1" --format json 2>/dev/null); then printf '%s' "$_j"; return 0; fi
+    $TCTL get tokens >/dev/null 2>&1 && { printf ''; return 0; }
+    _try=0
+    while [ "$_try" -lt 5 ]; do
+        sleep 2; _try=$((_try + 1))
+        if _j=$($TCTL get "token/$1" --format json 2>/dev/null); then printf '%s' "$_j"; return 0; fi
+        $TCTL get tokens >/dev/null 2>&1 && { printf ''; return 0; }
+    done
+    log "  WARNING: auth unreachable while reading $1"
+    printf '%s' "$UNREADABLE"
+}
+
+_extract() { # _extract <token-json> <jq-path>
+    case "$1" in
+        "$UNREADABLE") printf '%s' "$UNREADABLE" ;;
+        "")            printf '' ;;
+        *)             printf '%s' "$1" | jq -r ".[0].$2 // empty" 2>/dev/null ;;
+    esac
+}
+
 field() { # field <token-name> <jq-path-after-.[0]>
-    $TCTL get "token/$1" --format json 2>/dev/null | jq -r ".[0].$2 // empty" 2>/dev/null
+    _extract "$(read_token "$1")" "$2"
 }
 
 # Snapshot every field under test as a JSON object.
+# ONE read for the whole snapshot: 6x fewer round trips, and — more importantly — every
+# field comes from the same read, so a snapshot can't be torn across a concurrent write.
 snapshot() { # snapshot <token-name>
+    _json=$(read_token "$1")
     _out="{}"
     for f in $FIELDS; do
-        _v=$(field "$1" "$f")
+        _v=$(_extract "$_json" "$f")
         _out=$(printf '%s' "$_out" | jq --arg k "$f" --arg v "$_v" '. + {($k): $v}')
     done
     printf '%s' "$_out"
 }
 
-# Block until <field> reads <expected>; returns 1 on timeout (the caller records anyway).
-wait_field() { # wait_field <token> <jq-path> <expected>
+# Existence is NOT a sufficient barrier for a delete+recreate: `tctl get` reads through the
+# auth cache, so a token that existed before the delete can still read as present afterwards
+# — the pre-delete copy. Key off the REVISION instead, which differs for every write, so the
+# SAME file can be applied twice and the barrier still distinguishes the two applies. (Found
+# by composing with a module that restarts auth: 9 restarts churned the cache and a stale
+# read made the recreate look like it kept the old status.)
+wait_revision() { # wait_revision <token> <previous-revision>
     _i=0
     while [ "$_i" -lt "$BARRIER_TRIES" ]; do
-        [ "$(field "$1" "$2")" = "$3" ] && return 0
+        _r=$(field "$1" 'metadata.revision')
+        [ -n "$_r" ] && [ "$_r" != "$2" ] && return 0
         _i=$((_i + 1)); sleep 1
     done
-    log "  TIMEOUT waiting for $1.$2 to read '$3' (last: '$(field "$1" "$2")')"
+    log "  TIMEOUT waiting for $1 to get a revision different from '$2' (last: '$_r')"
     return 1
 }
 
-wait_present() { _i=0; while [ "$_i" -lt "$BARRIER_TRIES" ]; do
-    [ -n "$(field "$1" 'metadata.name')" ] && return 0; _i=$((_i + 1)); sleep 1; done; return 1; }
+rev_of() { field "$1" 'metadata.revision'; }
 wait_absent()  { _i=0; while [ "$_i" -lt "$BARRIER_TRIES" ]; do
     [ -z "$(field "$1" 'metadata.name')" ] && return 0; _i=$((_i + 1)); sleep 1; done; return 1; }
 
@@ -105,18 +147,18 @@ log "bot bound key: ${KEY0}"
 # 1. Spec-only re-apply — the `tctl get | apply`, terraform and operator roundtrip.
 ###############################################################################
 log "case spec-only-reapply: applying ${TOKEN_NAME} with NO status (recovery.limit -> ${NEW_RECOVERY_LIMIT})"
-BEFORE=$(snapshot "$TOKEN_NAME")
+REV=$(rev_of "$TOKEN_NAME"); BEFORE=$(snapshot "$TOKEN_NAME")
 $TCTL create -f /work/token-spec-only.yaml
-wait_field "$TOKEN_NAME" 'spec.bound_keypair.recovery.limit' "$NEW_RECOVERY_LIMIT"
+wait_revision "$TOKEN_NAME" "$REV"
 record spec-only-reapply "$TOKEN_NAME" config/token-spec-only.yaml "$BEFORE" "$(snapshot "$TOKEN_NAME")"
 
 ###############################################################################
 # 2. Tampered-status re-apply — an explicit attempt to write server-owned state.
 ###############################################################################
 log "case tampered-reapply: applying ${TOKEN_NAME} WITH a forged status (recovery.limit -> ${TAMPERED_RECOVERY_LIMIT})"
-BEFORE=$(snapshot "$TOKEN_NAME")
+REV=$(rev_of "$TOKEN_NAME"); BEFORE=$(snapshot "$TOKEN_NAME")
 $TCTL create -f /work/token-tampered.yaml
-wait_field "$TOKEN_NAME" 'spec.bound_keypair.recovery.limit' "$TAMPERED_RECOVERY_LIMIT"
+wait_revision "$TOKEN_NAME" "$REV"
 record tampered-reapply "$TOKEN_NAME" config/token-tampered.yaml "$BEFORE" "$(snapshot "$TOKEN_NAME")"
 
 ###############################################################################
@@ -125,22 +167,22 @@ record tampered-reapply "$TOKEN_NAME" config/token-tampered.yaml "$BEFORE" "$(sn
 ###############################################################################
 log "case create-with-status: creating ${SPARE_TOKEN} with status marker A"
 $TCTL rm "token/${SPARE_TOKEN}" >/dev/null 2>&1; wait_absent "$SPARE_TOKEN"
-BEFORE=$(snapshot "$SPARE_TOKEN")
+REV=$(rev_of "$SPARE_TOKEN"); BEFORE=$(snapshot "$SPARE_TOKEN")
 $TCTL create -f /work/spare-marker-a.yaml
-wait_present "$SPARE_TOKEN"
+wait_revision "$SPARE_TOKEN" "$REV"
 record create-with-status "$SPARE_TOKEN" config/spare-marker-a.yaml "$BEFORE" "$(snapshot "$SPARE_TOKEN")"
 
 log "case update-with-status: applying marker B OVER the existing ${SPARE_TOKEN}"
-BEFORE=$(snapshot "$SPARE_TOKEN")
+REV=$(rev_of "$SPARE_TOKEN"); BEFORE=$(snapshot "$SPARE_TOKEN")
 $TCTL create -f /work/spare-marker-b.yaml
-wait_field "$SPARE_TOKEN" 'spec.bound_keypair.recovery.limit' "$MARKER_B_RECOVERY_LIMIT"
+wait_revision "$SPARE_TOKEN" "$REV"
 record update-with-status "$SPARE_TOKEN" config/spare-marker-b.yaml "$BEFORE" "$(snapshot "$SPARE_TOKEN")"
 
 log "case recreate-with-status: deleting ${SPARE_TOKEN}, then applying marker B again"
-BEFORE=$(snapshot "$SPARE_TOKEN")
+REV=$(rev_of "$SPARE_TOKEN"); BEFORE=$(snapshot "$SPARE_TOKEN")
 $TCTL rm "token/${SPARE_TOKEN}"; wait_absent "$SPARE_TOKEN"
 $TCTL create -f /work/spare-marker-b.yaml
-wait_present "$SPARE_TOKEN"
+wait_revision "$SPARE_TOKEN" "$REV"
 record recreate-with-status "$SPARE_TOKEN" config/spare-marker-b.yaml "$BEFORE" "$(snapshot "$SPARE_TOKEN")"
 
 ###############################################################################

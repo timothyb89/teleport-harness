@@ -94,6 +94,11 @@ brain owns decisions + rendering, the shell owns orchestration.
     nothing is shown twice. Split is on `" # "`, so `#` inside a regex is untouched.
   - **flat `checks: |`** — the original shape, still fully supported (most modules use it).
     A module may use both; flat checks render under "Other checks".
+  - **`exclusive: true`** — this module DISRUPTS the shared cluster (today: restarts auth to
+    exercise a startup-only path) and cannot share one. `plan-resolve` refuses to compose it
+    with siblings. Not a style rule: composing `bound_keypair_apply_on_startup` (auth restart
+    every ~30s) with `bound_keypair_status` made the latter's `tctl create` calls fail against
+    an unavailable auth, and the plan reported a status-preservation defect in NEITHER module.
 - `services.yml.j2` — a jinja **fragment** (a partial compose: `services:` + optional `volumes:`)
   with just this module's bots/agents. The renderer (`harness/render.py`) deep-merges it onto the
   base auth scaffold + any shared components. Context = cluster vars (`cluster_id`/`fqdn`/`port`/

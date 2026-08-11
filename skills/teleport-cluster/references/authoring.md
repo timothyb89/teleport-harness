@@ -351,6 +351,20 @@ the bug is fixed, and the `k8s_*`/`resource_*` verbs for the gates that flip FAI
 from the CHECKED-IN generated files, so after editing `crdgen` run
 `make -C integrations/operator crd-manifests` or you'll test the old schema.
 
+## Exclusivity: modules that disrupt the cluster
+Set `exclusive: true` when a module makes the shared cluster unusable for siblings — today
+that means restarting auth. `plan-resolve` then refuses to compose it, because the damage
+lands on the OTHER modules and reads as a bug in whichever one touched auth at the wrong
+moment. Real case: `bound_keypair_apply_on_startup` restarts auth on every verify attempt
+(~30s apart); composed with `bound_keypair_status`, two of that module's `tctl create` calls
+failed against an unavailable auth and the plan reported "status not honored on create" — a
+defect in neither module.
+
+Related, for any actor that reads cluster state: **a failed read is not an empty value.**
+`tctl get` errors when auth is briefly down, and collapsing that to `""` makes a token look
+absent or a field look cleared, so a barrier returns early and a comparison "passes". Retry,
+and return a sentinel that no comparison matches when the read genuinely could not be made.
+
 ## Write a plan
 `plans/<name>.yaml` (name MUST equal filename):
 ```yaml

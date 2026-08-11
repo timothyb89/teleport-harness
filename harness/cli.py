@@ -216,9 +216,15 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 def cmd_plan_resolve(args: argparse.Namespace) -> int:
     """Load a plan, gate each module, emit JSON {name, run:[…], skip:[{module,reason}]}."""
-    from .models import load_plan
+    from .models import check_plan_exclusivity, load_plan
 
     plan = load_plan(_root() / "plans" / f"{args.plan}.yaml")
+    # Refuse an unrunnable composition up front, before anything is built or brought up: the
+    # failures it causes land on the SIBLING modules, so the plan would otherwise look like a
+    # bug in whichever module happened to be reading auth at the wrong moment.
+    for problem in check_plan_exclusivity(plan, _modules_dir(args.modules_dir)):
+        print(f"FAIL {plan.name}: {problem}", file=sys.stderr)
+        return EXIT_ERR
     result: dict = {"name": plan.name, "run": [], "skip": []}
     for m in plan.modules:
         mod = load_module(_modules_dir(args.modules_dir) / m)
