@@ -1,0 +1,40 @@
+{# The workbench: an idle container the host-side agent drives via `docker exec` (its ONLY tool,
+   proxied through harness/agent_mcp.py). It's both the "admin workstation" and the "bot host"
+   from the guide. Version-matched teleport image (has tctl + tbot + jq + curl); the docs tree is
+   mounted read-only at /docs so the guide's `(!docs/pages/includes/…!)` directives resolve to real
+   files (`docs/X` in the tree == `/docs/X` in the container — see prompt.md); the pre-seeded admin
+   identity at /id:ro (agent runs `tctl --identity /id/identity --auth-server <id>-auth:3025 …`); a
+   writable /work; and /out bound to the state dir so agent-result.json is readable by agent_result.
+   No docker socket is mounted — in-container root cannot escape.
+
+   The generic_oidc guide is written around a HYPOTHETICAL provider ("ExampleCI"). In this cluster
+   the stand-in is the real, system-trusted oidc-server component (issuer `oidc.<lab_domain>`): it
+   serves OIDC discovery + JWKS and mints signed JWTs at /token. We surface its facts as env vars
+   (docker exec inherits the container env) so the prompt can tell the agent to read them with
+   `printenv` and substitute them for the guide's placeholders — the agent still does the doc's
+   real work (authoring the token rules + tbot config). #}
+{% set oidc_host = 'oidc.' ~ lab_domain %}
+services:
+  workbench:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-workbench
+    entrypoint: ["sh", "-lc", "mkdir -p /work && sleep infinity"]
+    environment:
+      # The stand-in OIDC provider the agent points its join token at + fetches the bot JWT from.
+      # OIDC_ISSUER is system-trusted (wildcard LE cert) and serves discovery at
+      # $OIDC_ISSUER/.well-known/openid-configuration, so no tls_ca/static_jwks is needed.
+      OIDC_ISSUER: https://{{ oidc_host }}:8443
+      # Mint endpoint (stand-in for the guide's `example-ci issue-token`): a GET returns a signed
+      # JWT as text/plain with no trailing newline — directly usable as a tbot `command:`.
+      # Query params: sub=<subject>&aud=<audience>[&claim=k=v]. Always-present custom claims:
+      # org=ethernet-fyi, environment=test (plus the standard iss/sub/aud/iat/nbf/exp).
+      OIDC_TOKEN_URL: https://{{ oidc_host }}:8443/token
+    volumes:
+      - {{ docs_root | default(repo ~ '/docs', true) }}:/docs:ro
+      - agent-identity:/id:ro
+      - {{ out }}/agent/out:/out
+    networks: [internal]
+    depends_on:
+      agent-idbot: {condition: service_healthy}
+      oidc: {condition: service_started}

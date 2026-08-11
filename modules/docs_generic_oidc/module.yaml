@@ -1,0 +1,18 @@
+name: docs_generic_oidc
+description: >
+  An AI agent follows the "Deploying tbot with arbitrary OIDC providers" (generic_oidc) guide to
+  onboard a Machine ID bot against a real in-cluster OIDC provider. It reports every doc snag
+  (advisory); objective checks confirm the bot actually joined via generic_oidc.
+requires_features: [generic_oidc]
+min_version: v18
+checks: |
+  # Advisory — the agent's own verdict + every snag it hit. Report-only: FAILs ONLY if the agent
+  # produced no valid agent-result.json (didn't run / crashed). The objective checks below gate.
+  agent_result
+  # Objective end-state — these GATE pass/fail. Names are pinned by the prompt so they're
+  # deterministic even though the guide's examples use `example`/`example-bot`. bot_joined (a
+  # cluster-side bot.join audit event with method=generic_oidc) is the real proof the onboarding
+  # worked end-to-end: the agent authored a token + tbot config that the auth server accepted.
+  bot_joined       docbot generic_oidc
+  resource_present bot/docbot
+  resource_present token/docbot-token

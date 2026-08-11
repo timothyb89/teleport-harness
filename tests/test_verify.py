@@ -772,3 +772,33 @@ def test_observation_missing_case_lists_what_was_recorded():
 def test_observation_missing_file_is_a_clear_failure():
     res = _run(_obs_cluster(rc=1), "observation_unchanged act spec-only-reapply status.k")
     assert res.status == "FAIL" and "observations.json" in res.msg
+
+
+def test_host_actor_observations_come_from_the_state_dir():
+    """A host act() hook records to the state dir; a container actor to /out. Same contract."""
+    c = FakeCluster(state_files={"observations-mymod.json": json.dumps(
+        [{"case": "reapply", "before": {"a": "1"}, "after": {"a": "1"}}])})
+    c.module = "mymod"
+    assert _run(c, "observation_unchanged host reapply a").status == "PASS"
+
+
+def test_host_actor_missing_records_names_the_expected_file():
+    c = FakeCluster(state_files={})
+    c.module = "mymod"
+    res = _run(c, "observation_unchanged host reapply a")
+    assert res.status == "FAIL" and "observations-mymod.json" in res.msg
+
+
+def test_observation_proof_links_back_to_its_actor():
+    c = _obs_cluster([{"case": "c", "actor": "scripts/mutate.sh",
+                       "before": {"a": "1"}, "after": {"a": "1"}}])
+    (p,) = _run(c, "observation_unchanged act c a").proofs
+    # module-relative here; cmd_verify maps it to the bundle path (it knows the module)
+    assert p.source == "scripts/mutate.sh"
+
+
+def test_artifact_link_maps_a_module_root_actor():
+    from harness.verify import artifact_link
+    assert artifact_link("m", "checks.py")["path"] == "rendered/scripts/m/checks.py"
+    assert artifact_link("m", "scripts/x.sh")["path"] == "rendered/scripts/m/x.sh"
+    assert artifact_link("m", "config/t.yaml.j2")["path"] == "rendered/config/t.yaml"

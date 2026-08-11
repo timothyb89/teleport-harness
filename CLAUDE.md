@@ -109,8 +109,14 @@ brain owns decisions + rendering, the shell owns orchestration.
   provision-token resources applied at bootstrap (rendered if `.j2`). `prebuild.sh` *(optional)* —
   imperative pre-step (build a side image), run with the context as `UPPER_CASE` env (incl.
   `$REPO`, the clone path — how `terraform-runner` builds the provider, and `$OUT`, the state dir).
-- `checks.py` *(optional escape hatch)* — Python: define `def checks(cluster, nodes) ->
-  list[CheckResult]` for checks not expressible as a declarative verb. Gets the same
+- `checks.py` *(optional)* — Python. Preferred form is an ACTOR: `def act(cluster, nodes) ->
+  list[dict]` returns observation records and runs BEFORE the declarative checks, so
+  `observation_*` verbs (addressing it as the actor `host`) do the judging — needed when the
+  action can only run host-side, e.g. restarting auth (`bound_keypair_apply_on_startup`). The
+  harness persists what it returns to the state dir, and copies checks.py into the bundle so
+  a proof can link to it. The older escape hatch `def checks(cluster, nodes) ->
+  list[CheckResult]` both acts and judges, runs after, and is for checks not expressible as a
+  declarative verb. Gets the same
   `Cluster` seam (`cluster.exec_rc/logs/file_nonempty/get_nodes`) the built-in asserts use,
   so it's consistent + testable. (The old bash `checks.sh` is gone — all three modules are
   now fully declarative; add a verb to `harness/verify.py` + `harness/checks.py` before

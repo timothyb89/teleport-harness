@@ -92,7 +92,10 @@ def artifact_link(module_name: str, rel: str) -> dict:
     the report links to the copy a reviewer can actually open in a shared gist. Anything with
     no bundle equivalent degrades to a label with no link rather than a broken one.
     """
-    head, _, tail = rel.partition("/")
+    head, sep, tail = rel.partition("/")
+    if not sep:
+        # a bare filename is a module-root actor (checks.py), copied alongside scripts/
+        return {"label": rel, "path": f"rendered/scripts/{module_name}/{rel}"}
     name = tail[:-3] if tail.endswith(".j2") else tail
     if head == "scripts":
         path = f"rendered/scripts/{module_name}/{tail}"
@@ -531,24 +534,50 @@ def _resource_field(c, nodes, args):
 # when — and these verbs do the judging. The proof becomes the recorded before/after itself,
 # so the report shows the actual values, and the detail is generated rather than asserted.
 OBSERVATIONS_PATH = "/out/observations.json"
+HOST_ACTOR = "host"  # a module-root act() hook rather than an in-cluster container
 
 
-def _observations(c, suffix: str) -> list[dict] | None:
-    doc = c.read_json(suffix, OBSERVATIONS_PATH)
+def _observations(c, actor: str) -> list[dict] | None:
+    """Records from an in-container actor, or from a host-side act() hook.
+
+    Both actor kinds share ONE contract — a list of {case, at, before, after} records — so a
+    module can drive the cluster from a shell script or from Python without the checks caring
+    which. Host records come from the file the verifier persisted after calling act(); some
+    actions (restarting the auth container) can only run host-side, so both kinds are needed.
+    """
+    if actor == HOST_ACTOR:
+        raw = c.state_file(host_observations_name(getattr(c, "module", "") or ""))
+        try:
+            doc = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            doc = None
+    else:
+        doc = c.read_json(actor, OBSERVATIONS_PATH)
     return doc if isinstance(doc, list) else None
 
 
+def host_observations_name(module: str) -> str:
+    """State-dir filename for a host actor's records (per-module: a plan runs several)."""
+    return f"observations-{module}.json"
+
+
 def _observation_proof(rec: dict) -> ProofItem:
+    # `source` links to the ACTOR that produced the record. Log-excerpt proofs have always
+    # linked to logs/<svc>.log; an observation without a link back to the script that made it
+    # is strictly less reviewable than the log line it replaced. Recorded module-relative by
+    # the actor and resolved to a bundle path in cmd_verify, which knows the module.
     return ProofItem("observation", f"observed: {rec.get('case', '?')}",
-                     json.dumps(rec, indent=2, sort_keys=True), lang="json")
+                     json.dumps(rec, indent=2, sort_keys=True), lang="json",
+                     source=rec.get("actor", ""))
 
 
 def _find_case(c, suffix: str, case: str):
     """(record, error-CheckResult). Exactly one of the two is None."""
     obs = _observations(c, suffix)
     if obs is None:
-        return None, CheckResult(FAIL, f"{c.container(suffix)}: no {OBSERVATIONS_PATH} "
-                                       f"(did the actor run?)")
+        where = (host_observations_name(getattr(c, "module", "") or "")
+                 if suffix == HOST_ACTOR else f"{c.container(suffix)}:{OBSERVATIONS_PATH}")
+        return None, CheckResult(FAIL, f"no observations at {where} (did the actor run?)")
     rec = next((r for r in obs if r.get("case") == case), None)
     if rec is None:
         cases = ", ".join(sorted(str(r.get("case")) for r in obs)) or "none"
@@ -799,16 +828,23 @@ def run_check(cluster: Cluster, nodes: list[dict], chk: Check) -> CheckResult:
     return res
 
 
-def _load_escape_hatch(module_dir: Path):
-    """A module may add arbitrary custom checks in checks.py exposing
-    `def checks(cluster, nodes) -> list[CheckResult]`. Returns the callable or None."""
+def _load_hook(module_dir: Path, name: str):
+    """Load a named callable from a module's checks.py, or None.
+
+    Two hooks are supported. `act(cluster, nodes) -> list[dict]` is a host-side ACTOR: it
+    drives the cluster and RETURNS observation records, and runs BEFORE the declarative
+    checks so they can assert over what it recorded. `checks(cluster, nodes) ->
+    list[CheckResult]` is the older escape hatch, which both acts and judges, and runs after.
+    Prefer act(): it keeps the judging in declarative verbs, where the report can render the
+    recorded values as proof instead of a message the module wrote about itself.
+    """
     f = module_dir / "checks.py"
     if not f.is_file():
         return None
     spec = importlib.util.spec_from_file_location(f"harness_module_{module_dir.name}", f)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return getattr(mod, "checks", None)
+    return getattr(mod, name, None)
 
 
 def verify(cluster: Cluster, checks: list[Check], module_dir: Path | None = None,
@@ -817,9 +853,23 @@ def verify(cluster: Cluster, checks: list[Check], module_dir: Path | None = None
     `nodes` may be passed in (the caller often already fetched them for the report)."""
     if nodes is None:
         nodes = cluster.get_nodes()
+
+    # A host-side actor runs FIRST: it mutates the cluster and records what it saw, and the
+    # declarative checks below assert over those records. Its output is persisted to the
+    # state dir (and so into the run bundle) rather than returned, so an observation proof
+    # is reviewable after the fact exactly like a container actor's.
+    if module_dir is not None:
+        act = _load_hook(module_dir, "act")
+        if act is not None:
+            records = act(cluster, nodes) or []
+            sd = getattr(cluster, "state_dir", None)
+            if sd is not None:
+                (Path(sd) / host_observations_name(module_dir.name)).write_text(
+                    json.dumps(records, indent=2) + "\n")
+
     results = [run_check(cluster, nodes, chk) for chk in checks]
     if module_dir is not None:
-        hatch = _load_escape_hatch(module_dir)
+        hatch = _load_hook(module_dir, "checks")
         if hatch is not None:
             extra = hatch(cluster, nodes) or []
             results.extend(extra)

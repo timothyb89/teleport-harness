@@ -111,7 +111,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
     `PASS/FAIL/SKIP` + `RESULT:` text lib/verify.sh used, optionally write JSON.
     Exit 1 on any FAIL (so plan.sh's retry loop keeps working)."""
     from .cluster import DockerCluster
-    from .verify import claim_verdicts, collect_proofs, node_summary, render, verify
+    from .verify import (artifact_link, claim_verdicts, collect_proofs, node_summary,
+                         render, verify)
 
     mdir = _modules_dir(args.modules_dir) / args.module
     m = load_module(mdir)
@@ -122,9 +123,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return EXIT_ERR
 
     state_dir = Path(args.state_dir) if args.state_dir else None
-    cluster = DockerCluster(args.cluster_id, state_dir=state_dir)
+    cluster = DockerCluster(args.cluster_id, state_dir=state_dir, module=m.name)
     nodes = cluster.get_nodes()  # captured once for both verification + the report inventory
     results = verify(cluster, m.all_checks(), module_dir=mdir, nodes=nodes)
+    # An observation proof records its actor MODULE-relatively (the actor knows its own
+    # filename, not the bundle layout); resolve those to bundle paths here, where the module
+    # name is known, so the proof links to the script a reviewer can actually open.
+    for r in results:
+        for p in r.proofs:
+            if p.kind == "observation" and p.source and not p.source.startswith("rendered/"):
+                p.source = artifact_link(m.name, p.source)["path"]
     text, passed = render(results)
     print(text)
 

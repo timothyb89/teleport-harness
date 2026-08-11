@@ -64,56 +64,64 @@ class StagedCluster(Cluster):
         return self._restart_ok
 
 
-def _by_tag(results):
-    return {r.args[-1]: r for r in results}
+# The module's checks.py is now a pure ACTOR: act() drives the scenario and RETURNS
+# observation records, and module.yaml's observation_* verbs do the judging. These tests
+# assert on what act() RECORDED — including that it records on the unhappy paths, since a
+# missing record is indistinguishable from a crashed actor.
+def _rec(records, case="reapply-on-restart"):
+    return next(r for r in records if r["case"] == case)
 
 
-def test_reapply_correct_fix_all_checks_pass():
+def test_act_records_before_and_after_the_restart():
     before = _token(REAL_KEY, REAL_COUNT, REAL_SECRET, 1)
     # correct fix: status preserved verbatim, spec's recovery.limit updated to NEW_LIMIT.
     after = _token(REAL_KEY, REAL_COUNT, REAL_SECRET, CHECKS.NEW_LIMIT)
     c = StagedCluster(before, after)
 
-    res = _by_tag(CHECKS.checks(c, []))
+    rec = _rec(CHECKS.act(c, []))
 
     assert c.rewrote  # it rewrote the applied YAML before restarting
-    assert res["bound"].status == "PASS"
-    assert res["status-preserved"].status == "PASS"
-    assert res["status-discarded"].status == "PASS"
-    assert res["spec-updated"].status == "PASS"
-    assert res["secret-unchanged"].status == "PASS"
+    assert rec["actor"] == "checks.py"          # so the proof can link back to this file
+    assert rec["before"]["status.bound_keypair.bound_public_key"] == REAL_KEY
+    assert rec["after"]["status.bound_keypair.bound_public_key"] == REAL_KEY
+    assert rec["after"]["spec.bound_keypair.recovery.limit"] == str(CHECKS.NEW_LIMIT)
+    # every field the checks assert over is present in BOTH snapshots, or
+    # observation_unchanged would fail on "not recorded" rather than on a real change
+    assert set(rec["before"]) == set(CHECKS.FIELDS) == set(rec["after"])
 
 
-def test_reapply_regression_overwrites_status_is_caught():
+def test_act_records_the_regression_faithfully():
     before = _token(REAL_KEY, REAL_COUNT, REAL_SECRET, 1)
     # regression: re-apply lands the config-supplied BOGUS status (wiping the real bound key).
     after = _token(CHECKS.BOGUS_KEY, CHECKS.BOGUS_COUNT, CHECKS.BOGUS_SECRET, CHECKS.NEW_LIMIT)
-    c = StagedCluster(before, after)
 
-    res = _by_tag(CHECKS.checks(c, []))
+    rec = _rec(CHECKS.act(StagedCluster(before, after), []))
 
-    assert res["status-preserved"].status == "FAIL"   # real key was wiped
-    assert res["status-discarded"].status == "FAIL"   # bogus values landed
-    assert res["secret-unchanged"].status == "FAIL"   # secret overwritten
-    assert res["spec-updated"].status == "PASS"       # spec still applied
+    # the actor does not judge — it records the transition the checks will flag
+    assert rec["before"]["status.bound_keypair.bound_public_key"] == REAL_KEY
+    assert rec["after"]["status.bound_keypair.bound_public_key"] == CHECKS.BOGUS_KEY
+    assert rec["after"]["status.bound_keypair.registration_secret"] == CHECKS.BOGUS_SECRET
+    assert rec["after"]["spec.bound_keypair.recovery.limit"] == str(CHECKS.NEW_LIMIT)
 
 
-def test_never_bound_fails_fast(monkeypatch):
+def test_never_bound_records_instead_of_bailing_silently(monkeypatch):
     monkeypatch.setattr(CHECKS, "BOUND_WAIT_TIMEOUT", 0.0)  # don't poll the full window
     never = _token("", 0, "", 1)
     c = StagedCluster(never, never)
 
-    res = CHECKS.checks(c, [])
+    rec = _rec(CHECKS.act(c, []))
 
-    assert len(res) == 1
-    assert res[0].status == "FAIL" and res[0].args == ["bound"]
     assert not c.rewrote  # bailed before mutating anything / restarting
+    # a record with an empty key makes observation_unchanged fail loudly; NO record would
+    # look identical to a crashed actor, so the unhappy path must still produce one
+    assert rec["after"]["status.bound_keypair.bound_public_key"] == ""
+    assert "never bound a key" in rec["note"]
 
 
-def test_restart_failure_is_reported():
+def test_restart_failure_is_recorded():
     before = _token(REAL_KEY, REAL_COUNT, REAL_SECRET, 1)
-    c = StagedCluster(before, before, restart_ok=False)
-
-    res = CHECKS.checks(c, [])
-
-    assert res[-1].status == "FAIL" and res[-1].args == ["restart"]
+    rec = _rec(CHECKS.act(StagedCluster(before, before, restart_ok=False), []))
+    assert "did not come back healthy" in rec["note"]
+    # before == after, so the spec-updated check fails: "unchanged" must not be mistaken
+    # for success when the re-apply never actually ran
+    assert rec["after"]["spec.bound_keypair.recovery.limit"] == "1"

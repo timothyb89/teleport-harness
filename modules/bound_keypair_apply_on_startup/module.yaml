@@ -4,35 +4,87 @@
 # must initialize status.bound_keypair (otherwise the join path rejects the token), then
 # PRESERVE that status when apply-on-startup re-runs on every restart.
 #
-# Runs in its OWN cluster (never composed into a shared plan): its checks.py RESTARTS the
-# shared auth container to exercise the re-apply path, which would disrupt sibling modules.
+# Runs in its OWN cluster (never composed into a shared plan): checks.py RESTARTS the shared
+# auth container to exercise the re-apply path, which would disrupt sibling modules.
 name: bound_keypair_apply_on_startup
 description: >
   A bound_keypair join token is supplied through `teleport start --apply-on-startup`. A real
   tbot registers a keypair against it and joins (proving apply-on-startup initializes
   status.bound_keypair — pre-fix it was nil and joins were rejected). A wrong registration
-  secret is denied. The checks.py then restarts auth to prove re-apply preserves the bound
-  key, silently discards config-supplied status, and freely updates spec.
+  secret is denied. checks.py then restarts auth and records what the re-apply did to the
+  token, and the observation checks assert status survived while spec was updated.
 provides_feature: bound_keypair
 requires_features: [bound_keypair]
 min_version: v19
 
-# The join-success + negative-denial facts are declarative; the restart-based re-apply
-# properties (status preserved / config-status discarded / spec updated) live in checks.py,
-# which needs to restart auth and diff the token status before/after.
-checks: |
-  # the bot joined specifically via bound_keypair against the apply-on-startup token, and
-  # wrote an identity that authenticates + is authorized.
+# Scaffolding: the scenario has to have happened for the claims to mean anything. A real bot
+# must have joined against the apply-on-startup token — which is itself the first half of the
+# fix, since pre-fix the token's status was nil and the join path rejected it.
+preconditions: |
   bot_joined          bk-bot bound_keypair
   audit_event         bot.join bot_name=bk-bot method=bound_keypair success=true
   output_file         bkbot /out/id/identity
   identity_authorized bkbot /out/id/identity
-  # the token teleport applied on startup exists, is a bound_keypair token, and — the core
-  # fix — has an INITIALIZED status.bound_keypair (pre-fix apply-on-startup left it nil, so
-  # the join path rejected it; a successful join would be impossible).
   resource_present    token/bk-token
   resource_field      token/bk-token spec.join_method bound_keypair
-  resource_field      token/bk-token status.bound_keypair
-  # wrong registration secret -> denied, nothing produced.
-  log_contains        bkbot-deny denied|not found|failed to (join|connect)|authorization|invalid|unauthorized|registration|secret
-  no_output_file      bkbot-deny /out/id/identity
+
+claims:
+  - id: startup-initializes-status
+    statement: apply-on-startup initializes status.bound_keypair, so the token is usable.
+    why: |
+      Pre-fix, `teleport start --apply-on-startup` wrote spec-only YAML straight to storage and
+      left `status` nil, and the join path rejects a bound_keypair token with no initialized
+      status — the token existed but no bot could ever use it.
+
+      - The live token has a non-empty `status.bound_keypair`.
+      - Stronger: a real tbot **actually joined** against it (see Preconditions), which is only
+        possible if the status was initialized, including a usable registration secret.
+    artifacts: [apply_on_startup/token.yaml.j2, config/tbot.yaml.j2]
+    checks: |
+      resource_field      token/bk-token status.bound_keypair
+
+  - id: reapply-preserves-status
+    statement: Re-applying on restart preserves status and discards config-supplied status.
+    why: |
+      `checks.py` rewrites the applied YAML with a **changed spec** and a **fully bogus
+      status**, restarts auth so teleport re-runs `--apply-on-startup`, and records the token
+      before and after.
+
+      - **The bound key, recovery counter and registration secret are unchanged** — the real
+        join state survived a restart that re-applied the token.
+      - This is the case that matters operationally: apply-on-startup re-runs on *every* auth
+        start, so a re-apply that reset status would knock the bot offline on any restart.
+      - The forged values in the re-applied YAML (`bound_public_key`, `recovery_count: 99`,
+        a made-up secret) had to be *discarded* for these to hold — config cannot write
+        server-owned state.
+    artifacts: [checks.py, apply_on_startup/token.yaml.j2]
+    checks: |
+      observation_unchanged host reapply-on-restart status.bound_keypair.bound_public_key status.bound_keypair.recovery_count status.bound_keypair.registration_secret
+      resource_field_not    token/bk-token status.bound_keypair.bound_public_key bogusbogusbogus
+      resource_field_not    token/bk-token status.bound_keypair.registration_secret bogus-config-supplied-secret
+
+  - id: reapply-updates-spec
+    statement: Re-applying still updates spec, so preserving status does not freeze the token.
+    why: |
+      The over-correction guard, and the proof that the re-apply actually ran: `recovery.limit`
+      was re-applied as 5 (from 1) in the same document that carried the bogus status.
+
+      Without this, "status unchanged" would be indistinguishable from "the re-apply never
+      happened at all" — the restart could have failed, or teleport could have skipped the
+      file, and every preservation assertion above would pass vacuously.
+    artifacts: [checks.py]
+    checks: |
+      observation_equals host reapply-on-restart spec.bound_keypair.recovery.limit 5
+
+  - id: wrong-secret-denied
+    statement: A bot presenting the wrong registration secret is denied and produces nothing.
+    why: |
+      The negative case. Initializing status must not make the token permissive: the
+      registration secret still has to match.
+
+      - The denied bot's log shows the rejection.
+      - It wrote **no identity**, so the denial happened before any credential was issued.
+    artifacts: [config/tbot-deny.yaml.j2]
+    checks: |
+      log_contains   bkbot-deny denied|not found|failed to (join|connect)|authorization|invalid|unauthorized|registration|secret
+      no_output_file bkbot-deny /out/id/identity

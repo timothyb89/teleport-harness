@@ -1,0 +1,24 @@
+# docs_generic_oidc: an AI agent follows the generic_oidc deployment guide to onboard a Machine ID
+# bot, reporting every doc snag (advisory) while objective checks confirm the bot actually joined
+# via generic_oidc (see module.yaml). Pulls in:
+#   - agent-runner: the pre-seeded admin identity the agent drives tctl with (no login/MFA).
+#   - oidc-server:  a real in-cluster IdP (system-trusted wildcard cert) that stands in for the
+#                   guide's hypothetical "ExampleCI" provider — it serves OIDC discovery + JWKS and
+#                   mints signed JWTs at /token (see components/oidc-server). The agent points the
+#                   join token's `issuer` at it and fetches the bot's JWT from it.
+components: [agent-runner, oidc-server]
+
+# The docs tree mounted read-only into the workbench at /docs, so the guide's
+# `(!docs/pages/includes/…!)` directives resolve to real files. This points at the docs-website
+# working tree (content/19.x) rather than {{ repo }}/docs because the generic_oidc guide is still
+# in progress there and not yet committed into the teleport monorepo's docs/. Once it lands in the
+# build clone's docs/, drop this and the fragment falls back to {{ repo }}/docs.
+docs_root: /Users/tim/projects/docs-website/content/19.x/docs
+
+# The `agent:` block configures the HOST step (harness agent-run): which agent/model drives the
+# workbench, the prompt file (rendered as jinja with connection facts), and a wall-clock cap.
+agent:
+  provider: claude          # future: codex / sdk-api (API-key drivers)
+  model: claude-opus-4-8
+  prompt: prompt.md
+  timeout_seconds: 1200

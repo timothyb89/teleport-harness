@@ -93,11 +93,17 @@ def _collect_scripts(unit_dir: Path, out_dir: Path, origin: str) -> Path | None:
     they need arrive as environment in the compose fragment.
     """
     sdir = unit_dir / "scripts"
-    if not sdir.is_dir():
+    # checks.py is an actor too when it defines act(), so it belongs in the bundle for the
+    # same reason: a proof that cites it is unreviewable if the file was never published.
+    hatch = unit_dir / "checks.py"
+    if not sdir.is_dir() and not hatch.is_file():
         return None
     dest = out_dir / "scripts" / origin
     dest.mkdir(parents=True, exist_ok=True)
-    for f in sorted(sdir.iterdir()):
+    files = sorted(sdir.iterdir()) if sdir.is_dir() else []
+    if hatch.is_file():
+        files.append(hatch)
+    for f in files:
         if f.is_file():
             shutil.copyfile(f, dest / f.name)
             (dest / f.name).chmod(0o755)

@@ -141,6 +141,27 @@ scaffolding failure (claims UNTESTED) rather than claim failures it caused. And 
 on the unhappy path: a timed-out barrier should record what it last saw, because a missing
 record is indistinguishable from a crash while a recorded bad value is a finding.
 
+Record `"actor": "scripts/mutate.sh"` (module-relative) on each record — the proof then links
+back to the script, the way a log-excerpt proof links to `logs/<svc>.log`.
+
+**Host actors.** Some actions can only run from the host — restarting the auth container, for
+one — so `checks.py` may instead define `act(cluster, nodes) -> list[dict]` returning the same
+records. It runs BEFORE the declarative checks (unlike the older `checks()` hatch, which runs
+after and both acts *and* judges), and the harness persists what it returns to the state dir.
+Address it as the actor `host`:
+
+```
+observation_unchanged host reapply-on-restart status.bound_keypair.bound_public_key
+```
+
+One contract, two actor kinds — see `modules/bound_keypair_apply_on_startup/checks.py`, whose
+`act()` restarts auth and records the token before and after. `checks.py` is copied into the
+bundle like `scripts/`, so `artifacts: [checks.py]` links to it.
+
+Prefer `act()` over the legacy `checks()` hatch: returning `CheckResult`s directly means the
+report can only show a sentence the module wrote about itself, where an observation renders
+the values and generates the detail text.
+
 Two rules that apply to any script, observations or not:
 - Mount from **`{{ scripts }}`**, never `{{ module_dir }}/scripts` — the renderer copies
   `scripts/` into the bundle, so the actor ships with the report and appears in `share` gists.

@@ -1,29 +1,31 @@
-"""Restart-based checks for the apply-on-startup fix — the properties that only appear
-when `teleport start --apply-on-startup` RE-RUNS on a restart (the plain declarative
-verbs prove the first-apply/join). All expressed against the live token status the seam
-reads via `tctl get token/bk-token`.
+"""Host-side ACTOR for the apply-on-startup re-apply path.
+
+This module's interesting properties only appear when `teleport start --apply-on-startup`
+RE-RUNS, which needs an auth restart — something only the host can do, so the actor lives
+here rather than in a container. It does not judge: `act()` drives the scenario and returns
+observation records, and module.yaml's `observation_*` checks do the asserting.
+
+The split matters for the same reason it does for a shell actor: when the actor decides the
+verdict, the report can only show a sentence the module wrote about itself. Recording makes
+the proof the observed VALUES and the detail text generated from them, so it cannot drift
+away from what the code actually compared.
 
 Flow (idempotent, so the plan's verify-retry loop can re-run it safely):
-  1. wait for the positive bot to finish its bound_keypair registration (status.bound_keypair
-     .bound_public_key becomes non-empty) — the real, server-owned join state.
+  1. wait for the positive bot to finish its bound_keypair registration — the real,
+     server-owned join state (`bound_public_key` becomes non-empty).
   2. rewrite the applied token YAML IN PLACE with (a) a CHANGED spec (recovery.limit 1 -> 5)
-     and (b) a BOGUS status (fake bound_public_key / recovery_count / registration_secret),
-     then restart auth so teleport re-applies it.
-  3. re-read the token and assert:
-       - status-preserved-across-restart: bound_public_key unchanged (not wiped),
-       - config-supplied-status-discarded: the bogus status did NOT land,
-       - spec-updated-on-reapply: the changed spec field DID land,
-       - registration-secret-unchanged: status registration secret not overwritten.
+     and (b) a BOGUS status, then restart auth so teleport re-applies it.
+  3. re-read and record before/after, so the checks can assert that status survived, the
+     config-supplied status did not land, and the spec change did.
 
-This mirrors lib/auth's TestInit_ApplyOnStartup_BoundKeypair but end-to-end: a real tbot
-join populates the status and a real `teleport` process restart runs the re-apply path.
+Mirrors lib/auth's TestInit_ApplyOnStartup_BoundKeypair, but end-to-end: a real tbot join
+populates the status and a real `teleport` process restart runs the re-apply path.
 """
 
 from __future__ import annotations
 
 import base64
-
-from harness.verify import FAIL, PASS, CheckResult, ProofItem
+import time
 
 TOKEN = "bk-token"
 # must match render.yaml `reg_secret` (the value tbot presents + the token's spec onboarding).
@@ -40,6 +42,17 @@ NEW_LIMIT = 5  # spec.bound_keypair.recovery.limit is 1 in apply_on_startup/toke
 # so a unit test can shrink it (a never-bound fake would otherwise poll for the full window).
 BOUND_WAIT_TIMEOUT = 120.0
 BOUND_WAIT_INTERVAL = 3.0
+
+ACTOR = "checks.py"  # recorded on each observation so its proof links back here
+
+# The fields the checks assert over. Kept flat and dotted so a record reads the same way as
+# the shell actor's in bound_keypair_status — one contract, two actor kinds.
+FIELDS = (
+    "status.bound_keypair.bound_public_key",
+    "status.bound_keypair.recovery_count",
+    "status.bound_keypair.registration_secret",
+    "spec.bound_keypair.recovery.limit",
+)
 
 MODIFIED_TOKEN_YAML = f"""kind: token
 version: v2
@@ -65,7 +78,6 @@ status:
 
 
 def _dig(doc, path):
-    """Walk a dotted path through nested dicts; return (found, value)."""
     cur = doc
     for key in path.split("."):
         if not isinstance(cur, dict) or key not in cur:
@@ -74,143 +86,63 @@ def _dig(doc, path):
     return True, cur
 
 
-def _bk_status(cluster):
-    """(status.bound_keypair dict, full token doc) — {} / None if the token is absent."""
-    doc = cluster.get_resource("token", TOKEN)
-    if not doc:
-        return {}, None
-    _, st = _dig(doc, "status.bound_keypair")
-    return (st if isinstance(st, dict) else {}), doc
+def _snapshot(cluster) -> dict:
+    """Every field under test, as strings — the same shape a shell actor records."""
+    doc = cluster.get_resource("token", TOKEN) or {}
+    out = {}
+    for f in FIELDS:
+        found, v = _dig(doc, f)
+        out[f] = "" if not found or v is None else str(v)
+    return out
 
 
-def _wait_bound(cluster, timeout=None, interval=None):
-    """Poll until the positive bot has bound a key (or timeout). Returns the status dict."""
-    import time
+def _wait_bound(cluster, timeout=None, interval=None) -> dict:
     timeout = BOUND_WAIT_TIMEOUT if timeout is None else timeout
     interval = BOUND_WAIT_INTERVAL if interval is None else interval
     deadline = time.monotonic() + timeout
     while True:
-        st, _ = _bk_status(cluster)
-        if st.get("bound_public_key"):
-            return st
+        snap = _snapshot(cluster)
+        if snap.get("status.bound_keypair.bound_public_key"):
+            return snap
         if time.monotonic() >= deadline:
-            return st
+            return snap
         time.sleep(interval)
 
 
-def _status_proof(title, st):
-    return ProofItem("text", title,
-                     f"bound_public_key={st.get('bound_public_key', '')!r}\n"
-                     f"recovery_count={st.get('recovery_count', '')!r}\n"
-                     f"registration_secret={st.get('registration_secret', '')!r}")
+def _record(case, before, after, note=""):
+    rec = {"case": case, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "token": TOKEN, "applied": "apply_on_startup/token.yaml", "actor": ACTOR,
+           "before": before, "after": after}
+    if note:
+        rec["note"] = note
+    return rec
 
 
-def checks(cluster, nodes):
-    results = []
-
-    # 1) The real, server-owned join state produced against the apply-on-startup token.
+def act(cluster, nodes):
+    """Drive the re-apply and return observation records (see module docstring)."""
     before = _wait_bound(cluster)
-    real_key = before.get("bound_public_key", "")
-    if not real_key:
-        results.append(CheckResult(
-            FAIL,
-            f"positive bot never bound a key against the apply-on-startup token "
-            f"(status.bound_keypair.bound_public_key empty on token/{TOKEN}) — the "
-            f"apply-on-startup token was unusable",
-            verb="bk_reapply", args=["bound"],
-            proofs=[_status_proof(f"token/{TOKEN} status.bound_keypair (never bound)", before)]))
-        return results  # nothing downstream is meaningful without a real bound key
-    real_count = before.get("recovery_count")
-    real_secret = before.get("registration_secret", "")
-    results.append(CheckResult(
-        PASS,
-        f"apply-on-startup initialized a usable status.bound_keypair: a real tbot bound a "
-        f"key against token/{TOKEN}",
-        verb="bk_reapply", args=["bound"],
-        proofs=[_status_proof(f"token/{TOKEN} status.bound_keypair after the real join", before)]))
+    if not before.get("status.bound_keypair.bound_public_key"):
+        # Record the failure rather than raising: a missing record is indistinguishable from
+        # a crashed actor, while a recorded empty key is a finding the checks can report.
+        return [_record("reapply-on-restart", before, before,
+                        note="the positive bot never bound a key; apply-on-startup produced "
+                             "an unusable status.bound_keypair, so nothing was re-applied")]
 
-    # 2) Re-apply a variant with a CHANGED spec + a BOGUS status, then restart auth so
-    #    teleport re-runs --apply-on-startup. Written into the read-write apply-on-startup
-    #    mount via docker exec (base64 to avoid any quoting hazards), replacing whatever is
-    #    there so the combined doc is exactly ours (idempotent across verify retries).
-    b64 = base64.b64encode(MODIFIED_TOKEN_YAML.encode()).decode()
     # Overwrite the applied token file IN PLACE (preserving its rendered name, so the
     # report's setup.json source link still resolves) rather than adding a second doc.
+    # base64 avoids any quoting hazards through two layers of shell.
+    b64 = base64.b64encode(MODIFIED_TOKEN_YAML.encode()).decode()
     rc, out = cluster.exec_out("auth", ["sh", "-c",
         'f="$(ls /apply-on-startup/*.yaml 2>/dev/null | head -1)"; '
         '[ -n "$f" ] || f=/apply-on-startup/token.yaml; '
         f"printf %s '{b64}' | base64 -d > \"$f\""])
     if rc != 0:
-        results.append(CheckResult(
-            FAIL, f"could not rewrite the apply-on-startup token in the auth container (exit {rc})",
-            verb="bk_reapply", args=["rewrite"],
-            proofs=[ProofItem("command", "rewrite /apply-on-startup/override.yaml", out)]))
-        return results
+        return [_record("reapply-on-restart", before, before,
+                        note=f"could not rewrite the apply-on-startup token (exit {rc}): {out}")]
 
     if not cluster.restart_auth():
-        results.append(CheckResult(
-            FAIL, "auth did not come back healthy after restart (could not exercise re-apply)",
-            verb="bk_reapply", args=["restart"]))
-        return results
+        return [_record("reapply-on-restart", before, before,
+                        note="auth did not come back healthy after restart, so the re-apply "
+                             "path was never exercised")]
 
-    after, after_doc = _bk_status(cluster)
-    if after_doc is None:
-        results.append(CheckResult(
-            FAIL, f"token/{TOKEN} missing after restart", verb="bk_reapply", args=["reread"]))
-        return results
-    after_key = after.get("bound_public_key", "")
-    after_count = after.get("recovery_count")
-    after_secret = after.get("registration_secret", "")
-    _, new_limit = _dig(after_doc, "spec.bound_keypair.recovery.limit")
-    reapply_proof = _status_proof(
-        f"token/{TOKEN} status.bound_keypair after re-apply + restart", after)
-
-    # status preserved: the real bound key survived the restart's re-apply.
-    if after_key == real_key:
-        results.append(CheckResult(
-            PASS, "re-apply on restart PRESERVED the bound public key (status not reset)",
-            verb="bk_reapply", args=["status-preserved"], proofs=[reapply_proof]))
-    else:
-        results.append(CheckResult(
-            FAIL, f"re-apply reset the bound public key: was {real_key!r}, now {after_key!r}",
-            verb="bk_reapply", args=["status-preserved"], proofs=[reapply_proof]))
-
-    # config-supplied status discarded: none of the bogus values landed.
-    landed = [f"{n}={v!r}" for n, v, bogus in
-              (("bound_public_key", after_key, BOGUS_KEY),
-               ("recovery_count", after_count, BOGUS_COUNT),
-               ("registration_secret", after_secret, BOGUS_SECRET))
-              if str(v) == str(bogus)]
-    if not landed:
-        results.append(CheckResult(
-            PASS, "config-supplied status in the re-applied YAML was silently discarded "
-                  "(bogus bound_public_key / recovery_count / registration_secret ignored)",
-            verb="bk_reapply", args=["status-discarded"], proofs=[reapply_proof]))
-    else:
-        results.append(CheckResult(
-            FAIL, f"config-supplied status leaked into the stored token: {', '.join(landed)}",
-            verb="bk_reapply", args=["status-discarded"], proofs=[reapply_proof]))
-
-    # spec freely updated on re-apply: the changed recovery.limit landed.
-    spec_proof = ProofItem("text", f"token/{TOKEN} spec.bound_keypair.recovery.limit after re-apply",
-                           f"limit={new_limit!r} (was 1, re-applied as {NEW_LIMIT})")
-    if str(new_limit) == str(NEW_LIMIT):
-        results.append(CheckResult(
-            PASS, f"re-apply UPDATED spec (recovery.limit 1 -> {NEW_LIMIT}) while leaving status intact",
-            verb="bk_reapply", args=["spec-updated"], proofs=[spec_proof]))
-    else:
-        results.append(CheckResult(
-            FAIL, f"re-apply did not update spec.recovery.limit (got {new_limit!r}, expected {NEW_LIMIT})",
-            verb="bk_reapply", args=["spec-updated"], proofs=[spec_proof]))
-
-    # registration secret in status is authoritative: unchanged by the re-apply.
-    if after_secret == real_secret:
-        results.append(CheckResult(
-            PASS, "re-apply did not modify the stored registration secret",
-            verb="bk_reapply", args=["secret-unchanged"], proofs=[reapply_proof]))
-    else:
-        results.append(CheckResult(
-            FAIL, f"re-apply changed the stored registration secret: was {real_secret!r}, now {after_secret!r}",
-            verb="bk_reapply", args=["secret-unchanged"], proofs=[reapply_proof]))
-
-    return results
+    return [_record("reapply-on-restart", before, _snapshot(cluster))]

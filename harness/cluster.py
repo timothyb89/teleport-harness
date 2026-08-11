@@ -30,6 +30,11 @@ class Cluster:
 
     def __init__(self, cluster_id: str):
         self.id = cluster_id
+        # Set by the verifier for the module currently being checked. Only the observation
+        # verbs use it, to find a host actor's per-module records in the state dir (a plan
+        # runs several modules against one cluster, so the filename has to be scoped).
+        self.module = ""
+        self.state_dir = None
 
     def container(self, suffix: str) -> str:
         return f"{self.id}-{suffix}"
@@ -121,9 +126,10 @@ class DockerCluster(Cluster):
     """Real cluster backed by docker. `state_dir` (state/<id>/) is read for meta
     when a check needs the image/proxy (only tsh_ssh does today)."""
 
-    def __init__(self, cluster_id: str, state_dir: Path | None = None):
+    def __init__(self, cluster_id: str, state_dir: Path | None = None, module: str = ""):
         super().__init__(cluster_id)
         self.state_dir = state_dir
+        self.module = module
 
     def _run(self, argv: list[str]) -> subprocess.CompletedProcess:
         return subprocess.run(argv, capture_output=True, text=True)

@@ -77,7 +77,8 @@ echo '[]' > "$OBS"
 record() { # record <case> <token> <applied> <before-json> <after-json>
     jq --arg case "$1" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg token "$2" \
        --arg applied "$3" --argjson before "$4" --argjson after "$5" \
-       '. + [{case: $case, at: $at, token: $token, applied: $applied,
+       --arg actor scripts/mutate.sh \
+       '. + [{case: $case, at: $at, token: $token, applied: $applied, actor: $actor,
               before: $before, after: $after}]' "$OBS" > "$OBS.tmp" && mv "$OBS.tmp" "$OBS"
     log "recorded '$1'"
 }
