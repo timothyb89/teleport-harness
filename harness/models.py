@@ -29,6 +29,7 @@ class Check(BaseModel):
     # scaffolding. Carried through to CheckResult so the report can group by claim.
     claim: str = ""
     role: str = "evidence"  # evidence | precondition
+    note: str = ""  # author's plain-language meaning; replaces the verb's msg in the report
 
     def tagged(self, role: str, claim: str = "") -> "Check":
         return self.model_copy(update={"role": role, "claim": claim})
@@ -60,9 +61,19 @@ def parse_checks(block: str | None) -> list[Check]:
         stripped = line.lstrip()
         if not stripped or stripped.startswith("#"):
             continue
+        # A trailing ` # ...` is the check's NOTE — what the report shows in the detail
+        # column instead of the verb's own message. Some verbs cannot say anything useful
+        # there on their own: `log_count svc ge 1 RESULT foo: PASS` reports "1 match(es) for
+        # /RESULT foo: PASS/", which just restates the check. The note lets the author say
+        # what the match MEANS. Split on " # " (spaces both sides) so a '#' inside a regex
+        # or an argument is untouched.
+        note = ""
+        head, sep, tail = stripped.partition(" # ")
+        if sep:
+            stripped, note = head.rstrip(), tail.strip()
         parts = stripped.split()
         checks.append(
-            Check(verb=parts[0], args=parts[1:], raw=stripped, lineno=i)
+            Check(verb=parts[0], args=parts[1:], raw=stripped, lineno=i, note=note)
         )
     return checks
 
@@ -86,6 +97,11 @@ class Claim(BaseModel):
     statement: str                # what is being claimed, in plain prose
     why: str = ""                 # HOW the checks below establish it — the logical chain
     checks: list[Check] = Field(default_factory=list)
+    # MODULE-RELATIVE paths to the things a reader would want to open: the script that drove
+    # the mutation, the resource that was applied. Written as they appear in the module
+    # (`scripts/mutate.sh`, `config/token.yaml.j2`) and mapped to their bundle locations at
+    # report time, so a typo is a validation error rather than a dead link in a shared gist.
+    artifacts: list[str] = Field(default_factory=list)
 
     @field_validator("checks", mode="before")
     @classmethod
@@ -166,6 +182,11 @@ class Module(BaseModel):
             for chk in claim.checks:
                 for msg in chk.validate_against_registry():
                     problems.append(f"claims[{claim.id}][{chk.lineno}] {msg}: '{chk.raw}'")
+            for art in claim.artifacts:
+                if self.path is not None and not (self.path / art).is_file():
+                    problems.append(
+                        f"claims[{claim.id}]: artifact '{art}' not found in the module "
+                        f"(paths are module-relative, e.g. scripts/mutate.sh)")
         if not (self.has_compose_template or self.has_render_sh):
             problems.append("missing services.yml.j2 (or a legacy render.sh)")
         return problems

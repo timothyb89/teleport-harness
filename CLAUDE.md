@@ -83,6 +83,15 @@ brain owns decisions + rendering, the shell owns orchestration.
     evidence with no argument, and a reviewer has to reverse-engineer which verdicts add up
     to what. A failing PRECONDITION marks its claims **UNTESTED**, not DISPROVEN — the run
     never exercised them, and asserting a disproof it can't support is worse than saying so.
+    A claim also takes `artifacts:` — module-relative paths (`scripts/mutate.sh`,
+    `config/x.yaml.j2`, `bootstrap/y.yaml.j2`) mapped to their bundle locations and rendered
+    as links, validated to exist so a typo can't become a dead link in a shared gist. Write
+    `why` as short markdown (bold leads + bullets), not a paragraph.
+  - **per-check `# note`** — a trailing ` # ...` on any check line replaces the verb's message
+    in the report's detail column. For verbs that can only restate themselves there
+    (`log_count …RESULT foo: PASS` → "1 match(es) for /RESULT foo: PASS/") this is where the
+    author says what the match MEANS. The verb's message still appears under the proof, so
+    nothing is shown twice. Split is on `" # "`, so `#` inside a regex is untouched.
   - **flat `checks: |`** — the original shape, still fully supported (most modules use it).
     A module may use both; flat checks render under "Other checks".
 - `services.yml.j2` — a jinja **fragment** (a partial compose: `services:` + optional `volumes:`)
@@ -319,11 +328,13 @@ dedicated **Agent findings** section rendering the agent's verdict as formatted,
 issues [markdown preserved] + a steps list, with the raw JSON + transcript collapsed), per-module
 `results-*.json`, the renderer's `setup.json` provenance manifest, the raw `console.txt`,
 per-service `logs/`, and `rendered/` (compose + config + bootstrap + scripts). Leaves the cluster up.
-For a module with `claims:`, the per-module section leads with a **claim summary table**
-(verdict · statement · N/M checks) linking to one section per claim: the statement, a
-**"How this is established"** rationale, and only then the checks that serve it — with
-preconditions collapsed separately as scaffolding. That ordering is the point: a reviewer with
-no context reads what was proven and why before meeting a single verb.
+Every report opens with a **Contents** list (sections, then each module's claims inline with
+their verdicts, so the TOC doubles as an at-a-glance result). For a module with `claims:`, the
+per-module section leads with a **claim summary table** (verdict · statement · N/M checks)
+linking to one `#### Claim: <statement> — <verdict>` section per claim: the rationale, an
+**Artifacts** line linking the scripts/resources involved, and only then the checks that serve
+it — with preconditions collapsed separately as scaffolding. That ordering is the point: a
+reviewer with no context reads what was proven and why before meeting a single verb.
 `share <run-bundle|id>` publishes a bundle as a GitHub gist (`gh gist create`, secret by default;
 `--public` opts in with a secrets warning): the brain (`harness gist-stage` → `harness/share.py`)
 flattens the bundle (gists are flat — `rendered/config/x.yaml` → `rendered--config--x.yaml`) and

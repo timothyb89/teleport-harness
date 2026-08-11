@@ -231,9 +231,10 @@ def _claim_state_dir(tmp_path: Path, verdict="PROVEN", precondition="PASS") -> P
 def test_claims_render_statement_rationale_and_verdict(tmp_path):
     md = build_markdown(_claim_state_dir(tmp_path))
     assert "✅ PROVEN" in md
-    assert "status survives an update" in md
-    # the rationale — the logical chain a bare verdict list cannot convey
-    assert "How this is established." in md
+    # "Claim:" prefix so the heading is distinguishable from surrounding prose
+    assert "#### Claim: status survives an update" in md
+    # the rationale — the logical chain a bare verdict list cannot convey. No label: the
+    # heading already says it is a claim, so prose beneath it is self-evidently the reason.
     assert "a bot bound a key first" in md
     # preconditions are labelled as scaffolding, not presented as evidence for the claim
     assert "Preconditions" in md and "scaffolding" in md
@@ -255,3 +256,53 @@ def test_module_without_claims_still_renders_flat_table(tmp_path):
     md = build_markdown(_state_dir(tmp_path))
     assert "| status | check | detail | proof |" in md
     assert "PROVEN" not in md
+
+
+def test_toc_lists_modules_and_claims_with_verdicts(tmp_path):
+    md = build_markdown(_claim_state_dir(tmp_path))
+    assert "## Contents" in md
+    toc = md.split("## Contents")[1].split("##")[0]
+    # the TOC doubles as an at-a-glance result, so verdicts appear inline
+    assert "✅ PROVEN" in toc and "status survives an update" in toc
+    assert "(#claim-demo-preserved)" in toc
+
+
+def test_check_note_replaces_the_verb_message_in_the_detail_cell(tmp_path):
+    d = _claim_state_dir(tmp_path)
+    payload = json.loads((d / "results-demo.json").read_text())
+    payload["results"][1]["note"] = "live token holds the real key, not the forged one"
+    (d / "results-demo.json").write_text(json.dumps(payload))
+    md = build_markdown(d)
+    assert "live token holds the real key, not the forged one" in md
+    # ...and the verb's own message is not ALSO in the table cell (it stays under the proof)
+    assert "| not forged |" not in md
+
+
+def test_claim_artifacts_render_as_links(tmp_path):
+    d = _claim_state_dir(tmp_path)
+    payload = json.loads((d / "results-demo.json").read_text())
+    payload["claims"][0]["artifacts"] = [
+        {"label": "scripts/mutate.sh", "path": "rendered/scripts/demo/mutate.sh"},
+        {"label": "weird/thing", "path": ""},
+    ]
+    (d / "results-demo.json").write_text(json.dumps(payload))
+    md = build_markdown(d)
+    assert "[`scripts/mutate.sh`](rendered/scripts/demo/mutate.sh)" in md
+    assert "`weird/thing`" in md  # no bundle equivalent -> label without a broken link
+
+
+def test_every_toc_link_resolves_to_an_emitted_anchor(tmp_path):
+    """The TOC must not GUESS GitHub's heading slugs.
+
+    Ours contain em-dashes, emoji and counts; GitHub's slugger hyphenates each space
+    separately rather than collapsing runs, so a locally-computed slug drifts from the real
+    anchor and the link 404s — in a shared gist, which is the case the TOC exists for. Every
+    target is therefore emitted explicitly, and this test enforces it.
+    """
+    import re as _re
+    md = build_markdown(_claim_state_dir(tmp_path))
+    toc = md.split("## Contents")[1].split("\n## ")[0]
+    targets = _re.findall(r"\]\(#([^)]+)\)", toc)
+    emitted = set(_re.findall(r'<a id="([^"]+)"></a>', md))
+    assert targets, "TOC produced no links"
+    assert not (set(targets) - emitted), f"TOC links with no emitted anchor: {set(targets) - emitted}"

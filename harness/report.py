@@ -102,8 +102,7 @@ def _inline(s) -> str:
 
 # --------------------------------------------------------------------------- setup
 def _setup_section(L: list[str], setup: dict | None, state_dir: Path) -> None:
-    L.append("## Cluster setup")
-    L.append("")
+    _heading(L, "setup", "## Cluster setup")
 
     services = (setup or {}).get("services") or _compose_services(state_dir)
     if services:
@@ -192,8 +191,7 @@ def _has_agent_findings(modules: list[dict]) -> bool:
 
 
 def _agent_findings_section(L: list[str], modules: list[dict]) -> None:
-    L.append("## Agent findings")
-    L.append("")
+    _heading(L, "agent-findings", "## Agent findings")
     L.append("*Advisory: an AI agent's own report of doing the task. The run's PASS/FAIL is decided "
              "by the objective checks below, not by this verdict.*")
     L.append("")
@@ -286,16 +284,61 @@ def _claim_anchor(module: str, cid: str) -> str:
     return f"claim-{module}-{cid}"
 
 
-def _checks_section(L: list[str], modules: list[dict]) -> None:
-    L.append("## Checks")
+def _sec_anchor(key: str) -> str:
+    """Explicit anchor id for a TOC target.
+
+    The TOC does NOT rely on GitHub's auto-generated heading anchors. Those are derived from
+    the heading text, and ours carry em-dashes, emoji and counts ("### mod — ✅ PASS  (16 pass
+    / 0 fail / 0 skip)"); GitHub's slugger hyphenates each space separately rather than
+    collapsing runs, so any local guess drifts from the real anchor and the link 404s — in a
+    shared gist, which is the case the TOC exists for. Emitting the anchor ourselves makes the
+    target exact and independent of both the heading text and the renderer.
+    """
+    return f"sec-{key}"
+
+
+def _heading(L: list[str], key: str, text: str) -> None:
+    """Emit an explicitly anchored heading (see _sec_anchor)."""
+    L.append(f'<a id="{_sec_anchor(key)}"></a>')
     L.append("")
+    L.append(text)
+    L.append("")
+
+
+def _toc(L: list[str], modules: list[dict], setup: dict | None, nodes_present: bool) -> None:
+    """A table of contents — reports are long, and the interesting part (the claims) is
+    near the bottom under several tables of setup provenance. Claims are listed inline with
+    their verdicts so the TOC doubles as an at-a-glance result."""
+    L.append("## Contents")
+    L.append("")
+    L.append(f"- {_link('Summary', '#' + _sec_anchor('summary'))}")
+    if setup:
+        L.append(f"- {_link('Cluster setup', '#' + _sec_anchor('setup'))}")
+    if nodes_present:
+        L.append(f"- {_link('Nodes joined', '#' + _sec_anchor('nodes'))}")
+    if _has_agent_findings(modules):
+        L.append(f"- {_link('Agent findings', '#' + _sec_anchor('agent-findings'))}")
+    L.append(f"- {_link('Checks', '#' + _sec_anchor('checks'))}")
+    for m in modules:
+        module = m.get("module", "?")
+        badge = _BADGE["PASS"] if m.get("passed") else _BADGE["FAIL"]
+        L.append(f"    - {_link(module, '#' + _sec_anchor('mod-' + module))} — {badge}")
+        for cl in (m.get("claims") or []):
+            L.append(f"        - {_CLAIM_BADGE.get(cl['verdict'], cl['verdict'])} "
+                     f"{_link(_cell(cl['statement']), '#' + _claim_anchor(module, cl['id']))}")
+    L.append(f"- {_link('Inspect', '#' + _sec_anchor('inspect'))}")
+    L.append("")
+
+
+def _checks_section(L: list[str], modules: list[dict]) -> None:
+    _heading(L, "checks", "## Checks")
     for m in modules:
         module = m.get("module", "?")
         results = m.get("results", [])
         c = _counts(results)
         badge = _BADGE["PASS"] if m.get("passed") else _BADGE["FAIL"]
-        L.append(f"### {module} — {badge}  ({c['PASS']} pass / {c['FAIL']} fail / {c['SKIP']} skip)")
-        L.append("")
+        _heading(L, f"mod-{module}",
+                 f"### {module} — {badge}  ({c['PASS']} pass / {c['FAIL']} fail / {c['SKIP']} skip)")
 
         proofs, refs = _proofs_for_module(m)
 
@@ -313,8 +356,13 @@ def _checks_section(L: list[str], modules: list[dict]) -> None:
                 r = results[i]
                 verb_args = " ".join([r.get("verb", "")] + r.get("args", [])).strip()
                 links = " ".join(_proof_link(pid) for pid in refs.get(i, []) if pid in proofs) or "—"
+                # An author-supplied note replaces the verb's message here rather than sitting
+                # beside it: for verbs like log_count the message only restates the check, and
+                # showing both would print the same thing twice. The message is still visible
+                # under the proof section ("Checks against this proof"), so nothing is lost.
+                detail = r.get("note") or r.get("msg", "")
                 L.append(f"| {_BADGE.get(r['status'], r['status'])} | `{_cell(verb_args)}` "
-                         f"| {_cell(r.get('msg', ''))} | {links} |")
+                         f"| {_cell(detail)} | {links} |")
             L.append("")
 
         claims = m.get("claims") or []
@@ -342,10 +390,22 @@ def _checks_section(L: list[str], modules: list[dict]) -> None:
             for cl in claims:
                 L.append(f'<a id="{_claim_anchor(module, cl["id"])}"></a>')
                 L.append("")
-                L.append(f"#### {_CLAIM_BADGE.get(cl['verdict'], cl['verdict'])} {cl['statement']}")
+                L.append(f"#### Claim: {cl['statement']} — {_CLAIM_BADGE.get(cl['verdict'], cl['verdict'])}")
                 L.append("")
                 if cl.get("why"):
-                    L.append("**How this is established.** " + cl["why"].strip())
+                    # No label: the heading already says this is a claim, so prose directly
+                    # beneath it is self-evidently the rationale. Authors are told to write
+                    # this as short bullets — dense paragraphs are what it replaced.
+                    L.append(cl["why"].strip())
+                    L.append("")
+                arts = cl.get("artifacts") or []
+                if arts:
+                    # The things a reader needs to judge the evidence for themselves — above
+                    # all the SCRIPT behind a log-scraping check, whose meaning is otherwise
+                    # invisible in the report.
+                    L.append("Artifacts: " + " · ".join(
+                        _link(f"`{a['label']}`", a["path"]) if a.get("path") else f"`{a['label']}`"
+                        for a in arts))
                     L.append("")
                 _table([i for i, r in enumerate(results) if r.get("claim") == cl["id"]])
 
@@ -447,8 +507,7 @@ def build_markdown(state_dir: Path) -> str:
     L.append("")
 
     # ---- summary ----
-    L.append("## Summary")
-    L.append("")
+    _heading(L, "summary", "## Summary")
     L.append("| module | ✅ pass | ❌ fail | ⏭️ skip |")
     L.append("|--------|-----:|-----:|-----:|")
     for m in modules:
@@ -459,13 +518,14 @@ def build_markdown(state_dir: Path) -> str:
              f"{tot['PASS']} passed, {tot['FAIL']} failed, {tot['SKIP']} skipped.")
     L.append("")
 
+    _toc(L, modules, setup, nodes_present=any(m.get("nodes") for m in modules))
+
     _setup_section(L, setup, state_dir)
 
     # ---- nodes joined (captured at verify time) ----
     nodes = next((m.get("nodes") for m in modules if m.get("nodes")), None)
     if nodes:
-        L.append("## Nodes joined (`tctl get nodes`)")
-        L.append("")
+        _heading(L, "nodes", "## Nodes joined (`tctl get nodes`)")
         L.append("| hostname | scope | labels |")
         L.append("|----------|-------|--------|")
         for n in nodes:
@@ -480,8 +540,7 @@ def build_markdown(state_dir: Path) -> str:
     _checks_section(L, modules)
 
     # ---- inspect ----
-    L.append("## Inspect")
-    L.append("")
+    _heading(L, "inspect", "## Inspect")
     L.append(f"- live cluster: `cluster logs {cid} [service]`" + (f" · web UI: https://{fqdn}:{port}" if fqdn else ""))
     L.append("- rendered: [docker-compose.yml](rendered/docker-compose.yml) · "
              "[config/](rendered/config) · [bootstrap/](rendered/bootstrap)")

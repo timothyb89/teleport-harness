@@ -73,6 +73,7 @@ class CheckResult:
     # (e.g. audit-event `field = value` pairs) — published by the verb, shown under the proof.
     claim: str = ""          # id of the claim this check serves ("" = precondition/ungrouped)
     role: str = "evidence"   # evidence | precondition
+    note: str = ""           # author's plain-language meaning; shown instead of msg
 
     def line(self) -> str:
         return f"  {self.status:<4} {self.msg}"
@@ -80,7 +81,30 @@ class CheckResult:
     def as_dict(self) -> dict:
         return {"status": self.status, "verb": self.verb, "args": self.args,
                 "msg": self.msg, "proof_refs": [p.id for p in self.proofs],
-                "assertions": self.assertions, "claim": self.claim, "role": self.role}
+                "assertions": self.assertions, "claim": self.claim, "role": self.role,
+                "note": self.note}
+
+
+def artifact_link(module_name: str, rel: str) -> dict:
+    """Map a module-relative artifact path to where it lands in the run bundle.
+
+    Mirrors harness/render.py's placement rules, so a claim can cite `scripts/mutate.sh` and
+    the report links to the copy a reviewer can actually open in a shared gist. Anything with
+    no bundle equivalent degrades to a label with no link rather than a broken one.
+    """
+    head, _, tail = rel.partition("/")
+    name = tail[:-3] if tail.endswith(".j2") else tail
+    if head == "scripts":
+        path = f"rendered/scripts/{module_name}/{tail}"
+    elif head == "config":
+        path = f"rendered/config/{name}"
+    elif head == "bootstrap":
+        path = f"rendered/bootstrap/{module_name}__{name}"
+    elif head == "apply_on_startup":
+        path = f"rendered/apply-on-startup/{module_name}__{name}"
+    else:
+        path = ""
+    return {"label": rel, "path": path}
 
 
 def claim_verdicts(module, results: list["CheckResult"]) -> list[dict]:
@@ -106,6 +130,8 @@ def claim_verdicts(module, results: list["CheckResult"]) -> list[dict]:
             "id": claim.id, "statement": claim.statement, "why": claim.why,
             "verdict": verdict,
             "passed": sum(1 for r in mine if r.status == PASS), "total": len(mine),
+            "artifacts": [artifact_link(module.name, a)
+                          for a in getattr(claim, "artifacts", [])],
         })
     return out
 
@@ -683,7 +709,7 @@ def run_check(cluster: Cluster, nodes: list[dict], chk: Check) -> CheckResult:
     else:
         res = impl(cluster, nodes, chk.args)
         res.verb, res.args = chk.verb, chk.args
-    res.claim, res.role = chk.claim, chk.role
+    res.claim, res.role, res.note = chk.claim, chk.role, chk.note
     return res
 
 

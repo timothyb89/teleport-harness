@@ -83,6 +83,21 @@ claims:
 - **`why` is the deliverable.** Checks say what held; `why` says why that's sufficient. State
   what the checks rule OUT (a rejected update, a stale read, a forged value passing a presence
   check), because that's the part a reader can't infer.
+- **Write `why` as short markdown, not a paragraph.** It renders as markdown directly under the
+  claim heading, so use bold leads and bullets; a wall of prose is exactly what this replaced.
+  A good shape is one bullet per thing the reader must accept, e.g. *what was done* then *why
+  the comparison is meaningful*. Keep sentences short. Don't restate the statement.
+- **`artifacts:`** — module-relative paths (`scripts/mutate.sh`, `config/token.yaml.j2`,
+  `bootstrap/token.yaml.j2`) to the files a reader would open to judge the evidence. They are
+  mapped to their bundle locations and rendered as links, and `cluster validate` fails on a
+  path that doesn't exist, so a typo can't become a dead link in a shared gist. Always list
+  the script behind a log-scraping check.
+- **`# note` per check.** A trailing ` # ...` on a check line replaces the verb's message in
+  the report's detail column. Use it wherever the verb can't say anything useful on its own —
+  `log_count svc ge 1 RESULT foo: PASS` otherwise reports "1 match(es) for /RESULT foo: PASS/",
+  which just restates the check. Say what the match MEANS ("after the forged apply, every
+  status field still matches"). The verb's own message stays visible under the proof, so
+  nothing is duplicated. Split is on `" # "` (spaces both sides), so `#` inside a regex is safe.
 - **Preconditions are not evidence.** If one fails the claims are marked UNTESTED, not
   DISPROVEN. Put "did the scenario even happen" checks here (`bot_joined`, the actor ran to
   completion) and keep claim checks to things that actually discriminate.
