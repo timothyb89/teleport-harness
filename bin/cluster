@@ -19,6 +19,8 @@
 #   --repo <clone>       build from the clone's currently checked-out tree
 #   --package <tar.gz>   a released teleport-*-bin.tar.gz (no toolchain needed)
 #   --binary <path>      prebuilt teleport + tctl/tbot/tsh in one directory
+# Enterprise sources need a license: --license-file <pem> (or HARNESS_LICENSE_FILE, or put
+# it in targets/<target>.env). A --repo build falls back to the clone's bundled test license.
 # Modules that BUILD from the clone (terraform provider, k8s operator, docs) gate out
 # with a reason when the source is a package/binary.
 #
@@ -56,12 +58,15 @@ while [ $# -gt 0 ]; do
     --repo)     REPO="$(cd "$2" && pwd)"; shift 2 ;;
     --package)  PACKAGE="$2"; shift 2 ;;   # absolutized by resolve_source (lib/build.sh)
     --binary)   BINARY="$2"; shift 2 ;;
+    # Same knob as the env var (which targets/<target>.env can also set), so there is one
+    # code path in cluster_up; the flag just wins because it is the more specific ask.
+    --license-file) HARNESS_LICENSE_FILE="$2"; export HARNESS_LICENSE_FILE; shift 2 ;;
     --id)       ID="$2"; shift 2 ;;
     --target)   TARGET="$2"; shift 2 ;;
     --features) FEATURES="$2"; shift 2 ;;
     --version)  VERSION="$2"; shift 2 ;;
     --ent)      ENT=1; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) POS+=("$1"); shift ;;
   esac
 done
@@ -83,6 +88,6 @@ case "$cmd" in
   report)   command -v cluster_report >/dev/null 2>&1 || die "reporter not installed yet"; cluster_report "$@" ;;
   share)    command -v cluster_share >/dev/null 2>&1 || die "sharer not installed yet"; cluster_share "$@" ;;
   teardown) cluster_teardown "$@" ;;
-  ""|help)  sed -n '2,25p' "$0" ;;
+  ""|help)  sed -n '2,27p' "$0" ;;
   *) die "unknown command: $cmd (try: doctor validate build up run-plan ls logs web report share teardown)" ;;
 esac

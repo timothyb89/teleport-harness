@@ -38,14 +38,20 @@ cluster_up_modules() {
     SOURCE_VERSION="$(cat "$BIN_CACHE/VERSION")"
   fi
 
-  # Enterprise builds need a license file. A clone brings its own bundled test license;
-  # a package/binary has nothing to take one from, so HARNESS_LICENSE_FILE is required.
-  local license_arg="" license_file=""
+  # Enterprise builds need a license file, or auth exits 1. A clone brings its own bundled
+  # test license; a package/binary has nothing to take one from, so it must be supplied —
+  # `--license-file <pem>`, HARNESS_LICENSE_FILE, or HARNESS_LICENSE_FILE in the target env
+  # (all the same knob: the flag exports the var). Every error below names all three,
+  # because the only thing worse than needing a license is guessing how to hand one over.
+  local license_arg="" license_file="" how="--license-file <pem> (or HARNESS_LICENSE_FILE, or set it in targets/${TARGET:-default}.env)"
   if [ "${ENT:-0}" = 1 ]; then
     if [ -n "${HARNESS_LICENSE_FILE:-}" ]; then license_file="$HARNESS_LICENSE_FILE"
     elif [ "$SOURCE_KIND" = repo ]; then license_file="$REPO/e/fixtures/license-all-features.pem"
-    else die "an enterprise $SOURCE_KIND needs a license: set HARNESS_LICENSE_FILE (no clone to take e/fixtures/license-all-features.pem from)"; fi
-    [ -f "$license_file" ] || die "ent build needs a license but none found at '$license_file' (set HARNESS_LICENSE_FILE)"
+    else die "an enterprise $SOURCE_KIND needs a license (no clone to take e/fixtures/license-all-features.pem from): pass $how"; fi
+    [ -f "$license_file" ] || die "ent build needs a license but '$license_file' is not a file: pass $how"
+    # Absolute, because it becomes a docker bind mount — a relative path would resolve
+    # against the compose file's dir (state/<id>/) and silently mount the wrong thing.
+    license_file="$(cd "$(dirname "$license_file")" && pwd)/$(basename "$license_file")"
     license_arg="--license-file $license_file"
     hlog "ent build: mounting license $license_file"
   fi

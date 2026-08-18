@@ -54,6 +54,13 @@ Contributor docs, architecture & gotchas: **[CLAUDE.md](CLAUDE.md)**.
 # The version comes from the artifact itself, so --version is optional here.
 ./bin/cluster run-plan oidc-caching --package ~/Downloads/teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz \
     --features generic_oidc,kubernetes
+
+# ENTERPRISE artifact: --ent is inferred (a teleport-ent-* tarball), but auth needs a license
+# and there's no clone to take one from — pass it (or set HARNESS_LICENSE_FILE / put it in
+# targets/<target>.env):
+./bin/cluster run-plan workload_identity_sds_override \
+    --package ~/Downloads/teleport-ent-v18.11.0-rc.2-linux-amd64-bin.tar.gz \
+    --license-file ~/projects/teleport/e/fixtures/license-all-features.pem
 ```
 `run-plan` builds Teleport (cached by commit SHA) or unpacks the artifact (cached by its
 sha256), composes + brings up the cluster behind the shared ingress, verifies the join

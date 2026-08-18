@@ -367,8 +367,9 @@ expensive part of the setup; today just `operator_generic_oidc`).
 · `ls` · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` ·
 `share <run-bundle|id> [--public]` · `teardown <id|--all>`.
 `<source>` is exactly one of `--repo <clone>` / `--package <tar.gz>` / `--binary <dir|teleport>`
-(see Build); `--ent` is inferred for an enterprise package/binary, and then needs
-`HARNESS_LICENSE_FILE` since there is no clone to take `e/fixtures/…` from.
+(see Build); `--ent` is inferred for an enterprise package/binary, and then needs a license
+supplied as `--license-file <pem>` / `HARNESS_LICENSE_FILE` / a line in `targets/<t>.env`
+(all one knob — the flag exports the var), since there is no clone to take `e/fixtures/…` from.
 `run-plan <plan|module>` gates each module on `requires_features`/`min_version`/`requires_repo` (SKIP with a
 logged reason — no silent skips), composes the cluster up (or reuses an existing `--id`), runs any
 **agent-driven** module's host step (`lib/agent.sh::run_agents` → `harness agent-run`, after the
@@ -407,10 +408,16 @@ if the cluster enforces it, an MFA device).
 
 ## Invariants / gotchas (do NOT relearn)
 - **`--ent` builds need a license or auth exits 1** ("Failed to load license file … /var/lib/teleport/license.pem").
-  `cluster up/run-plan --ent` resolves the clone's bundled test license
-  (`$REPO/e/fixtures/license-all-features.pem`, override via `HARNESS_LICENSE_FILE`), and render
-  mounts it read-only at `/etc/teleport/license.pem` + sets `auth_service.license_file` (both
-  gated on the render `--license-file` arg, so OSS runs are unchanged). Most modules test OSS
+  Supply one with **`--license-file <pem>`** (equivalently `HARNESS_LICENSE_FILE`, or a line in
+  `targets/<target>.env` — the flag just exports the var, so there is one code path). A
+  `--repo` run falls back to the clone's bundled test license
+  (`$REPO/e/fixtures/license-all-features.pem`); an enterprise **package/binary** has no clone
+  to fall back to and REQUIRES it (`--ent` is inferred from a `teleport-ent/` archive root or
+  an "Enterprise" version string, so the license is needed even when `--ent` was never typed).
+  The path is absolutized before it becomes a bind mount — a relative one would resolve against
+  `state/<id>/` and mount the wrong thing. Render mounts it read-only at
+  `/etc/teleport/license.pem` + sets `auth_service.license_file` (both gated on the render
+  `--license-file` arg, so OSS runs are unchanged). Most modules test OSS
   `lib/*` code and run fine as OSS (the default); pass `--ent` only when you want the enterprise
   auth binary (e.g. exercising `e/…`).
 - **All ports = the ingress port end-to-end** (proxy `web_listen_addr`, `public_addr`, agent
