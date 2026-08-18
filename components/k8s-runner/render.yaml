@@ -7,6 +7,11 @@
 # and a module owns its own runner container.
 k3s_version: v1.31.5-k3s1
 
+# prebuild.sh cross-builds the operator out of $REPO/integrations/operator (and the CRDs
+# come from the clone's generated manifests), so every module pulling this in needs a
+# clone: it gates out on a --package/--binary run.
+requires_repo: true
+
 # The operator authenticates to Teleport as a privileged bot via its EMBEDDED tbot.
 #
 # GOTCHA: the `token` join method is SINGLE-USE — auth deletes the token once it is

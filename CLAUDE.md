@@ -41,11 +41,26 @@ ingress reaches it by container name), `public_addr = <fqdn>:<port>`. Its bootst
 declarative + shared: the renderer collects every unit's roles/tokens into `$OUT/bootstrap`
 + a `bots.manifest`, and one shared `auth-entrypoint.sh` applies them (see Invariants).
 
-### Build (`lib/build.sh`, SHA-cached)
-`build_image <clone> [ent]` cross-builds `teleport`/`tctl`/`tbot` (linux/amd64, glibc) from
-the clone's **currently checked-out** working tree — never switches branches — reusing the
-clone's prebuilt webassets. Keyed by `git rev-parse HEAD` → `.cache/bin/<sha>-<variant>/`
-and image `teleport-harness:<sha>-<variant>`. Repeat builds are instant.
+### Build (`lib/build.sh`, content-keyed cache)
+Teleport comes from ONE of three mutually-exclusive **sources**, resolved by `resolve_source`
+and converging on the same two artifacts — `.cache/bin/<key>-<variant>/{teleport,tctl,tbot,tsh}`
+and image `teleport-harness:<key>-<variant>`:
+- `--repo <clone>` — cross-build (linux/amd64, glibc) from the clone's **currently checked-out**
+  working tree, never switching branches, reusing its prebuilt webassets. Key = `git rev-parse HEAD`.
+- `--package <tar.gz>` — a released `teleport-*-bin.tar.gz`: the four binaries (+ `fdpass-teleport`,
+  which source builds don't produce) are unpacked by explicit member name, so the ~200 MB of
+  examples/docs never hit disk. Key = the tarball's sha256. **No Go toolchain needed** (~15 s).
+- `--binary <dir|teleport>` — prebuilt binaries already on disk; all four must sit in one
+  directory (the harness drives tctl/tbot/tsh as much as teleport). Key = their combined sha256.
+
+Everything downstream (render/compose/verify/report) sees only the image, so a package run is
+identical to a source run **except that nothing can be BUILT from it** — see `requires_repo`.
+Each source is verified linux/amd64 (ELF header) before the image build, so a darwin/arm64
+binary fails with that sentence instead of a bare `exec format error` from docker. The source's
+own version is discovered where it's free (a package's `VERSION` file, a binary probed with
+`teleport version`) and recorded in `.cache/bin/<key>-<variant>/VERSION`, meta.env and the
+report; `run-plan` uses it to default `--version` for gating (loudly logged) — a clone stays
+explicit, since knowing its version would mean building it first.
 
 ### Python brain (`harness/`, run via `uv`)
 The data + decision layer — YAML parsing, feature/version gating, `checks:` validation,
@@ -114,6 +129,12 @@ brain owns decisions + rendering, the shell owns orchestration.
   provision-token resources applied at bootstrap (rendered if `.j2`). `prebuild.sh` *(optional)* —
   imperative pre-step (build a side image), run with the context as `UPPER_CASE` env (incl.
   `$REPO`, the clone path — how `terraform-runner` builds the provider, and `$OUT`, the state dir).
+  **`requires_repo: true`** — this unit BUILDS from the clone (a `prebuild.sh` `go build`, a
+  `{{ repo }}/docs` mount), so it cannot run against a `--package`/`--binary` source. A module
+  inherits it from its components (`terraform-runner`, `k8s-runner`), so `terraform_bot` and
+  `operator_generic_oidc` need no annotation of their own. `plan-resolve`/`gate` (given
+  `--no-repo`) SKIP such a module with the unit's name as the reason, and `render.py` refuses
+  outright if one reaches it anyway — better than mounting an empty `/docs` or building nothing.
 - `checks.py` *(optional)* — Python. Preferred form is an ACTOR: `def act(cluster, nodes) ->
   list[dict]` returns observation records and runs BEFORE the declarative checks, so
   `observation_*` verbs (addressing it as the actor `host`) do the judging — needed when the
@@ -342,10 +363,13 @@ gates out where generic_oidc isn't provided while terraform_bot still runs),
 expensive part of the setup; today just `operator_generic_oidc`).
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
-`doctor` · `validate [module]` · `build --repo` · `up <module> --repo [--id]` · `run-plan <plan|module> --repo [--features a,b] [--version vNN] [--id]`
+`doctor` · `validate [module]` · `build <source>` · `up <module> <source> [--id]` · `run-plan <plan|module> <source> [--features a,b] [--version vNN] [--id]`
 · `ls` · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` ·
 `share <run-bundle|id> [--public]` · `teardown <id|--all>`.
-`run-plan <plan|module>` gates each module on `requires_features`/`min_version` (SKIP with a
+`<source>` is exactly one of `--repo <clone>` / `--package <tar.gz>` / `--binary <dir|teleport>`
+(see Build); `--ent` is inferred for an enterprise package/binary, and then needs
+`HARNESS_LICENSE_FILE` since there is no clone to take `e/fixtures/…` from.
+`run-plan <plan|module>` gates each module on `requires_features`/`min_version`/`requires_repo` (SKIP with a
 logged reason — no silent skips), composes the cluster up (or reuses an existing `--id`), runs any
 **agent-driven** module's host step (`lib/agent.sh::run_agents` → `harness agent-run`, after the
 cluster is healthy and before verify — a no-op for non-agent modules), verifies
@@ -531,6 +555,17 @@ if the cluster enforces it, an MFA device).
 - **Scoped coverage** beyond generic_oidc as scoping expands (scoped agents/bots for other methods).
 
 ### Build / deploy
+- **Run from a prebuilt artifact (`--package` / `--binary`) — DONE**: a release tarball or a
+  directory of binaries is a first-class source alongside `--repo` (see Build). Verified live:
+  `run-plan oidc-caching --package teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz --features
+  generic_oidc,kubernetes` — image ready in ~15 s with no Go toolchain, version auto-detected
+  as v18.11.0-rc.2, **52/52 PASS** across all four modules. Its first run failed every SCOPED
+  generic_oidc case, which looked like a missing v18 backport and was the opposite: the RC had
+  the NEWER scope-qualified-name join addressing and the module predated it (see the SQN
+  invariant above; the module failed identically on v19 master, and passes on both since).
+  NEXT for this surface: a URL for `--package` (download + cache), and `--package` for the ent
+  tarball once a license path is settled (ent-ness is auto-detected from the archive root, but
+  `HARNESS_LICENSE_FILE` is then required).
 - `--target homelab`: enterprise amd64 binary + the scp/systemctl swap one-liner for the
   long-lived homelab cluster (the builder already supports `ent`).
 - **Worktree-based build isolation — DONE**: `build_image` asks `git rev-parse --git-dir`

@@ -31,6 +31,10 @@ uv run --extra dev pytest                      # unit tests (models, render, ver
 ./bin/cluster tctl <id> get nodes|tokens|bots  # admin CLI via the bot identity
 ./bin/cluster teardown <id>                    # clean up when done
 ```
+`--repo <clone>` can be swapped for `--package <tar.gz>` / `--binary <dir>` to run against a
+release artifact instead of a build. If your module BUILDS anything from the clone (a
+`prebuild.sh` `go build`, a `{{ repo }}/…` mount), say so with `requires_repo: true` in its
+`render.yaml` — it then gates out with a reason on those runs instead of failing in render.
 Fastest inner loop: `validate` + `pytest` catch most mistakes before you ever start docker.
 Rendering is pure (jinja); `up`/`run-plan` are the only docker-touching steps.
 

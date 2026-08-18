@@ -6,6 +6,11 @@
 # The `agent:` block configures the HOST step (harness agent-run): which agent/model drives the
 # workbench, the prompt file (rendered as jinja with connection facts), and a wall-clock cap.
 components: [agent-runner]
+
+# The workbench mounts {{ repo }}/docs so the guide's `(!docs/pages/includes/…!)` directives
+# resolve to real files — there is no docs tree in a release package, so this module gates
+# out on a --package/--binary run instead of mounting nothing.
+requires_repo: true
 agent:
   provider: claude          # future: codex / sdk-api (API-key drivers)
   model: claude-opus-4-8

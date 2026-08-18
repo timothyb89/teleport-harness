@@ -7,6 +7,10 @@
 #
 # The privileged bot the provider authenticates AS (via identity_file_path). Mirrors the
 # lib/admin.sh admin bot (editor,access,auditor) so terraform can manage bots/tokens/roles.
+# prebuild.sh cross-builds terraform-provider-teleport out of $REPO/integrations/terraform,
+# so every module pulling this in needs a clone: it gates out on --package/--binary.
+requires_repo: true
+
 tf_admin_token: harness-tf-admin-secret
 bots:
   - {name: tf-admin, roles: "editor,access,auditor", token: harness-tf-admin-secret}

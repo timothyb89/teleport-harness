@@ -17,7 +17,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from .models import discover_modules, gate, load_module
+from .models import discover_modules, gate, load_module, repo_requirement
 
 EXIT_OK = 0
 EXIT_ERR = 1
@@ -36,6 +36,13 @@ def _csv(s: str | None) -> list[str] | None:
     if s is None:
         return None
     return [x for x in (p.strip() for p in s.split(",")) if x]
+
+
+def _gate(mod, mdir: Path, args: argparse.Namespace):
+    """Gate one module: features/version, plus (with --no-repo) whether its composition
+    needs a teleport clone this run doesn't have."""
+    unit = repo_requirement(mdir, _root() / "components") if getattr(args, "no_repo", False) else ""
+    return gate(mod, _csv(args.features), args.version, repo_unit=unit)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -227,12 +234,13 @@ def cmd_plan_resolve(args: argparse.Namespace) -> int:
         return EXIT_ERR
     result: dict = {"name": plan.name, "run": [], "skip": []}
     for m in plan.modules:
-        mod = load_module(_modules_dir(args.modules_dir) / m)
+        mdir = _modules_dir(args.modules_dir) / m
+        mod = load_module(mdir)
         problems = mod.validate_semantics()
         if problems:
             print(f"FAIL {m}: {'; '.join(problems)}", file=sys.stderr)
             return EXIT_ERR
-        res = gate(mod, _csv(args.features), args.version)
+        res = _gate(mod, mdir, args)
         if res.skip:
             result["skip"].append({"module": m, "reason": res.reason})
         else:
@@ -242,8 +250,8 @@ def cmd_plan_resolve(args: argparse.Namespace) -> int:
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
-    m = load_module(_modules_dir(args.modules_dir) / args.module)
-    res = gate(m, _csv(args.features), args.version)
+    mdir = _modules_dir(args.modules_dir) / args.module
+    res = _gate(load_module(mdir), mdir, args)
     if res.skip:
         print(res.reason)
         return EXIT_SKIP
@@ -308,16 +316,20 @@ def main(argv: list[str] | None = None) -> int:
     sr.add_argument("--out", required=True)
     sr.set_defaults(fn=cmd_render)
 
+    _no_repo_help = ("this run has no teleport clone (source is --package/--binary), so "
+                     "modules whose composition builds from one gate out")
     sp = sub.add_parser("plan-resolve", help="gate a plan's modules; emit run/skip JSON")
     sp.add_argument("plan")
     sp.add_argument("--features")
     sp.add_argument("--version")
+    sp.add_argument("--no-repo", action="store_true", help=_no_repo_help)
     sp.set_defaults(fn=cmd_plan_resolve)
 
     sg = sub.add_parser("gate", help="feature/version gate; exit 3 == skip")
     sg.add_argument("module")
     sg.add_argument("--features")
     sg.add_argument("--version")
+    sg.add_argument("--no-repo", action="store_true", help=_no_repo_help)
     sg.set_defaults(fn=cmd_gate)
 
     args = p.parse_args(argv)

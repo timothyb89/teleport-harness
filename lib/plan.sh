@@ -6,10 +6,34 @@
 
 run_plan() {
   load_target
-  local name="${1:?usage: run-plan <plan|module> --repo <clone> [--features a,b] [--version vNN] [--id <id>]}"
+  local name="${1:?usage: run-plan <plan|module> (--repo <clone>|--package <tar.gz>|--binary <path>) [--features a,b] [--version vNN] [--id <id>]}"
+  # Resolve the source BEFORE gating: what it is decides whether repo-building modules can
+  # run at all, and a package/binary knows its own version (which then defaults --version).
+  resolve_source
+  hlog "source: $SOURCE_LABEL"
+  if [ -z "${VERSION:-}" ] && [ -n "${SOURCE_VERSION:-}" ]; then
+    export VERSION="$SOURCE_VERSION"
+    hlog "no --version given; gating on the source's own version $VERSION"
+  fi
   if [ -f "$HARNESS_ROOT/plans/${name}.yaml" ]; then run_plan_multi "$name"
   elif [ -d "$MODULES_DIR/$name" ]; then run_plan_single "$name"
   else die "unknown plan or module '$name' (plans/ or modules/)"; fi
+}
+
+# gate_args_common [module] — the flags every gate/plan-resolve call shares. Sets the array
+# `gate_args` in the caller's scope (bash 3.2: no nameref, no array return). With a module
+# name, the no-features warning names what that module actually wanted.
+gate_args_common() {
+  local module="${1:-}"
+  gate_args=()
+  if [ -n "${FEATURES:-}" ]; then gate_args+=(--features "$FEATURES")
+  elif [ -n "$module" ]; then hwarn "no --features given; assuming target provides required features: $(pybrain meta "$module" requires_features)"
+  else hwarn "no --features given; assuming the target provides required features"; fi
+  [ -n "${VERSION:-}" ] && gate_args+=(--version "$VERSION")
+  # Nothing can be BUILT from a package/binary, so modules whose composition needs the
+  # clone (terraform provider, k8s operator, the docs tree) gate out with a reason.
+  [ "${SOURCE_KIND:-repo}" != repo ] && gate_args+=(--no-repo)
+  return 0
 }
 
 # run_plan_single <module> — one module == its own cluster (the original path).
@@ -18,9 +42,7 @@ run_plan_single() {
 
   # ---- feature/version gating (no silent skips) — decided by the Python brain ----
   local gate_args=() skip="" rc=0
-  if [ -n "${FEATURES:-}" ]; then gate_args+=(--features "$FEATURES")
-  else hwarn "no --features given; assuming target provides required features: $(pybrain meta "$module" requires_features)"; fi
-  [ -n "${VERSION:-}" ] && gate_args+=(--version "$VERSION")
+  gate_args_common "$module"
   # (guard the empty-array expansion — env bash here is 3.2, where "${a[@]}" under set -u throws)
   if [ "${#gate_args[@]}" -gt 0 ]; then skip="$(pybrain gate "$module" "${gate_args[@]}")" || rc=$?
   else skip="$(pybrain gate "$module")" || rc=$?; fi
@@ -33,7 +55,6 @@ run_plan_single() {
   fi
 
   # ---- bring up (or reuse an existing cluster with the same --id) ----
-  : "${REPO:?--repo <teleport-clone> required}"
   export ID="${ID:-$(gen_id)}"
   if [ -d "$(state_dir_for "$ID")" ]; then hlog "reusing existing cluster '$ID'"; else cluster_up "$module"; fi
 
@@ -66,13 +87,10 @@ run_plan_single() {
 # reported SKIP and left out of the compose; the rest are verified together.
 run_plan_multi() {
   local plan="${1:?}"
-  : "${REPO:?--repo <teleport-clone> required}"
 
   # ---- gate each module (the brain decides run vs skip) ----
   local gate_args=() resolved rc=0
-  if [ -n "${FEATURES:-}" ]; then gate_args+=(--features "$FEATURES")
-  else hwarn "no --features given; assuming target provides required features"; fi
-  [ -n "${VERSION:-}" ] && gate_args+=(--version "$VERSION")
+  gate_args_common
   if [ "${#gate_args[@]}" -gt 0 ]; then resolved="$(pybrain plan-resolve "$plan" "${gate_args[@]}")" || rc=$?
   else resolved="$(pybrain plan-resolve "$plan")" || rc=$?; fi
   [ "$rc" = 0 ] || die "plan-resolve '$plan' failed: $resolved"

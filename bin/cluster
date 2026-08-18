@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
 # teleport-harness CLI: spin up disposable dockerized Teleport clusters from any
-# clone/branch, run gated test plans, and produce inspectable reports.
+# clone/branch (or a released package/binary), run gated test plans, and produce
+# inspectable reports.
 #
 #   cluster doctor
 #   cluster validate [module]
-#   cluster build   --repo <clone> [--ent]
-#   cluster up      <module> --repo <clone> [--id <id>] [--ent]
-#   cluster run-plan <plan.yaml> --repo <clone> [--id <id>]
+#   cluster build   <source> [--ent]
+#   cluster up      <module> <source> [--id <id>] [--ent]
+#   cluster run-plan <plan|module> <source> [--features a,b] [--version vNN] [--id <id>]
 #   cluster ls
 #   cluster logs    <id> [service]
 #   cluster web     <id>
 #   cluster report  <id>
 #   cluster share   <run-bundle|id> [--public]
 #   cluster teardown <id|--all>
+#
+# <source> is exactly one of (mutually exclusive):
+#   --repo <clone>       build from the clone's currently checked-out tree
+#   --package <tar.gz>   a released teleport-*-bin.tar.gz (no toolchain needed)
+#   --binary <path>      prebuilt teleport + tctl/tbot/tsh in one directory
+# Modules that BUILD from the clone (terraform provider, k8s operator, docs) gate out
+# with a reason when the source is a package/binary.
 #
 # Global flags (before or after the subcommand): --target <name> (targets/<name>.env)
 set -euo pipefail
@@ -41,16 +49,19 @@ LIB="$(cd "$(dirname "$SELF")/../lib" && pwd)"
 
 # Parse global + passthrough flags into env; collect positionals.
 POS=()
-export REPO="${REPO:-}" ID="${ID:-}" ENT="${ENT:-0}" TARGET="${TARGET:-default}" FEATURES="${FEATURES:-}" VERSION="${VERSION:-}"
+export REPO="${REPO:-}" PACKAGE="${PACKAGE:-}" BINARY="${BINARY:-}"
+export ID="${ID:-}" ENT="${ENT:-0}" TARGET="${TARGET:-default}" FEATURES="${FEATURES:-}" VERSION="${VERSION:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)     REPO="$(cd "$2" && pwd)"; shift 2 ;;
+    --package)  PACKAGE="$2"; shift 2 ;;   # absolutized by resolve_source (lib/build.sh)
+    --binary)   BINARY="$2"; shift 2 ;;
     --id)       ID="$2"; shift 2 ;;
     --target)   TARGET="$2"; shift 2 ;;
     --features) FEATURES="$2"; shift 2 ;;
     --version)  VERSION="$2"; shift 2 ;;
     --ent)      ENT=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) POS+=("$1"); shift ;;
   esac
 done
@@ -60,7 +71,7 @@ cmd="${1:-}"; shift || true
 case "$cmd" in
   doctor)   doctor ;;
   validate) pybrain validate "$@" ;;
-  build)    load_target; build_image "${REPO:?--repo required}" "${ENT:-0}" ;;
+  build)    load_target; build_image ;;
   up)       cluster_up "$@" ;;
   run-plan) command -v run_plan >/dev/null 2>&1 || die "plan runner not installed yet"; run_plan "$@" ;;
   ls)       cluster_ls ;;
@@ -72,6 +83,6 @@ case "$cmd" in
   report)   command -v cluster_report >/dev/null 2>&1 || die "reporter not installed yet"; cluster_report "$@" ;;
   share)    command -v cluster_share >/dev/null 2>&1 || die "sharer not installed yet"; cluster_share "$@" ;;
   teardown) cluster_teardown "$@" ;;
-  ""|help)  sed -n '2,20p' "$0" ;;
+  ""|help)  sed -n '2,25p' "$0" ;;
   *) die "unknown command: $cmd (try: doctor validate build up run-plan ls logs web report share teardown)" ;;
 esac

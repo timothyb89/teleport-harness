@@ -17,9 +17,9 @@ doctor() {
     pass "linux/amd64 emulation works"
   else chk_fail "cannot run linux/amd64 containers (need Rosetta/qemu emulation in the docker VM)"; fi
 
-  # cross toolchain
+  # cross toolchain — only --repo (source-build) runs need it; --package/--binary don't
   if command -v "${HARNESS_CC:-x86_64-unknown-linux-gnu-gcc}" >/dev/null 2>&1; then pass "cross toolchain present (${HARNESS_CC:-x86_64-unknown-linux-gnu-gcc})"
-  else chk_fail "cross toolchain missing: brew install messense/macos-cross-toolchains/x86_64-unknown-linux-gnu"; fi
+  else chk_warn "cross toolchain missing (needed only for --repo builds; --package/--binary runs are fine): brew install messense/macos-cross-toolchains/x86_64-unknown-linux-gnu"; fi
 
   # target env
   if [ -n "${CF_DNS_API_TOKEN:-}" ]; then pass "target '${TARGET:-default}': HARNESS_DOMAIN=$HARNESS_DOMAIN, DNS token set"

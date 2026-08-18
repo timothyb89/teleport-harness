@@ -136,3 +136,23 @@ def test_shipped_plans_do_not_compose_an_exclusive_module():
     root = Path(__file__).resolve().parent.parent
     for f in sorted((root / "plans").glob("*.yaml")):
         assert check_plan_exclusivity(load_plan(f), root / "modules") == [], f.name
+
+
+# ---- source: a run with no teleport clone (--package/--binary) -------------------
+def test_render_refuses_a_unit_that_needs_a_clone(tmp_path):
+    """terraform_bot pulls in terraform-runner, whose prebuild.sh `go build`s the provider
+    out of $REPO. Gating normally keeps it out of a package/binary run; if one ever reaches
+    render, it must fail loudly instead of composing a runner with nothing to build."""
+    ctx = {**CTX}  # no `repo` — that is what a --package run looks like
+    with pytest.raises(ValueError, match="requires a teleport clone"):
+        render_cluster([MODULES / "terraform_bot"], ctx, tmp_path,
+                       components_dir=COMPONENTS, run_prebuild=False)
+
+
+def test_render_allows_clone_free_modules_with_no_repo(tmp_path):
+    """The other side of the same coin: the oidc-caching plan's modules build nothing from
+    the clone, so they render fine with no `repo` in the context."""
+    render_cluster([MODULES / "kubernetes", MODULES / "oidc_caching"], CTX, tmp_path,
+                   components_dir=COMPONENTS, run_prebuild=False)
+    compose = yaml.safe_load((tmp_path / "docker-compose.yml").read_text())
+    assert {"auth", "oidc"} <= set(compose["services"])

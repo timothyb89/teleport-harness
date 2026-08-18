@@ -16,6 +16,9 @@ runs/
 # Captured logs.
 **/logs/
 
+# Downloaded release artifacts (`--package`) — hundreds of MB, never tracked.
+teleport-*.tar.gz
+
 # macOS cruft.
 .DS_Store
 

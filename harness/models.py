@@ -300,17 +300,56 @@ class GateResult(BaseModel):
     reason: str = ""
 
 
+def repo_requirement(module_dir: Path, components_dir: Path) -> str:
+    """Which unit in this module's composition needs a teleport CLONE, or "" if none.
+
+    Declared as `requires_repo: true` in a render.yaml — the module's own (its fragment
+    mounts `{{ repo }}/docs`) or that of a component it pulls in (terraform-runner and
+    k8s-runner have prebuild.sh steps that `go build` out of $REPO). It lives in
+    render.yaml rather than module.yaml because it is a property of what the unit RENDERS,
+    and because a module inherits it from its components.
+
+    A run from --package/--binary has no clone, so such a module is gated out with a
+    reason instead of failing deep in render (or, worse, mounting an empty /docs).
+    """
+
+    def _rv(d: Path) -> dict:
+        f = d / "render.yaml"
+        if not f.is_file():
+            return {}
+        data = yaml.safe_load(f.read_text()) or {}
+        return data if isinstance(data, dict) else {}
+
+    rv = _rv(module_dir)
+    if rv.get("requires_repo"):
+        return f"module {module_dir.name}"
+    for c in rv.get("components", []) or []:
+        if _rv(components_dir / c).get("requires_repo"):
+            return f"component {c}"
+    return ""
+
+
 def gate(
     module: Module,
     features: list[str] | None,
     version: str | None,
+    repo_unit: str = "",
 ) -> GateResult:
     """Decide whether to run `module` given the target's features/version.
 
     Mirrors lib/plan.sh: if `features` is None the caller warns and assumes the
     target provides everything (no skip). A missing required feature or a version
     below min_version => skip with a reason.
+
+    `repo_unit` is set by the caller (from repo_requirement) only when the run has NO
+    teleport clone — a package/binary source — and this module's composition needs one.
     """
+    if repo_unit:
+        return GateResult(
+            skip=True,
+            reason=f"{repo_unit} builds from a teleport clone; this run has no --repo "
+                   f"(source is a package/binary)",
+        )
     if features is not None:
         have = set(features)
         for feat in module.requires_features:

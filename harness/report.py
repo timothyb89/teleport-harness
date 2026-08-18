@@ -496,7 +496,17 @@ def build_markdown(state_dir: Path) -> str:
     label = meta.get("MODULE", "?")
     mods = meta.get("MODULES", "")
     L.append(f"- **plan/module:** {label}" + (f" (modules: {mods})" if mods and mods != label else ""))
-    L.append(f"- **repo:** `{meta.get('REPO', '?')}` @ `{meta.get('SHA', '?')}`")
+    # What teleport under test actually came from: a clone (built here) or a prebuilt
+    # package/binary. Bundles predating the package/binary sources have no SOURCE_KIND.
+    src_kind, src_ref = meta.get("SOURCE_KIND", ""), meta.get("SOURCE_REF", "")
+    src_ver = meta.get("SOURCE_VERSION", "")
+    if src_kind in ("package", "binary"):
+        L.append(f"- **source:** {src_kind} `{src_ref}`"
+                 + (f" — teleport `{src_ver}`" if src_ver else "")
+                 + f" (image key `{meta.get('SHA', '?')}`)")
+    else:
+        L.append(f"- **repo:** `{meta.get('REPO', '?')}` @ `{meta.get('SHA', '?')}`"
+                 + (f" — teleport `{src_ver}`" if src_ver else ""))
     feats, ver = meta.get("FEATURES", ""), meta.get("VERSION", "")
     if feats or ver:
         L.append(f"- **target:** version `{ver or '-'}`, features `{feats or '-'}`")

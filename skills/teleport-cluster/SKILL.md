@@ -7,7 +7,8 @@ description: >
   backport end-to-end (not just unit tests) — e.g. "test the v18 generic_oidc backport",
   "spin up a cluster from this branch", "does joining still work on <branch>", or to author
   a new test module / component / plan for the harness. The harness lives OUTSIDE the teleport
-  clones at ~/projects/teleport-harness and works against any clone via --repo.
+  clones at ~/projects/teleport-harness and works against any clone via --repo, or against a
+  downloaded release tarball / prebuilt binary via --package / --binary.
 ---
 
 # teleport-cluster — agentic Teleport test harness
@@ -23,6 +24,7 @@ invariants, and hard-won gotchas. This file is just the entry point.
 ## When to use
 - "Test / verify / exercise <feature|branch|PR|backport> end-to-end" (esp. joining, agents, bots).
 - "Spin up a cluster from <clone/branch>" or "give me a web UI for this branch".
+- "Run <plan> against this release candidate / tarball / binary" — `--package`/`--binary`, no build.
 - **Authoring** — "add a module / join method / component / plan / check verb": read
   **`references/authoring.md`** in this skill directory for the step-by-step contract + worked example.
 
@@ -34,6 +36,10 @@ cd ~/projects/teleport-harness
 # run a single module, or a multi-module plan, against a checked-out clone/branch:
 ./bin/cluster run-plan generic_oidc  --repo ~/projects/teleport-b --features generic_oidc --version v18
 ./bin/cluster run-plan oidc-caching  --repo ~/projects/teleport-e --features kubernetes   --version v18
+# ...or against a release artifact instead of a clone (no Go toolchain, no build; the version
+# comes from the artifact, so --version is optional):
+./bin/cluster run-plan oidc-caching  --package ~/Downloads/teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz --features generic_oidc,kubernetes
+./bin/cluster run-plan tbot          --binary  ~/builds/teleport-v18/    # dir with teleport+tctl+tbot+tsh
 # -> builds (cached by SHA), composes + brings up the cluster, verifies positive+negative
 #    joins, writes runs/<ts>-<id>/ (rich results.md + results-*.json), leaves the cluster UP.
 ./bin/cluster admin <id>                     # create a privileged admin bot identity
@@ -47,6 +53,8 @@ Admin CLI uses a **bot** identity (bots are exempt from Teleport's admin-action 
 user identity files are not). The web UI is break-glass.
 To test a specific branch: `git -C <clone> checkout <branch>` first, then point `--repo` at
 it (the harness builds whatever is checked out; it never switches the clone's branch).
+`--repo` / `--package` / `--binary` are mutually exclusive; modules that BUILD from the clone
+(terraform provider, k8s operator, docs tree) gate out with a reason on package/binary runs.
 `--features`/`--version` describe what the *target build* provides; a module that needs more
 is SKIPped (logged), not silently dropped.
 

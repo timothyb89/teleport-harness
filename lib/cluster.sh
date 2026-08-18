@@ -18,25 +18,33 @@ cluster_up() {
 cluster_up_modules() {
   local label="${1:?}" modules_csv="${2:?}"
   load_target
-  : "${REPO:?--repo <teleport-clone-path> required}"
+  resolve_source     # --repo | --package | --binary  (exports SOURCE_* / IMAGE_TAG)
   local m
   for m in ${modules_csv//,/ }; do
     [ -d "$MODULES_DIR/$m" ] || die "unknown module '$m' (see: ls $MODULES_DIR)"
   done
-  require_cmd docker git openssl
+  require_cmd docker openssl
 
   local id fqdn out image
   id="${ID:-$(gen_id)}"; fqdn="$(fqdn "$id")"; out="$(state_dir_for "$id")"
   [ -e "$out" ] && die "cluster id '$id' already exists ($out)"
 
   ingress_up
-  image="$(build_image "$REPO" "${ENT:-0}")"
+  image="$(build_image)"
+  # build_image runs in a subshell, so pick its recorded `teleport version` back up off
+  # disk — for a clone this is the only place the version is ever known (the report wants
+  # it; gating deliberately does not use it — see resolve_source).
+  if [ -z "${SOURCE_VERSION:-}" ] && [ -s "$BIN_CACHE/VERSION" ]; then
+    SOURCE_VERSION="$(cat "$BIN_CACHE/VERSION")"
+  fi
 
-  # Enterprise builds need a license file. Resolve the clone's bundled test license
-  # (overridable via HARNESS_LICENSE_FILE) and let render mount it into the auth container.
+  # Enterprise builds need a license file. A clone brings its own bundled test license;
+  # a package/binary has nothing to take one from, so HARNESS_LICENSE_FILE is required.
   local license_arg="" license_file=""
   if [ "${ENT:-0}" = 1 ]; then
-    license_file="${HARNESS_LICENSE_FILE:-$REPO/e/fixtures/license-all-features.pem}"
+    if [ -n "${HARNESS_LICENSE_FILE:-}" ]; then license_file="$HARNESS_LICENSE_FILE"
+    elif [ "$SOURCE_KIND" = repo ]; then license_file="$REPO/e/fixtures/license-all-features.pem"
+    else die "an enterprise $SOURCE_KIND needs a license: set HARNESS_LICENSE_FILE (no clone to take e/fixtures/license-all-features.pem from)"; fi
     [ -f "$license_file" ] || die "ent build needs a license but none found at '$license_file' (set HARNESS_LICENSE_FILE)"
     license_arg="--license-file $license_file"
     hlog "ent build: mounting license $license_file"
@@ -51,7 +59,11 @@ IMAGE=$image
 MODULE=$label
 MODULES=$modules_csv
 REPO=$REPO
-SHA=$(git -C "$REPO" rev-parse --short=12 HEAD)
+SHA=$SOURCE_KEY
+SOURCE_KIND=$SOURCE_KIND
+SOURCE_REF=$SOURCE_REF
+SOURCE_LABEL=$SOURCE_LABEL
+SOURCE_VERSION=${SOURCE_VERSION:-}
 FEATURES=${FEATURES:-}
 VERSION=${VERSION:-}
 DOMAIN=$HARNESS_DOMAIN
@@ -59,9 +71,11 @@ CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
   hlog "rendering cluster '$id' [$label: $modules_csv] at $fqdn"
+  # --repo may be empty (package/binary source): units that need the clone declare
+  # `requires_repo: true` and the renderer refuses rather than mounting nothing.
   pybrain render --modules "$modules_csv" --cluster-id "$id" --fqdn "$fqdn" --port "$INGRESS_PORT" \
     --image "$image" --harness-domain "$HARNESS_DOMAIN" --lab-domain "$LAB_DOMAIN" \
-    --repo "$REPO" $license_arg --out "$out" || die "render failed"
+    --repo "${REPO:-}" $license_arg --out "$out" || die "render failed"
   [ -f "$out/docker-compose.yml" ] || die "render did not produce $out/docker-compose.yml"
 
   hlog "starting containers"

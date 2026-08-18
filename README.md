@@ -5,8 +5,9 @@ run **feature/version-gated test plans** (positive *and* negative cases) that co
 more test modules into a cluster, and get an **inspectable report** (results + logs + rendered
 config) with the cluster left running.
 
-Standalone repo — point it at any of your `teleport-*` clones with `--repo`; it never touches
-their branch. Contributor docs, architecture & gotchas: **[CLAUDE.md](CLAUDE.md)**.
+Standalone repo — point it at any of your `teleport-*` clones with `--repo` (it never touches
+their branch), or at a released tarball with `--package` / prebuilt binaries with `--binary`.
+Contributor docs, architecture & gotchas: **[CLAUDE.md](CLAUDE.md)**.
 
 ## How it's built
 - **Shell** (`bin/cluster`, `lib/*.sh`) owns orchestration: docker/compose, the shared nginx
@@ -17,8 +18,10 @@ their branch. Contributor docs, architecture & gotchas: **[CLAUDE.md](CLAUDE.md)
   `uv run --extra dev pytest`.
 
 ## Setup (one time)
-1. Docker via lima with amd64 emulation; **`uv`**; the messense cross toolchain
-   (`brew install messense/macos-cross-toolchains/x86_64-unknown-linux-gnu`); `python3`, `jq`.
+1. Docker via lima with amd64 emulation; **`uv`**; `python3`, `jq`. For `--repo` (source)
+   builds also the messense cross toolchain
+   (`brew install messense/macos-cross-toolchains/x86_64-unknown-linux-gnu`) — `--package`
+   and `--binary` runs need no Go toolchain at all.
 2. `cp targets/default.env.example targets/default.env` and fill in `HARNESS_DOMAIN`,
    `CF_DNS_API_TOKEN` (Cloudflare, Zone:DNS:Edit), `ACME_EMAIL`.
 3. Add a wildcard DNS record you control: `*.lab.<HARNESS_DOMAIN>  A  127.0.0.1`.
@@ -44,11 +47,25 @@ their branch. Contributor docs, architecture & gotchas: **[CLAUDE.md](CLAUDE.md)
 # see docs/kubernetes.md for the design and its host requirements.
 ./bin/cluster run-plan operator --repo ~/projects/teleport \
     --features generic_oidc --version v19
+
+# Run against a RELEASE ARTIFACT instead of a clone — no Go toolchain, no build:
+#   --package <teleport-*-bin.tar.gz>   a downloaded release tarball
+#   --binary  <dir|teleport>            prebuilt teleport + tctl/tbot/tsh in one directory
+# The version comes from the artifact itself, so --version is optional here.
+./bin/cluster run-plan oidc-caching --package ~/Downloads/teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz \
+    --features generic_oidc,kubernetes
 ```
-`run-plan` builds Teleport (cached by commit SHA), composes + brings up the cluster behind the
-shared ingress, verifies the join outcomes, writes `runs/<ts>-<id>/` (per-module `results-*.json`
-+ logs + rendered config), and leaves the cluster up. A module gated out by `--features`/`--version`
-is SKIPped (logged, not silently). `--features` describes what the target build actually provides.
+`run-plan` builds Teleport (cached by commit SHA) or unpacks the artifact (cached by its
+sha256), composes + brings up the cluster behind the shared ingress, verifies the join
+outcomes, writes `runs/<ts>-<id>/` (per-module `results-*.json` + logs + rendered config),
+and leaves the cluster up. A module gated out by `--features`/`--version` is SKIPped (logged,
+not silently). `--features` describes what the target build actually provides.
+
+The three sources are mutually exclusive, and everything downstream sees only the resulting
+image — so a package run is identical to a source run except that nothing can be *built* from
+it. Modules that build from the clone (the terraform provider, the k8s operator, the docs
+tree) declare `requires_repo: true` in their `render.yaml` and gate out with a reason on a
+`--package`/`--binary` run.
 
 ```bash
 ./bin/cluster ls                     # running clusters

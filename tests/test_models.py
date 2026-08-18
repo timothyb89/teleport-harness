@@ -14,6 +14,7 @@ from harness.models import (
     gate,
     load_module,
     parse_checks,
+    repo_requirement,
     version_num,
 )
 
@@ -208,3 +209,36 @@ def test_legacy_flat_checks_still_work_and_stay_ungrouped(tmp_path):
     m = _demo_module(tmp_path, "name: demo\nchecks: |\n  node_present agent\n")
     assert not m.claims
     assert [(c.role, c.claim) for c in m.all_checks()] == [("evidence", "")]
+
+
+# ---- source gating: no clone (a --package/--binary run) --------------------------
+# Modules whose composition BUILDS from the teleport clone (the terraform provider, the
+# k8s operator, the docs tree) cannot run against a prebuilt package or binary. They gate
+# out with a reason rather than failing deep in render — see harness/models.repo_requirement.
+COMPONENTS = REPO / "components"
+
+
+def test_repo_requirement_direct_on_the_module():
+    # docs_bound_keypair's workbench mounts {{ repo }}/docs
+    assert repo_requirement(MODULES / "docs_bound_keypair", COMPONENTS) == "module docs_bound_keypair"
+
+
+def test_repo_requirement_inherited_from_a_component():
+    # terraform_bot itself says nothing; terraform-runner's prebuild.sh builds from $REPO
+    assert repo_requirement(MODULES / "terraform_bot", COMPONENTS) == "component terraform-runner"
+    assert repo_requirement(MODULES / "operator_generic_oidc", COMPONENTS) == "component k8s-runner"
+
+
+def test_repo_requirement_absent_for_a_plain_module():
+    for name in ("tbot", "bound_keypair", "generic_oidc", "kubernetes", "oidc_caching"):
+        assert repo_requirement(MODULES / name, COMPONENTS) == "", name
+
+
+def test_gate_skips_when_the_run_has_no_clone():
+    res = gate(_mod(), features=None, version=None, repo_unit="component terraform-runner")
+    assert res.skip
+    assert "terraform-runner" in res.reason and "--repo" in res.reason
+
+
+def test_gate_repo_unit_empty_does_not_skip():
+    assert not gate(_mod(), features=None, version=None, repo_unit="").skip

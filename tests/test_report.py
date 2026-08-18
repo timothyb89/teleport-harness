@@ -306,3 +306,24 @@ def test_every_toc_link_resolves_to_an_emitted_anchor(tmp_path):
     emitted = set(_re.findall(r'<a id="([^"]+)"></a>', md))
     assert targets, "TOC produced no links"
     assert not (set(targets) - emitted), f"TOC links with no emitted anchor: {set(targets) - emitted}"
+
+
+# ---- provenance: what teleport under test came from ------------------------------
+def test_build_markdown_reports_a_package_source(tmp_path):
+    """A --package/--binary run has no clone, so the header names the artifact and the
+    version it reported rather than a repo path @ git SHA."""
+    sd = _state_dir(tmp_path)
+    (sd / "meta.env").write_text(
+        (sd / "meta.env").read_text().replace("REPO=/repo\nSHA=abc123\n",
+            "REPO=\nSHA=pkg0f1e2d3c4b5a\nSOURCE_KIND=package\n"
+            "SOURCE_REF=/dl/teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz\n"
+            "SOURCE_VERSION=v18.11.0-rc.2\n"))
+    md = build_markdown(sd)
+    assert "**source:** package `/dl/teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz`" in md
+    assert "teleport `v18.11.0-rc.2`" in md
+    assert "**repo:**" not in md
+
+
+def test_build_markdown_repo_source_unchanged(tmp_path):
+    md = build_markdown(_state_dir(tmp_path))
+    assert "- **repo:** `/repo` @ `abc123`" in md

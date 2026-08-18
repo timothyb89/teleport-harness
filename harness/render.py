@@ -216,6 +216,15 @@ def render_cluster(
     origins: dict[str, str] = {svc: "base" for svc in compose["services"]}
     bots: list[dict] = []
     for unit_dir, rv in units:
+        # A unit that BUILDS from the teleport clone (a prebuild.sh `go build`, a mount of
+        # {{ repo }}/docs) cannot run against a --package/--binary source. run-plan gates
+        # these out with a reason; anything that reaches render anyway stops here rather
+        # than silently mounting nothing.
+        if rv.get("requires_repo") and not base_ctx.get("repo"):
+            raise ValueError(
+                f"{unit_labels[unit_dir]} requires a teleport clone (requires_repo: true) "
+                f"but this run has none — pass --repo <clone> instead of --package/--binary, "
+                f"or leave this module out")
         scripts_dir = _collect_scripts(unit_dir, out_dir, unit_dir.name)
         ctx = {**base_ctx, **rv, "module_dir": str(unit_dir),
                # `scripts` points INTO the bundle; `module_dir` points at the source tree.
