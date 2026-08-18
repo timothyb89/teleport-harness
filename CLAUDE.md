@@ -412,6 +412,23 @@ if the cluster enforces it, an MFA device).
 - Scoped tokens need `TELEPORT_UNSTABLE_SCOPES=yes` on auth + tctl. An **unscoped** bot can create
   scoped tokens if its **classic** role grants `scoped_token` (the scoped authorizer wraps the
   unscoped checker) — no scoped_role_assignment needed.
+- **A scoped token is JOINED by its Scope-Qualified Name `<scope>::<name>`, not its bare
+  `metadata.name`** (the resource keeps the bare name + a `scope:` field; only the join
+  reference is qualified — `token_name:` in an agent config, `onboarding.token` in a tbot
+  config). Since "Namespace scoped tokens" (master `93db5e02781`, #68981, 2026-07-27; v18 via
+  `487d16815b5` "Backport scoped IaC to v18", #69540, 2026-08-10) `lib/join/server.go`
+  `getProvisionToken` routes anything that is NOT an SQN (`scopes.MaybeSQN`: no leading `/`, no
+  `::`) to the CLASSIC token lookup ONLY. So a bare scoped name fails as **"token expired or
+  not found"** — indistinguishable from a genuinely missing/expired token, which is why this
+  read as "the RC is missing a scoped backport" when v18.11.0-rc.2 in fact had MORE scoped code
+  than the module expected. Two traps in the failure mode: the module's last green scoped run
+  predated the change by four days, and the module failed IDENTICALLY on v19 master (verified),
+  so "works on my clone" would not have caught it; and the scoped NEGATIVE agent still PASSed
+  `node_absent` — denied because its token wasn't found rather than because its claims
+  mismatched, with only its SKIPped `log_contains` hinting at it (same shape as the `--globoff`
+  trap above). Pre-#68981 builds (`teleport-b`/`teleport-e` today) want the bare name instead;
+  `generic_oidc` renders the SQN from a `scope:` render var and is pinned to current
+  master/`branch/v18` behavior.
 - **Bootstrap race**: the auth healthcheck requires BOTH `/healthz` AND `/tmp/bootstrap-done`
   (touched by the shared `auth-entrypoint.sh` after applying `/bootstrap/*.yaml` + `bots.manifest`).
   Without it, a bot `depends_on: auth service_healthy` would start the instant teleport answers

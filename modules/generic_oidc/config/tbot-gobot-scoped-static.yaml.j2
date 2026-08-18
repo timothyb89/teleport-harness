@@ -7,7 +7,7 @@ scoped: true
 proxy_server: {{ fqdn }}:{{ port }}
 onboarding:
   join_method: generic_oidc
-  token: gobot-scoped-static-token
+  token: {{ scope }}::gobot-scoped-static-token
   generic_oidc:
     command: ["curl", "-fsSk", "https://oidc:8443/token?sub=test-bot"]
 storage: {type: directory, path: /var/lib/tbot}

@@ -7,6 +7,17 @@ auth_env:
   TELEPORT_UNSTABLE_SCOPES: "yes"      # scoped tokens/roles/bots need this on auth
 bot_token: harness-tokmgr-secret       # token-manager bot join secret (per-cluster)
 agent_sub: test-agent                  # subject the positive agents request / rules match
+# The scope the scoped agents/bots live in. Also the SQN prefix every scoped JOIN uses:
+# since "Namespace scoped tokens" (master 93db5e02781, #68981, 2026-07-27; v18 via
+# 487d16815b5 "Backport scoped IaC to v18", #69540, 2026-08-10) a scoped token must be
+# addressed by its Scope-Qualified Name, `<scope>::<name>`. `lib/join/server.go`
+# getProvisionToken sends anything that is NOT an SQN (no leading `/`, no `::` —
+# scopes.MaybeSQN) to the CLASSIC token lookup only, so a bare scoped-token name comes
+# back as "token expired or not found" — which reads exactly like a missing/expired
+# token and not like an addressing change. The token RESOURCES keep their bare
+# metadata.name + `scope:` field (see bootstrap/scoped-*.yaml); only the join reference
+# is qualified. Pre-#68981 builds (teleport-b/-e today) want the bare name instead.
+scope: /genericoidc-test
 # positive (discovery/static/scoped-*/expr) + negative (deny/scoped-deny/expr-deny) agents.
 # expr/expr-deny share ONE token whose allow rule is a predicate EXPRESSION matching a
 # string-array `groups` claim via set()+contains (the JSON-array -> Set path); they
