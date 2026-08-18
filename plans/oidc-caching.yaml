@@ -14,4 +14,4 @@ description: >
   generic_oidc + kubernetes + oidc_caching sharing one oidc-server: exercise the shared
   caching OIDC validator across both join paths AND assert the caching directly (many joins,
   one discovery fetch) — the v18 caching backport's regression surface.
-modules: [generic_oidc, kubernetes, oidc_caching]
+modules: [generic_oidc, kubernetes, oidc_caching, oidc_response_limit]
