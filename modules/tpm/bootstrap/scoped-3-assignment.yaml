@@ -1,0 +1,16 @@
+# Links the scoped bot to the scoped role within /tpm-test, so a joined scoped identity
+# actually carries permissions (and scope pins) rather than being admitted into a vacuum.
+kind: scoped_role_assignment
+sub_kind: dynamic
+version: v1
+metadata:
+  name: tpm-scoped-bot-assignment
+scope: /tpm-test
+spec:
+  # scope-qualified bot name (<scope>::<bot-name>).
+  bot: /tpm-test::tpm-scoped-bot
+  assignments:
+    # The role is ALSO referenced by scope-qualified name since the namespacing change
+    # (gravitational#68457); a bare name fails validation with "missing '::' separator".
+    - role: /tpm-test::tpm-scoped-role
+      scope: /tpm-test

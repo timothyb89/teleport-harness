@@ -38,6 +38,27 @@ doctor() {
   if command -v claude >/dev/null 2>&1; then pass "claude CLI present ($(claude --version 2>/dev/null | head -1)) — agent-driven modules can run"
   else chk_warn "claude CLI missing (only needed for agent-driven modules; must be logged in with a subscription)"; fi
 
+  # TPM emulation (only the tpm module needs it: a lima qemu VM + a manufactured vTPM).
+  # Warn rather than fail — every other module runs fine without any of this.
+  local tpm_missing=""
+  for c in swtpm swtpm_setup swtpm_localca gnutls-certtool; do
+    command -v "$c" >/dev/null 2>&1 || tpm_missing="$tpm_missing $c"
+  done
+  # lima wires swtpm only for vmType: qemu, so the qemu binary for the HOST arch is what
+  # the tpm module's VM actually boots on (a same-arch guest gets HVF acceleration).
+  local qemu_bin; case "$(uname -m)" in
+    arm64|aarch64) qemu_bin=qemu-system-aarch64 ;; x86_64) qemu_bin=qemu-system-x86_64 ;;
+    *) qemu_bin="" ;;
+  esac
+  [ -n "$qemu_bin" ] && ! command -v "$qemu_bin" >/dev/null 2>&1 && tpm_missing="$tpm_missing $qemu_bin"
+  if [ -z "$tpm_missing" ]; then
+    # gnutls-certtool is NOT macOS's /usr/bin/certtool (a different program, same name);
+    # swtpm_localca looks for the gnutls one by that exact name.
+    pass "TPM emulation ok (swtpm $(swtpm --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1), $qemu_bin) — the tpm module can run"
+  else
+    chk_warn "TPM emulation unavailable (missing:$tpm_missing) — only the tpm module needs it: brew install swtpm qemu gnutls"
+  fi
+
   # uv + the Python brain (YAML parsing / gating / checks validation)
   if command -v uv >/dev/null 2>&1; then
     if pybrain validate >/dev/null 2>&1; then pass "harness brain ok (uv); all modules validate"

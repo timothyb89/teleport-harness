@@ -1,0 +1,12 @@
+# Role for the unscoped TPM bot. Deliberately minimal: what these cases prove is whether a
+# join is ADMITTED, so the identity only needs enough permission that `tctl --identity`
+# can demonstrate the resulting cert genuinely authenticates and is authorized.
+kind: role
+version: v7
+metadata:
+  name: tpm-tester
+spec:
+  allow:
+    rules:
+      - resources: [token]
+        verbs: [list, read]

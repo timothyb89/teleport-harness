@@ -1,0 +1,17 @@
+# Scoped role for the scoped half of the matrix. The numeric prefix orders bootstrap
+# creation: role (1) -> bot (2) -> assignment (3), since the assignment references both.
+# Requires the scopes feature (auth has TELEPORT_UNSTABLE_SCOPES=yes via render.yaml
+# auth_env).
+kind: scoped_role
+version: v1
+metadata:
+  name: tpm-scoped-role
+scope: /tpm-test
+spec:
+  assignable_scopes:
+    - /tpm-test
+  ssh:
+    logins: ["root", "ubuntu"]
+    labels:
+      - name: "*"
+        values: ["*"]

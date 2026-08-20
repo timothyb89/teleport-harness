@@ -1,0 +1,12 @@
+{# The tpm module contributes NO services.
+
+   Every other module's joining client is a container; this one's is a lima VM, because
+   TPM joining needs a real /dev/tpmrm0 and a TPM is provided by the hypervisor to a guest
+   kernel — there is no way to give one to a container here (the vtpm-proxy route needs a
+   tpm_vtpm_proxy module the lima kernel does not ship, plus device passthrough under a
+   ROOTLESS docker daemon).
+
+   The VM is created by prebuild.sh and driven by checks.py's act(); the harness still
+   requires this file to exist (harness/cli.py checks for it before rendering), so it
+   renders to an empty fragment that the compose merge is a no-op over. #}
+services: {}

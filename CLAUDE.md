@@ -314,6 +314,21 @@ sentinel and the mutator blocks until it is visible before asserting; the barrie
 the spec-edit assertion. (2) Presence-only checks are unsound when the failure mode SUPPLIES a
 value — hence `resource_field_not`. NEGATIVE-CONTROLLED: 6 FAIL / 10 PASS at the pre-fix commit
 `e98f39c334e` (twice, identical) and 16/16 with the fix; gated on bound_keypair, min v17).
+`tpm` (a NEW *kind* of module — **host-side VM**: its joining client is a lima VM with an
+emulated TPM, not a container, because a TPM is handed to a guest kernel by the hypervisor
+and cannot be given to a container here. `prebuild.sh` mints two CAs, manufactures TPM state
+whose EKCert is signed by one of them, creates the VM, pre-seeds that state, boots it, stages
+a guest-arch tbot and asks `tbot tpm identify` what the device looks like; `checks.py`'s
+`act()` then drives 18 cases. The design choice that makes it cheap: every case varies the
+TOKEN, never the device, so ONE VM boot covers the whole matrix — 12s for 18 cases, and a
+re-run against a live cluster with `TPM_FORCE=1` is ~14s. Covers, unscoped AND scoped: EKCert
+CA verification (right CA joins / unrelated CA denied), the root-not-issuer trap, allow-rule
+matching on `ek_public_hash` and `ek_certificate_serial` (correct CA in all four, so only the
+matcher can explain a denial), and admission-time validation that a serial with no
+`ekcert_allowed_cas` is REJECTED at create — including `serial-hash-no-cas`, the ONLY config
+the two candidate rules disagree about, so that one check is what pins the strict rule.
+Requires `--ent` [tpmjoin.CheckTPMRequest refuses OSS outright] + lima/qemu/swtpm/gnutls;
+`cluster teardown` deletes the VM. VERIFIED live: 20/20 on `~/projects/core` @ eb4ab6f769a7),
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
@@ -488,6 +503,38 @@ if the cluster enforces it, an MFA device).
   container (where docker DNS works) and pin it into the pod with `hostAliases`. Pin the FQDN, not
   just `<id>-auth`: the wildcard LE cert matches it, so the operator gets real TLS with no
   `--insecure`. Only `nslookup` is available in the k3s image (no `getent`).
+- **Web assets: check the EMBED ROOT, and never drop the embed tag.** `lib/build.sh` asserts
+  `webassets/[e/]teleport` — exactly what teleport's `//go:embed` names — NOT its `app/`
+  subdir. Checking `app/` rejected a tree that builds and boots fine: `make ensure-webassets-e
+  WEBASSETS_SKIP_BUILD=1` leaves `app/` empty but writes `index.html`, which satisfies both
+  go:embed and proxy startup. That fast path matters because a REAL asset build needs a full
+  pnpm build plus an **llvm** toolchain for the ironrdp wasm step. Building WITHOUT
+  `webassets_embed` is NOT an alternative — teleport's noembed stub makes the PROXY refuse to
+  start ("the teleport binary was built without web assets"), so the whole cluster dies, not
+  just `cluster web`. (Cost me a full run to learn: auth came up, loaded its license, generated
+  every CA, then exited 1.)
+- **TPM emulation (the `tpm` module).** Four things, each found the hard way:
+  (1) lima's `tpm: true` is **qemu-only** (vz/krunkit have no swtpm wiring), so the harness's
+  own vz `docker` VM can never have one; (2) lima starts `swtpm` against an EMPTY state dir and
+  never runs `swtpm_setup`, so the guest gets a TPM with **no EK certificate at all** —
+  verified as zero NV indices and zero persistent handles. You must manufacture state yourself,
+  which is also the enabling trick: manufacturing it means you own the issuing CA and can
+  therefore test EKCert verification; (3) the state file is `~/.lima/<vm>/swtpm/tpm2-00.permall`
+  and can be dropped in **before first boot** (`limactl create` → mkdir + `swtpm_setup` →
+  `limactl start`), so no boot/stop/reboot cycle is needed; (4) `swtpm_localca` shells out to
+  **`gnutls-certtool`**, which is NOT macOS's `/usr/bin/certtool` (a different program with the
+  same name). Also: `limactl list --quiet` is fatal when combined with `--format`.
+- **`ekcert_allowed_cas` needs the ISSUER, not the root.** `lib/tpm/validate.go` verifyEKCert
+  passes `Roots` only and builds no intermediates pool, so an anchor that is genuinely in the
+  device's chain still fails with "certificate signed by unknown authority" if it isn't the
+  immediate issuer. Manufacturer EK certs chain through intermediates too, so this is a
+  real-world misconfiguration, not a swtpm artifact — the `tpm` module asserts it as its own
+  case rather than treating it as a setup detail.
+- **Colon-hex in generated YAML must be QUOTED.** An EKCert serial that happens to be all
+  digits (`12:34:56`) is a valid YAML 1.1 **sexagesimal integer** and parses as `45296`, so an
+  unquoted `ek_certificate_serial` silently pins a number instead of the serial. Same for a
+  pure-digit `ek_public_hash`. Intermittent by construction — it depends on the serial the CA
+  happened to issue — which is exactly why it's quoted unconditionally.
 - **The `token` join method is SINGLE-USE** (auth deletes the token on redemption,
   `lib/auth/join.go`) and `embeddedtbot` stores state in memory (`destination.NewMemory()`) — so a
   restarted operator pod can NEVER re-join. Hence the Deployment has readiness but deliberately

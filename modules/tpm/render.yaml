@@ -1,0 +1,32 @@
+# Render context for the tpm module (see harness/render.py).
+#
+# This module contributes NO compose services: its joining client is a lima VM with an
+# emulated TPM, not a container (a TPM is handed to a guest kernel by the hypervisor, so a
+# container cannot have one). prebuild.sh owns that VM; checks.py drives it. What lives
+# here is only the cluster-side scaffolding the joins need.
+requires_repo: true                    # prebuild.sh cross-builds tbot from the clone
+
+auth_env:
+  TELEPORT_UNSTABLE_SCOPES: "yes"      # scoped tokens/roles/bots need this on auth
+
+# The scope every scoped case lives in. Also the SQN prefix used at join time: a scoped
+# token is addressed as `<scope>::<name>` (see the CLAUDE.md SQN invariant) — the resource
+# keeps its bare metadata.name and a separate `scope:` field.
+scope: /tpm-test
+
+# One bot per addressing mode, NOT one per case. Every token in the matrix names the same
+# bot, because what each case varies is the TOKEN's tpm block (trust anchor / allow rule),
+# never the identity being granted. Holding the bot constant is what makes the cases
+# comparable, and the per-case discriminator in the audit log is `token_name`.
+#
+# The scoped bot is NOT here: a scoped bot is a `bot` resource carrying a `scope:` and
+# cannot be made by `tctl bots add` (see bootstrap/scoped-2-bot.yaml).
+bots:
+  - {name: tpm-bot, roles: tpm-tester}   # empty token: the tpm join token authorizes it
+
+# VM shape. It runs one tbot invocation at a time, so this is deliberately small; qemu is
+# HVF-accelerated for a same-arch guest, which is why boot is seconds rather than minutes.
+tpm_vm_cpus: 2
+tpm_vm_memory: 2GiB
+tpm_vm_disk: 16GiB
+tpm_vm_ubuntu: "24.04"

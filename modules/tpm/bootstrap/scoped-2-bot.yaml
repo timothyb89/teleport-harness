@@ -1,0 +1,10 @@
+# The scoped counterpart of the `tpm-bot` entry in render.yaml's `bots:`. A scoped bot
+# carries only a `scope` (roles/traits come from the scoped_role_assignment) and cannot be
+# created by `tctl bots add`, which is why it is a bootstrap resource rather than a
+# manifest line. Every scoped case's token names this one bot.
+kind: bot
+version: v1
+metadata:
+  name: tpm-scoped-bot
+spec: {}
+scope: /tpm-test

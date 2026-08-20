@@ -122,6 +122,14 @@ cluster_teardown() {
   # tagged with the cluster id so concurrent clusters never collide). `compose down` does
   # not know about these — without this they'd accumulate one per run. No-op if absent.
   docker image rm -f "teleport-harness-operator:$id" >/dev/null 2>&1 || true
+  # The tpm module's joining client is a lima VM, not a container, so it is outside
+  # everything `compose down` collects. Each VM carries a disk image and its own emulated
+  # TPM state, so leaking one per run is expensive as well as untidy. No-op if absent.
+  if command -v limactl >/dev/null 2>&1 && \
+     limactl list --format '{{.Name}}' 2>/dev/null | grep -qx "tpm-$id"; then
+    hlog "deleting TPM VM tpm-$id"
+    limactl delete -f "tpm-$id" >/dev/null 2>&1 || true
+  fi
   rm -rf "$out"
   hok "torn down $id"
 }
