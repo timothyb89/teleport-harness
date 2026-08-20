@@ -212,9 +212,21 @@ EOF
 _stage_bins_repo() {
   local bincache="$1" repo="$SOURCE_REF" target tags assetdir tool
   command -v "$HARNESS_CC" >/dev/null 2>&1 || die "cross compiler '$HARNESS_CC' not found (brew install messense/macos-cross-toolchains/x86_64-unknown-linux-gnu)"
-  if [ "${ENT:-0}" = 1 ]; then target=./e/tool/teleport; tags="grpcnotrace webassets_embed webassets_ent"; assetdir=webassets/e/teleport/app
-  else target=./tool/teleport; tags="grpcnotrace webassets_embed"; assetdir=webassets/teleport/app; fi
-  [ -n "$(ls -A "$repo/$assetdir" 2>/dev/null)" ] || die "prebuilt web assets missing at $repo/$assetdir — run 'make ensure-webassets' in the clone first"
+  # assetdir is the EMBED ROOT, i.e. exactly what teleport's `//go:embed` names
+  # (webassets_embed{,_ent}.go embed `webassets/[e/]teleport`, not its app/ subdir).
+  # Checking app/ instead rejected a tree that builds and boots perfectly well: the
+  # WEBASSETS_SKIP_BUILD=1 path leaves app/ empty but writes index.html, which is enough
+  # for both go:embed and proxy startup. That matters because a REAL asset build needs a
+  # full pnpm build plus an llvm toolchain for the ironrdp wasm step — a large install for
+  # a UI the harness treats as break-glass.
+  #
+  # Dropping the embed tag is NOT an alternative: teleport's !webassets_embed stub makes
+  # the PROXY refuse to start ("the teleport binary was built without web assets"), so the
+  # whole cluster dies, not just `cluster web`.
+  local mktarget
+  if [ "${ENT:-0}" = 1 ]; then target=./e/tool/teleport; tags="grpcnotrace webassets_embed webassets_ent"; assetdir=webassets/e/teleport; mktarget=ensure-webassets-e
+  else target=./tool/teleport; tags="grpcnotrace webassets_embed"; assetdir=webassets/teleport; mktarget=ensure-webassets; fi
+  [ -n "$(ls -A "$repo/$assetdir" 2>/dev/null)" ] || die "prebuilt web assets missing at $repo/$assetdir — run 'make $mktarget' in the clone, or 'make $mktarget WEBASSETS_SKIP_BUILD=1' for a stub that boots but serves no web UI"
 
   hlog "cross-building teleport/tctl/tbot/tsh (${SOURCE_VARIANT}) from $(basename "$repo") @ $SOURCE_KEY (first time; cached after)"
   ( cd "$repo" || exit 1
