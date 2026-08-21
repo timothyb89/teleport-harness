@@ -1,0 +1,205 @@
+# scoped_app_access — tbot's application services in SCOPED mode, end to end.
+#
+# What changed upstream: `application` (output) and `application-tunnel` used to refuse to
+# run in scoped mode outright ("service type %q is not supported in scoped mode"). They now
+# take a scope-qualified `app_name` (`<scope>::<app>`), select the app with a
+# `resource.scope == "<scope>"` predicate, and issue the app certificate through
+# GenerateScoped with the new identity.UsageApp — while `application-proxy` deliberately
+# stays unsupported. lib/tbot's own tests assert the CERTIFICATE's shape against a stub app
+# ("No real backend needed for cert issuance test"); nothing there proves a request reaches
+# the app, that the app agent's scope pin and the bot's cert scope agree at the app service
+# (lib/srv/app/connections_handler.go compares them and runs a scoped access decision), or
+# that a bot cannot reach across the scope boundary. That gap is this module.
+#
+# The discriminating trick: the app `httpbin` is registered TWICE — scoped by one agent,
+# unscoped by another — pointing at DIFFERENT httpbin backends, each reporting its own
+# hostname. "Which app answered?" therefore has an observable answer, so a bot that ignored
+# scope would be caught reaching the wrong app rather than passing on a bare 200.
+#
+# VERIFIED live, and NEGATIVE-CONTROLLED:
+#   24/24 PASS on ~/projects/core-b @ 9281fc3da4bb (tscolari/57/scoped-app-access-tbot).
+#   18 FAIL / 6 PASS on ~/projects/core @ 4a125c488af2, a clone that has every OTHER piece of
+#   scoped app access (ScopedRoleApp, RoleApp in rolesSupportingScopes, the TargetScope cert
+#   extension, a scope-pinned app agent) but not the tbot side: the scoped bot dies at startup
+#   with `service type "application" is not supported in scoped mode`, so nothing is written,
+#   nothing is tunnelled and the two same-named apps are never told apart. The one claim that
+#   still passes there is the application-proxy refusal — the behaviour the change left alone.
+name: scoped_app_access
+description: >
+  Scoped application access via tbot: a scoped bot reaches a scoped httpbin through the
+  application-tunnel and via credentials written by the application output, addressing the
+  app by scope-qualified name. Two same-named apps (one scoped, one not) with distinguishable
+  backends prove the selection is by scope; an unscoped bot must land on the unscoped one, a
+  scoped bot must not see an out-of-scope app, and the three configs the change rejects
+  (bare name in scoped mode, qualified name unscoped, application-proxy scoped) must fail.
+provides_feature: scoped_app_access
+requires_features: [scoped_app_access]
+# Scoped app access (ScopedRoleApp, RoleApp in rolesSupportingScopes, the TargetScope cert
+# extension) is v19-era work; nothing older can serve a scoped app.
+min_version: v19
+
+# Scaffolding: proves the scenario was actually set up. A failure here marks the claims
+# UNTESTED rather than DISPROVEN — none of them were exercised.
+preconditions: |
+  # the app agent joined AND is pinned to the scope, which is what makes its app scoped.
+  # (`role` on this event is the joining IDENTITY — "Instance" — while the granted system
+  # roles are the `roles` list; the token name is what distinguishes the two agents, and it
+  # is unredacted here only because a scoped token's name is not its secret.)
+  audit_event  instance.join token_name=app-agent-token scope=/harness-apps success=true
+  # the scoped bot joined (bound_keypair: a scoped bot token cannot use the `token` method)
+  bot_joined   app-bot bound_keypair
+  # the unscoped control bot joined
+  bot_joined   unscoped-app-bot
+  # the client ran to completion, so every case below has data behind it
+  output_file  probe /out/observations.json
+
+claims:
+  - id: scoped-tunnel-access
+    statement: >
+      A scoped bot's application-tunnel gives an ordinary HTTP client real access to a scoped
+      app addressed by scope-qualified name.
+    why: |
+      **What was done:** the probe — a plain `curl` container with no Teleport credentials of
+      its own — fetched `/hostname` through the tunnel the scoped bot opened for
+      `/harness-apps::httpbin`.
+
+      **Why 200 means what it says:** the request traversed the proxy and the app service,
+      which rejects a certificate whose `RouteToApp.Scope` differs from the app's scope and
+      then runs a scoped access decision against the bot's scoped role. A 200 therefore
+      proves the issued cert carried the right scope *and* route, and that the scoped
+      `app.labels` grant was evaluated — none of which a certificate inspection shows.
+
+      **Why the hostname matters:** an app named `httpbin` exists in this cluster twice.
+      The body comes from the backend itself (`go-httpbin -use-real-hostname`), so it names
+      which of the two answered. Without it a 200 would be consistent with the tunnel having
+      resolved the *unscoped* `httpbin`.
+
+      **The cluster's own account of it:** auth recorded an `app.session.start` for this bot
+      on `httpbin` carrying `bot_scope_of_origin: /harness-apps` and a `scope_pin` naming the
+      scoped role that admitted it. So the server agrees a scoped app session happened —
+      the 200 is not a client-side artefact.
+    artifacts:
+      - scripts/probe.sh
+      - config/tbot-app-bot.yaml.j2
+      - config/app-agent.yaml.j2
+      - bootstrap/4-scoped-tokens.yaml.j2
+    checks: |
+      observation_equals probe scoped-tunnel http_status 200
+      observation_equals probe scoped-tunnel hostname httpbin-scoped
+      audit_event        app.session.start bot_name=app-bot app_name=httpbin bot_scope_of_origin=/harness-apps
+
+  - id: scoped-output-credentials
+    statement: >
+      The application output writes app credentials for a scoped app, routed to it and
+      carrying both the target scope and a scope pin.
+    why: |
+      **What was done:** the same scoped bot also runs an `application` output; the probe read
+      the certificate it wrote and recorded the route-to-app fields Teleport encodes as
+      subject RDNs (`lib/tlsca/ca.go`: app name `1.3.9999.1.10`, target scope
+      `1.3.9999.2.34`, public addr `1.3.9999.1.6`, session id `1.3.9999.1.4`, scope pin
+      `1.3.9999.2.24`).
+
+      **Why these fields:** the target scope is what the app service compares against the
+      app's own scope, and the scope pin is what makes the identity scoped at all — an app
+      cert with the right name but no scope would be the unscoped code path silently still in
+      use. The session id must be present because the app service opens a session against it.
+    artifacts:
+      - scripts/probe.sh
+      - config/tbot-app-bot.yaml.j2
+    checks: |
+      output_file        appbot /out/app/tlscert
+      output_file        appbot /out/app/key
+      output_file        appbot /out/app/identity
+      observation_equals probe output-cert app_name httpbin
+      observation_equals probe output-cert target_scope /harness-apps
+      observation_equals probe output-cert has_scope_pin yes
+      observation_equals probe output-cert has_session_id yes
+
+  - id: output-credentials-usable
+    statement: >
+      Those written credentials authenticate to the scoped app through the proxy at the app's
+      derived public address.
+    why: |
+      **What was done:** the probe used the output's `tlscert`/`key` as a client certificate
+      straight against the proxy, with the scoped app's derived public address as the host —
+      the flow the docs describe for the `application` output ("curl --cert … --key …
+      https://dumper.example.teleport.sh/").
+
+      **Why it is a separate claim:** writing a correct certificate and being able to USE it
+      are different failures. A scoped app's address is
+      `<32-char-base32-hash>.<proxy-host>` (`lib/scopes/app/appsqdn.go`), one DNS level
+      deeper than the harness's `*.lab.<domain>` wildcard cert and record, so the probe
+      dials the proxy container directly (`--connect-to`) and skips hostname verification.
+      That is a harness-side accommodation only: the client certificate, the SNI/Host the
+      proxy routes on, and the app-side authorization are all the real ones.
+    artifacts:
+      - scripts/probe.sh
+    checks: |
+      observation_equals probe output-cert-access http_status 200
+      observation_equals probe output-cert-access hostname httpbin-scoped
+
+  - id: unscoped-bot-gets-unscoped-app
+    statement: >
+      An unscoped bot asking for the bare app name resolves the unscoped app, never the
+      same-named scoped one.
+    why: |
+      **What was done:** an unscoped bot tunnels to `httpbin` with no scope anywhere in its
+      config, and the probe recorded which backend answered.
+
+      **Why this is the discriminating case:** both app servers match the `name == "httpbin"`
+      predicate, so the only thing that separates them is the new skip in `getApp` ("Make
+      sure that no scoped apps are picked by unscoped bots"). Reaching `httpbin-unscoped`
+      proves the skip; reaching `httpbin-scoped` would mean an unscoped identity had been
+      routed into a scope.
+    artifacts:
+      - scripts/probe.sh
+      - config/tbot-unscoped-app-bot.yaml.j2
+      - config/app-agent-unscoped.yaml.j2
+    checks: |
+      observation_equals probe unscoped-tunnel http_status 200
+      observation_equals probe unscoped-tunnel hostname httpbin-unscoped
+
+  - id: out-of-scope-app-denied
+    statement: >
+      A scoped bot cannot address an app that exists only outside its scope.
+    why: |
+      **What was done:** a second scoped bot, holding the same scoped app-access grant, asks
+      for `/harness-apps::plainapp` — an app that is registered, healthy and reachable, but
+      unscoped.
+
+      **Why the denial is about scope:** the bot's grant is identical to the one that
+      succeeds above, and the app plainly exists, so the only thing that can deny it is the
+      `resource.scope` predicate. `log_count … ge 1` rather than `log_contains` on purpose:
+      a missing denial must FAIL, where a `log_contains` would SKIP and read as neutral.
+    artifacts:
+      - config/tbot-nf-bot.yaml.j2
+      - config/app-agent-unscoped.yaml.j2
+    checks: |
+      # the app name is wildcarded around because tbot's logger HTML-escapes the quotes in
+      # a wrapped error's user message (`app &#34;…&#34; not found`)
+      log_count      appbot-notfound ge 1 app .*/harness-apps::plainapp.* not found
+      no_output_file appbot-notfound /out/app/tlscert
+
+  - id: config-rejects-scope-mismatch
+    statement: >
+      app_name and scope mode must agree, and application-proxy remains unsupported in
+      scoped mode.
+    why: |
+      **What was done:** three bots start with configurations the change is meant to reject.
+      Each fails in `BotConfig.CheckAndSetDefaults()` before any join, so the assertion is on
+      the specific message, not merely on the exit.
+
+      **Why each one:** a bare name in scoped mode would silently look up an unscoped app; a
+      qualified name in unscoped mode would silently be treated as a plain name (the
+      *intent* is rejected, not the format — `MaybeSQN`, not strong validation); and
+      `application-proxy` kept its blanket refusal, which pins the boundary of the change to
+      two of the three app services.
+    artifacts:
+      - config/tbot-cfg-scoped-bare.yaml.j2
+      - config/tbot-cfg-unscoped-sqn.yaml.j2
+      - config/tbot-cfg-scoped-proxy.yaml.j2
+    checks: |
+      log_count      cfg-scoped-bare ge 1 app_name: scope-qualified name .* missing
+      no_output_file cfg-scoped-bare /out/app/tlscert
+      log_count      cfg-unscoped-sqn ge 1 app_name: can not be a scope-qualified name when not in scope mode
+      log_count      cfg-scoped-proxy ge 1 service type "application-proxy" is not supported in scoped mode

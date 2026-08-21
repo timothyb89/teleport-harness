@@ -1,0 +1,16 @@
+{# CONFIG NEGATIVE (the mirror image): UNSCOPED mode + a scope-qualified app name. The
+   config now soft-checks this direction too (`scopes.MaybeSQN(o.AppName)` ->
+   "app_name: can not be a scope-qualified name when not in scope mode"), which is what
+   stops a user from believing they asked for a scoped app while running unscoped — the
+   request would otherwise be silently reinterpreted as a bare name. #}
+version: v2
+onboarding:
+  join_method: token
+  token: config-only-token
+proxy_server: {{ fqdn }}:{{ port }}
+storage: {type: directory, path: /var/lib/tbot}
+services:
+  - type: application-tunnel
+    name: app-tunnel
+    app_name: {{ scope }}::{{ app_name }}
+    listen: tcp://0.0.0.0:{{ tunnel_port }}

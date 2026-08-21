@@ -20,6 +20,7 @@ $OUT/bootstrap (a bots.manifest) which the shared auth-entrypoint applies.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -44,8 +45,21 @@ def _load_render_yaml(unit_dir: Path) -> dict:
     return data
 
 
+def b64url(value: str) -> str:
+    """base64url without padding — jinja filter `| b64url`.
+
+    Exists for ONE thing a module cannot otherwise express: a scoped token joined with the
+    `token` method is presented as `<scope>::<name>:<base64url(secret)>`
+    (lib/scopes/joining/token.go EncodeScopedToken), while the token RESOURCE carries the
+    raw secret in `status.secret`. Without a filter the module would have to hard-code the
+    encoded form beside the raw one, and the two would silently drift apart the first time
+    someone edited the secret — producing a join failure that reads like a missing backport.
+    """
+    return base64.urlsafe_b64encode(value.encode()).decode().rstrip("=")
+
+
 def _env(*search: Path) -> Environment:
-    return Environment(
+    env = Environment(
         loader=FileSystemLoader([str(p) for p in search]),
         undefined=StrictUndefined,
         autoescape=False,
@@ -53,6 +67,8 @@ def _env(*search: Path) -> Environment:
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    env.filters["b64url"] = b64url
+    return env
 
 
 def _render_str(env: Environment, template_name: str, ctx: dict) -> str:
@@ -344,12 +360,17 @@ def _write_setup(out_dir: Path, boot_out: Path, apply_out: Path, compose: dict,
             doc = yaml.safe_load(f.read_text()) or {}
         except yaml.YAMLError:
             continue
-        if not isinstance(doc, dict) or not ("onboarding" in doc or "outputs" in doc):
+        if not isinstance(doc, dict) or not ("onboarding" in doc or "outputs" in doc
+                                             or "services" in doc):
             continue  # not a tbot config
+        # `outputs:` is the deprecated spelling of `services:` — both are the same list of
+        # typed service configs, and a modern config (e.g. an application output beside an
+        # application-tunnel) uses `services:` only, so read both or the report shows none.
+        typed = (doc.get("outputs") or []) + (doc.get("services") or [])
         configs.append({
             "file": f.name, "source": f"rendered/config/{f.name}",
             "join_method": (doc.get("onboarding") or {}).get("join_method", ""),
-            "outputs": [o.get("type", "output") for o in (doc.get("outputs") or []) if isinstance(o, dict)],
+            "outputs": [o.get("type", "output") for o in typed if isinstance(o, dict)],
         })
 
     def _config_join_method(bot_name: str) -> str:

@@ -140,6 +140,9 @@ What this buys over a `log_count` on the script's own verdict:
 - **`observation_equals` proves a write LANDED**, so "unchanged" is distinguishable from "the
   mutation never happened" — a distinction a preservation test lives or dies on.
 
+It compares STRINGS (`str(got) != expected`), so record presence as `"yes"`/`"no"` rather than a
+JSON boolean — `true` arrives as Python's `True` and never matches.
+
 Keep an `output_file <actor> /out/observations.json` precondition so a crashed actor reads as
 scaffolding failure (claims UNTESTED) rather than claim failures it caused. And still record
 on the unhappy path: a timed-out barrier should record what it last saw, because a missing
@@ -206,6 +209,10 @@ Two rules that apply to any script, observations or not:
   ```
 - **`config/*.j2`** — teleport/tbot configs, rendered to `$OUT/config/<name>` (`.j2` stripped).
   The shared `auth.yaml` comes from the base; override only by shipping `config/auth.yaml.j2`.
+  One custom filter is available: `| b64url` (unpadded base64url), for deriving a value that
+  must agree with another rendered one rather than hard-coding both — e.g. a scoped token's
+  `token`-method join string `<scope>::<name>:{{ secret | b64url }}` next to the `status.secret`
+  in its bootstrap YAML (`modules/scoped_app_access/`).
 - **`bootstrap/*.yaml[.j2]`** — roles + provision-token resources applied at cluster bootstrap.
   `.j2` are rendered. You do NOT script `tctl create` — the shared `auth-entrypoint.sh` applies
   every `bootstrap/*.yaml`, then adds every `bots:` entry, then signals readiness. Order is:

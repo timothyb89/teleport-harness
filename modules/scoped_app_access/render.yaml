@@ -1,0 +1,59 @@
+# Render context for scoped_app_access (see harness/render.py).
+
+auth_env:
+  # Scoped roles/bots/tokens need the base scopes feature...
+  TELEPORT_UNSTABLE_SCOPES: "yes"
+  # ...and a SCOPED AGENT additionally needs the agent scope-pin feature on AUTH, or the
+  # joining app agent dies with "set TELEPORT_UNSTABLE_AGENT_SCOPE_PIN=yes on main auth
+  # service to join a scoped app agent" (lib/service/service.go checkScopedAppJoin: the
+  # agent gets a scope but no pin back from auth, and refuses to run half-configured).
+  TELEPORT_UNSTABLE_AGENT_SCOPE_PIN: "yes"
+
+# The scope everything scoped in this module lives in. Also the SQN prefix for every
+# scoped JOIN and for the app_name the bots ask for: a scoped token is addressed by its
+# Scope-Qualified Name `<scope>::<name>` (see the generic_oidc module's `scope` note), and
+# since this branch a scoped app is addressed the same way in tbot's `app_name`.
+scope: /harness-apps
+
+# The app name registered TWICE on purpose — once scoped (by app-agent, inside `scope`)
+# and once unscoped (by app-agent-unscoped). Same name, different scope, different
+# backend. That collision is the discriminating case for the app-selection logic this
+# module tests: `getApp` in lib/tbot/services/application/output_service.go now adds
+# `resource.scope == "<scope>"` to the predicate for a scoped bot AND skips scoped apps
+# for an unscoped one, so each bot must land on exactly one of the two.
+app_name: httpbin
+# An app that exists ONLY outside the scope, for the "a scoped bot cannot address an
+# out-of-scope app" case (the negative from TestScopedBotApp/unscoped_app_is_not_visible).
+unscoped_only_app: plainapp
+
+# httpbin backends. `-use-real-hostname` makes /hostname report the container's real
+# hostname, which is what lets the probe say WHICH backend answered — the app name alone
+# cannot, because both apps are called `httpbin`.
+httpbin_image: mccutchen/go-httpbin:2.25.0
+scoped_backend: httpbin-scoped
+unscoped_backend: httpbin-unscoped
+
+# Join secrets. The scoped App agent joins with the `token` method, whose secret we PRESET
+# in the token's `status.secret` (lib/services/local/scoped_tokens.go maybeSetTokenSecret
+# only generates one when it is empty), so the join string is renderable at build time.
+app_agent_secret: harness-scoped-app-agent-secret
+# Scoped BOT tokens cannot use the `token` method at all ("scoped bot tokens do not support
+# the `token` join method, `bound_keypair` should be used instead", lib/scopes/joining/
+# token.go strongValidateBotToken), so both scoped bots join via bound_keypair with a
+# preset registration secret — same shape as the bound_keypair module.
+app_bot_secret: harness-scoped-app-bot-secret
+nf_bot_secret: harness-scoped-nf-bot-secret
+# Classic (unscoped) join tokens: name == secret, as in the tbot module.
+unscoped_agent_token: harness-unscoped-app-agent
+unscoped_bot_token: harness-unscoped-app-bot
+
+# Where each tbot's application-tunnel listens. Bound to 0.0.0.0 rather than the loopback
+# the docs recommend because the client is a SIBLING container (the probe); the listener is
+# only reachable on the cluster's private compose network.
+tunnel_port: 8080
+
+# Unscoped bots created at bootstrap: name / roles / join token. The two SCOPED bots are
+# not here — a scoped bot is a `scoped_bot` resource (bootstrap/2-*.yaml), which
+# `tctl bots add` cannot create.
+bots:
+  - {name: unscoped-app-bot, roles: app-access-classic, token: harness-unscoped-app-bot}

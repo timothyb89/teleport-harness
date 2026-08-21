@@ -87,9 +87,11 @@ tree) declare `requires_repo: true` in their `render.yaml` and gate out with a r
 Test a branch: `git -C <clone> checkout <branch>`, then `--repo <clone>`.
 
 ## Layout
-- `modules/<name>/` — a join-method test unit: `module.yaml` (gating + declarative `checks:`),
+- `modules/<name>/` — a test unit: `module.yaml` (gating + declarative `checks:`/`claims:`),
   `services.yml.j2` (its bots/agents), `render.yaml`, `config/*.j2`, `bootstrap/` (roles/tokens).
-  Today: `generic_oidc`, `tbot`, `bound_keypair`, `kubernetes`.
+  Most are join methods (`generic_oidc`, `tbot`, `bound_keypair`, `kubernetes`, `tpm`, …); others
+  test a feature end to end (`scoped_app_access`), a provider/operator, or a doc. `ls modules/`
+  for the full set; each module's `module.yaml` header says what it proves and why.
 - `components/<name>/` — a shared service dependency modules pull in via `components:`
   (today: `oidc-server`, a trivial IdP reused by `generic_oidc` + `kubernetes`;
   `terraform-runner`; `agent-runner`; `k8s-runner`, a disposable in-cluster Kubernetes node

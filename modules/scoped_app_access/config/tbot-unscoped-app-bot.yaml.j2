@@ -1,0 +1,20 @@
+{# An UNSCOPED bot tunnelling to the bare app name `{{ app_name }}` — the control for the
+   app-selection change. Two app servers answer `name == "{{ app_name }}"`; the unscoped one
+   must win, because getApp now skips any app carrying a scope when the request has none
+   ("Make sure that no scoped apps are picked by unscoped bots"). Before that skip, an
+   unscoped bot could be routed into a scoped app, which is what the probe's hostname check
+   would catch. #}
+version: v2
+onboarding:
+  join_method: token
+  token: {{ unscoped_bot_token }}
+proxy_server: {{ fqdn }}:{{ port }}
+credential_ttl: 10m
+renewal_interval: 2m
+storage: {type: directory, path: /var/lib/tbot}
+diag_addr: 0.0.0.0:3001
+services:
+  - type: application-tunnel
+    name: app-tunnel
+    app_name: {{ app_name }}
+    listen: tcp://0.0.0.0:{{ tunnel_port }}

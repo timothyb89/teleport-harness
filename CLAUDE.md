@@ -329,6 +329,20 @@ matcher can explain a denial), and admission-time validation that a serial with 
 the two candidate rules disagree about, so that one check is what pins the strict rule.
 Requires `--ent` [tpmjoin.CheckTPMRequest refuses OSS outright] + lima/qemu/swtpm/gnutls;
 `cluster teardown` deletes the VM. VERIFIED live: 20/20 on `~/projects/core` @ eb4ab6f769a7),
+`scoped_app_access` (tbot's `application` output + `application-tunnel` in SCOPED mode, end to
+end against a real httpbin — the first module to exercise an app, and the first to test a tbot
+SERVICE rather than a join method. The change under test lets both services take a
+scope-qualified `app_name` [`<scope>::<app>`], select the app with a `resource.scope`
+predicate, and issue through `GenerateScoped`+`identity.UsageApp`; lib/tbot's unit tests assert
+the CERTIFICATE against a stub app and stop there. The discriminating design: the app `httpbin`
+is registered TWICE — scoped by a scope-pinned App agent, unscoped by another — at DIFFERENT
+go-httpbin backends run with `-use-real-hostname`, so `/hostname` names which app answered and
+a scope-blind lookup is caught reaching the wrong one instead of passing on a bare 200. A
+credential-free `probe` container is the client: it curls both tunnels, reads the route-to-app
+out of the written cert's SUBJECT and re-uses that cert against the proxy at the app's derived
+address, RECORDING each case as observations. Also covers the out-of-scope-app denial and all
+three configs the change rejects. NEGATIVE-CONTROLLED: 24/24 on the branch, 18 FAIL / 6 PASS on
+a clone with every other scoped-app piece but not the tbot side).
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
@@ -475,6 +489,44 @@ if the cluster enforces it, an MFA device).
   trap above). Pre-#68981 builds (`teleport-b`/`teleport-e` today) want the bare name instead;
   `generic_oidc` renders the SQN from a `scope:` render var and is pinned to current
   master/`branch/v18` behavior.
+- **Scoped BOT tokens cannot use the `token` join method** — `lib/scopes/joining/token.go`
+  `strongValidateBotToken` refuses it outright ("`bound_keypair` should be used instead"), so a
+  scoped bot joins via bound_keypair with a preset `spec.bound_keypair.onboarding.
+  registration_secret` (set `recovery.mode: insecure`, or the default limit of 1 locks the bot
+  out of re-joining after a container restart). A scoped NON-bot token (App/Node/Kube) may use
+  `token`, but then **its secret is part of the join string, not the SQN**:
+  `<scope>::<name>:<base64url-unpadded(secret)>` (`EncodeScopedToken`). Supply
+  `status.secret` yourself — `maybeSetTokenSecret` only generates one when it is EMPTY, and
+  validation rejects an empty one — otherwise the secret is random and unrenderable. The
+  `| b64url` jinja filter exists for exactly this (`scoped_app_access` uses it) so the raw and
+  encoded forms cannot drift apart; a mismatch surfaces as "token not found", i.e. as the
+  invariant above rather than as a typo.
+- **A scoped AGENT additionally needs `TELEPORT_UNSTABLE_AGENT_SCOPE_PIN=yes` on AUTH**, not
+  just `TELEPORT_UNSTABLE_SCOPES=yes`: without it auth returns no pin and the joining agent
+  exits with "set TELEPORT_UNSTABLE_AGENT_SCOPE_PIN=yes on main auth service to join a scoped
+  app agent" (`lib/service/service.go` checkScopedAppJoin). An app is scoped because its AGENT
+  is pinned (`lib/srv/app/server.go` stamps its own scope onto every app it registers), so
+  there is no way to register a scoped app from an unscoped agent.
+- **A scoped app must NOT set `public_addr`** (`validateScopedAppRegistration` rejects it) and
+  its address is derived: `<32-char base32 hash of name+scope>.<proxy-host>`
+  (`lib/scopes/app/appsqdn.go`). That is one DNS label deeper than `*.lab.<domain>`, so neither
+  the wildcard record nor the wildcard cert covers it — reach such an app through a tbot
+  `application-tunnel`, or with `curl -k --connect-to <addr>:443:<fqdn>:<port>` (verified
+  working with the app output's client cert).
+- **Route-to-app lives in the certificate SUBJECT, not in an X509v3 extension** — Teleport
+  encodes it as pkix `ExtraNames`, so `openssl x509 -noout -subject -nameopt sep_multiline`
+  prints one `<oid>=<value>` line each, no ASN.1 spelunking: app name `1.3.9999.1.10`, target
+  scope `1.3.9999.2.34`, public addr `1.3.9999.1.6`, session id `1.3.9999.1.4`, scope pin
+  `1.3.9999.2.24` (`lib/tlsca/ca.go`). Match the OID with an exact string compare: an OID is a
+  prefix of its own siblings (`…2.3` vs `…2.34`) and its dots are regex wildcards.
+- **`observation_equals` compares STRINGS** (`str(got) != expected`), so a JSON boolean arrives
+  as Python's `True` and never equals `true`. Record presence as `"yes"`/`"no"`.
+- **`instance.join`'s `role` is the joining identity ("Instance"), not the granted role** —
+  that is the `roles` LIST, which the `audit_event` verb cannot match (it compares scalars).
+  Select the agent by `token_name` instead; a scoped token's name is not secret so it is
+  logged verbatim, where a classic token's is masked (`*******************p-agent`).
+  Related: tbot's logger HTML-escapes quotes inside a wrapped error's user message
+  (`app &#34;/scope::app&#34; not found`), so a regex containing the quoted name never matches.
 - **Bootstrap race**: the auth healthcheck requires BOTH `/healthz` AND `/tmp/bootstrap-done`
   (touched by the shared `auth-entrypoint.sh` after applying `/bootstrap/*.yaml` + `bots.manifest`).
   Without it, a bot `depends_on: auth service_healthy` would start the instant teleport answers
@@ -602,11 +654,18 @@ if the cluster enforces it, an MFA device).
   `kubernetes`+`static_jwks` join method instead of single-use `token`.
 - **More join methods**: `github`, `iam`/`ec2`, `azure`, etc. — each ~ a `services.yml.j2` fragment
   + `bootstrap/` + `checks:` now that composition + shared components exist.
-- **Deepen `tbot`**: multiple output types (`ssh`, `kubernetes`, `database`, `application`) with
-  artifact + usability checks; and exercise the `tsh_ssh` primitive end-to-end by joining a
-  target SSH node and proving the bot identity can actually `tsh ssh` into it (needs a node +
-  login RBAC — the primitive exists but no module uses it yet).
-- **Scoped coverage** beyond generic_oidc as scoping expands (scoped agents/bots for other methods).
+- **Deepen `tbot`**: `application` is DONE (`scoped_app_access` covers the output AND the
+  application-tunnel, with real traffic to an httpbin and the written cert re-used against the
+  proxy). Still open: `ssh`, `kubernetes`, `database` outputs with artifact + usability checks;
+  the UNSCOPED application path as its own module (today it appears only as the control in
+  `scoped_app_access`); `application-proxy` once it gains scope support (the module asserts its
+  refusal, so that check flips when it does); and exercising the `tsh_ssh` primitive end-to-end
+  by joining a target SSH node and proving the bot identity can actually `tsh ssh` into it
+  (needs a node + login RBAC — the primitive exists but no module uses it yet).
+- **Scoped coverage** beyond generic_oidc as scoping expands. App access is DONE
+  (`scoped_app_access`: scoped App agent + scoped bot + scoped role `app:` block). Next likely:
+  scoped database/kube access from a bot, and a scoped app reached by a HUMAN via `tsh` (which
+  needs the derived hash address to resolve — see the scoped-app-address invariant).
 
 ### Build / deploy
 - **Run from a prebuilt artifact (`--package` / `--binary`) — DONE**: a release tarball or a

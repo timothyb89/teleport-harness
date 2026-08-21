@@ -1,0 +1,24 @@
+{# NEGATIVE: a scoped bot asking, by scope-qualified name, for an app that exists only
+   OUTSIDE its scope. The app server for `{{ unscoped_only_app }}` is registered and healthy
+   — it simply carries no scope — so the only thing that can deny this is the
+   `resource.scope == "{{ scope }}"` predicate getApp now adds. The bot must log
+   `app "{{ scope }}::{{ unscoped_only_app }}" not found` and write nothing.
+
+   The output service keeps retrying on its interval (it does not exit on exhausted retries),
+   so this container stays up and keeps re-proving the denial rather than dying once. #}
+version: v2
+scoped: true
+onboarding:
+  join_method: bound_keypair
+  token: {{ scope }}::nf-bot-token
+  bound_keypair:
+    registration_secret: {{ nf_bot_secret }}
+proxy_server: {{ fqdn }}:{{ port }}
+credential_ttl: 10m
+renewal_interval: 2m
+storage: {type: directory, path: /var/lib/tbot}
+services:
+  - type: application
+    name: app-output
+    app_name: {{ scope }}::{{ unscoped_only_app }}
+    destination: {type: directory, path: /out/app}

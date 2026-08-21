@@ -1,0 +1,20 @@
+{# The scoped role that grants APP access inside the scope, assigned to both scoped bots
+   by 3-assignments.yaml. `spec.app` is the app-access block of a scoped role
+   (api/proto/teleport/scopes/access/v1/role.proto ScopedRoleApp); a wildcard label matcher
+   keeps the module about scope selection rather than label matching.
+
+   Numeric filename prefixes order bootstrap creation within the module (the shared
+   auth-entrypoint applies /bootstrap/*.yaml in sorted order): role (1) -> bots (2) ->
+   assignments (3, references both) -> tokens (4, references the bots). #}
+kind: scoped_role
+version: v1
+metadata:
+  name: app-access
+scope: "{{ scope }}"
+spec:
+  assignable_scopes:
+    - "{{ scope }}"
+  app:
+    labels:
+      - name: "*"
+        values: ["*"]

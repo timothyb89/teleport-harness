@@ -26,7 +26,8 @@ CTX = {
 }
 
 ALL_MODULES = ["tbot", "bound_keypair", "bound_keypair_apply_on_startup", "generic_oidc",
-               "kubernetes", "terraform_bot", "terraform_generic_oidc", "docs_bound_keypair"]
+               "kubernetes", "terraform_bot", "terraform_generic_oidc", "docs_bound_keypair",
+               "scoped_app_access"]
 
 EXPECTED_SERVICES = {
     "tbot": {"auth", "tbot", "tbot-deny"},
@@ -47,6 +48,11 @@ EXPECTED_SERVICES = {
                                "tf-agent-ok", "tf-agent-badorg"},
     # agent-idbot from the shared agent-runner component; workbench is the module's runner
     "docs_bound_keypair": {"auth", "agent-idbot", "workbench"},
+    "scoped_app_access": {
+        "auth", "httpbin", "httpbin-decoy", "app-agent", "app-agent-unscoped",
+        "appbot", "appbot-unscoped", "appbot-notfound",
+        "cfg-scoped-bare", "cfg-unscoped-sqn", "cfg-scoped-proxy", "probe",
+    },
 }
 
 
@@ -118,6 +124,9 @@ EXPECTED_BOTS = {
     "terraform_generic_oidc": {"tf-admin"},
     # the privileged admin identity bot the agent-runner component contributes
     "docs_bound_keypair": {"agent-admin"},
+    # only the UNSCOPED control bot is a manifest entry: a scoped bot is a `bot` resource
+    # with a `scope` (bootstrap/2-scoped-bots.yaml), which `tctl bots add` cannot create
+    "scoped_app_access": {"unscoped-app-bot"},
 }
 
 
@@ -218,3 +227,49 @@ def test_missing_context_var_raises(tmp_path):
     from jinja2 import UndefinedError
     with pytest.raises((UndefinedError, KeyError)):
         render_module(MODULES / "tbot", {k: v for k, v in CTX.items() if k != "image"}, tmp_path, run_prebuild=False)
+
+
+def test_b64url_filter_encodes_the_scoped_token_join_string():
+    """A scoped token joined with the `token` method is presented as
+    `<scope>::<name>:<base64url(secret)>`, while the token resource carries the raw secret.
+    The filter keeps the two derived from ONE value instead of hand-copied side by side."""
+    from harness.render import b64url
+    assert b64url("harness-scoped-app-agent-secret") == "aGFybmVzcy1zY29wZWQtYXBwLWFnZW50LXNlY3JldA"
+    assert "=" not in b64url("a")  # unpadded: the join parser uses RawURLEncoding
+
+
+def test_scoped_app_access_join_string_matches_the_token_secret(tmp_path):
+    """The app agent's join string and the token's `status.secret` must stay in agreement —
+    a mismatch fails at join time as a bare "token not found", which reads like a missing
+    backport rather than a typo."""
+    import base64
+    render_module(MODULES / "scoped_app_access", CTX, tmp_path, run_prebuild=False)
+    token = next(d for d in yaml.safe_load_all(
+        (tmp_path / "bootstrap" / "scoped_app_access__4-scoped-tokens.yaml").read_text())
+        if d["metadata"]["name"] == "app-agent-token")
+    agent = yaml.safe_load((tmp_path / "config" / "app-agent.yaml").read_text())
+    scope, _, rest = agent["teleport"]["join_params"]["token_name"].partition("::")
+    name, _, secret_b64 = rest.partition(":")
+    assert scope == token["scope"] and name == token["metadata"]["name"]
+    padded = secret_b64 + "=" * (-len(secret_b64) % 4)
+    assert base64.urlsafe_b64decode(padded).decode() == token["status"]["secret"]
+    # a scoped app must not carry a public_addr: it is derived from the app name + scope
+    assert "public_addr" not in agent["app_service"]["apps"][0]
+
+
+def test_mounted_configs_exist(rendered):
+    """Every `{{ out }}/config/<name>` bind in a fragment must name a file the renderer wrote.
+
+    A renamed or typo'd `config/*.j2` otherwise renders and validates cleanly, then docker
+    silently creates a DIRECTORY at the mount point and the container fails at runtime with
+    "is a directory" — several minutes into a cluster bring-up, far from the cause.
+    """
+    _, out, compose = rendered
+    prefix = CTX["out"] + "/config/"
+    for name, spec in compose["services"].items():
+        for vol in (spec or {}).get("volumes", []) or []:
+            if not isinstance(vol, str) or not vol.startswith(prefix):
+                continue
+            host = vol.split(":", 1)[0]
+            assert (out / "config" / Path(host).name).is_file(), \
+                f"{name} mounts {host}, which the renderer did not write"

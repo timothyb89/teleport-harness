@@ -1,0 +1,29 @@
+{# Links each scoped bot to the scoped app-access role within the scope, so the joined
+   identity actually carries permissions (and a scope pin). Both the bot and the role are
+   referenced by SCOPE-QUALIFIED NAME (`<scope>::<name>`); a bare name fails validation with
+   "missing '::' separator" (lib/scopes/access/access.go ValidateAssignment). #}
+kind: scoped_role_assignment
+sub_kind: dynamic
+version: v1
+metadata:
+  name: app-bot-assignment
+scope: "{{ scope }}"
+spec:
+  bot: "{{ scope }}::app-bot"
+  assignments:
+    - role: "{{ scope }}::app-access"
+      scope: "{{ scope }}"
+---
+{# The negative bot gets the SAME grant on purpose: it must fail because the app it asks for
+   is outside its scope, not because it lacks app permissions. #}
+kind: scoped_role_assignment
+sub_kind: dynamic
+version: v1
+metadata:
+  name: nf-bot-assignment
+scope: "{{ scope }}"
+spec:
+  bot: "{{ scope }}::nf-bot"
+  assignments:
+    - role: "{{ scope }}::app-access"
+      scope: "{{ scope }}"

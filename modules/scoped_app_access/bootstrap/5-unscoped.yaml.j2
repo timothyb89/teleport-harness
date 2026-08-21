@@ -1,0 +1,32 @@
+{# The UNSCOPED half of the cluster: a classic role + the two classic join tokens behind the
+   decoy app agent and the unscoped bot. Their whole job is to make the "which app did this
+   bot resolve?" question answerable — an unscoped app called `httpbin` exists alongside the
+   scoped one, so a bot that ignores scope lands on the wrong backend rather than on nothing. #}
+kind: role
+version: v7
+metadata:
+  name: app-access-classic
+spec:
+  allow:
+    app_labels:
+      '*': '*'
+---
+{# Join token for the unscoped app agent (no scope, no assigned_scope: the apps it registers
+   stay unscoped). #}
+kind: token
+version: v2
+metadata:
+  name: {{ unscoped_agent_token }}
+spec:
+  roles: [App]
+  join_method: token
+---
+{# Join token for the unscoped bot; referenced by the `bots:` manifest entry in render.yaml. #}
+kind: token
+version: v2
+metadata:
+  name: {{ unscoped_bot_token }}
+spec:
+  roles: [Bot]
+  bot_name: unscoped-app-bot
+  join_method: token

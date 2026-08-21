@@ -1,0 +1,21 @@
+{# The two scoped bots. A scoped bot carries only a `scope` — its permissions come from the
+   scoped_role_assignment in 3-assignments.yaml, and `tctl bots add` cannot create one, so
+   these are resources rather than `bots:` manifest entries.
+
+   Two bots because each joins with its OWN bound_keypair token: such a token binds a single
+   keypair to a single bot (`spec.bot`), so the positive bot and the out-of-scope-app
+   negative cannot share one. #}
+kind: bot
+version: v1
+metadata:
+  name: app-bot
+spec: {}
+scope: "{{ scope }}"
+---
+{# Same shape; this one deliberately asks for an app that only exists OUTSIDE the scope. #}
+kind: bot
+version: v1
+metadata:
+  name: nf-bot
+spec: {}
+scope: "{{ scope }}"

@@ -1,0 +1,19 @@
+{# CONFIG NEGATIVE: `application-proxy` in scoped mode. The output and tunnel services both
+   lost their blanket "not supported in scoped mode" rejection in this change; the PROXY
+   service deliberately kept it (proxy_config.go still returns
+   `service type "application-proxy" is not supported in scoped mode`, and proxy_service.go
+   passes an explicitly unscoped QualifiedName into getRouteToApp). Asserting it pins the
+   boundary of the change: two of three app services became scope-aware, not all three. #}
+version: v2
+scoped: true
+onboarding:
+  join_method: bound_keypair
+  token: {{ scope }}::config-only-token
+  bound_keypair:
+    registration_secret: config-only-secret
+proxy_server: {{ fqdn }}:{{ port }}
+storage: {type: directory, path: /var/lib/tbot}
+services:
+  - type: application-proxy
+    name: app-proxy
+    listen: tcp://0.0.0.0:{{ tunnel_port }}

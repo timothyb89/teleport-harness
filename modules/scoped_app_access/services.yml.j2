@@ -1,0 +1,197 @@
+{# scoped_app_access services fragment (composed onto the base auth+proxy).
+
+   The shape of the test, in one picture:
+
+     httpbin        <- app-agent           (SCOPED  app "{{ app_name }}" in {{ scope }})
+     httpbin-decoy  <- app-agent-unscoped  (UNSCOPED apps "{{ app_name }}" + "{{ unscoped_only_app }}")
+
+     appbot            (scoped)   application output -> /out/app   + tunnel :{{ tunnel_port }}
+     appbot-unscoped   (unscoped) tunnel :{{ tunnel_port }} for the BARE name "{{ app_name }}"
+     appbot-notfound   (scoped)   output for "{{ scope }}::{{ unscoped_only_app }}" -> must be denied
+     cfg-*             three configs that must be REJECTED at startup
+     probe             curls both tunnels + the written credentials, records what it saw
+
+   Two `{{ app_name }}` apps exist on purpose (one scoped, one not) so "did the right app
+   answer?" is a question with an observable answer: each backend reports its own hostname. #}
+services:
+  # The scoped app's backend. `-use-real-hostname` makes /hostname return this container's
+  # hostname, which is how the probe tells the two same-named apps apart.
+  httpbin:
+    image: {{ httpbin_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-httpbin
+    hostname: {{ scoped_backend }}
+    command: ["-use-real-hostname", "-port=8080"]
+    networks: [internal]
+
+  # The unscoped apps' backend — the decoy an unscoped (or scope-blind) lookup would land on.
+  httpbin-decoy:
+    image: {{ httpbin_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-httpbin-decoy
+    hostname: {{ unscoped_backend }}
+    command: ["-use-real-hostname", "-port=8080"]
+    networks: [internal]
+
+  # SCOPED App agent: joins with a scoped token, so the app it registers is scoped.
+  app-agent:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-app-agent
+    command: ["teleport", "start", "--config", "/etc/teleport/teleport.yaml"]
+    environment:
+      TELEPORT_UNSTABLE_SCOPES: "yes"
+      TELEPORT_UNSTABLE_AGENT_SCOPE_PIN: "yes"
+    volumes:
+      - {{ out }}/config/app-agent.yaml:/etc/teleport/teleport.yaml:ro
+      - app-agent-data:/var/lib/teleport
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+      httpbin: {condition: service_started}
+    # Bots wait for this: an app the bot cannot see yet is indistinguishable from an app the
+    # bot is not ALLOWED to see, and the second is what this module is about.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+
+  # UNSCOPED App agent: same app name, different backend, plus one app that exists only here.
+  app-agent-unscoped:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-app-agent-unscoped
+    command: ["teleport", "start", "--config", "/etc/teleport/teleport.yaml"]
+    volumes:
+      - {{ out }}/config/app-agent-unscoped.yaml:/etc/teleport/teleport.yaml:ro
+      - app-agent-unscoped-data:/var/lib/teleport
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+      httpbin-decoy: {condition: service_started}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+
+  # THE scoped bot: application output + application-tunnel against the scoped app.
+  appbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-appbot
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    environment:
+      TELEPORT_UNSTABLE_SCOPES: "yes"
+    volumes:
+      - {{ out }}/config/tbot-app-bot.yaml:/etc/tbot.yaml:ro
+      - appbot-data:/var/lib/tbot
+      # shared with the probe, which uses these credentials as a client cert
+      - app-creds:/out/app
+    networks: [internal]
+    # bound_keypair with recovery mode `insecure` makes a re-join safe, so a restart after a
+    # transient failure is preferable to a dead bot and a report full of empty outputs.
+    restart: on-failure
+    depends_on:
+      auth: {condition: service_healthy}
+      app-agent: {condition: service_healthy}
+
+  # Unscoped control: tunnel to the BARE app name.
+  appbot-unscoped:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-appbot-unscoped
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    volumes:
+      - {{ out }}/config/tbot-unscoped-app-bot.yaml:/etc/tbot.yaml:ro
+      - appbot-unscoped-data:/var/lib/tbot
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+      app-agent-unscoped: {condition: service_healthy}
+
+  # NEGATIVE: scoped bot, app that exists only outside the scope.
+  appbot-notfound:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-appbot-notfound
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    environment:
+      TELEPORT_UNSTABLE_SCOPES: "yes"
+    volumes:
+      - {{ out }}/config/tbot-nf-bot.yaml:/etc/tbot.yaml:ro
+      - appbot-notfound-data:/var/lib/tbot
+    networks: [internal]
+    restart: on-failure
+    depends_on:
+      auth: {condition: service_healthy}
+      # depends on the UNSCOPED agent: the app it asks for must genuinely exist (and be
+      # healthy) outside the scope, or "not found" would prove nothing about scoping.
+      app-agent-unscoped: {condition: service_healthy}
+
+{% for cfg, why in [
+     ('cfg-scoped-bare',  'scoped mode + bare app_name'),
+     ('cfg-unscoped-sqn', 'unscoped mode + scope-qualified app_name'),
+     ('cfg-scoped-proxy', 'application-proxy in scoped mode'),
+   ] %}
+  # CONFIG NEGATIVE ({{ why }}): must be rejected by CheckAndSetDefaults at startup, before
+  # any join. `restart: "no"` so it stays dead and its exit is the evidence.
+  {{ cfg }}:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-{{ cfg }}
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    environment:
+      TELEPORT_UNSTABLE_SCOPES: "yes"
+    volumes:
+      - {{ out }}/config/tbot-{{ cfg }}.yaml:/etc/tbot.yaml:ro
+    networks: [internal]
+    restart: "no"
+    depends_on:
+      auth: {condition: service_healthy}
+{% endfor %}
+
+  # The client. Curls both tunnels and the written credentials, records observations.
+  probe:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-probe
+    entrypoint: ["bash", "/scripts/probe.sh"]
+    environment:
+      SCOPED_TUNNEL: appbot:{{ tunnel_port }}
+      UNSCOPED_TUNNEL: appbot-unscoped:{{ tunnel_port }}
+      PROXY_ADDR: {{ fqdn }}:{{ port }}
+      WAIT_ATTEMPTS: "90"
+    volumes:
+      {# {{ scripts }}, not {{ module_dir }}/scripts, so the actor ships inside the run
+         bundle and a reviewer of a shared report can read what produced the observations. #}
+      - {{ scripts }}:/scripts:ro
+      # the scoped bot's application output, read-only: the probe is a CLIENT of those
+      # credentials, exactly as a workload sharing the destination directory would be
+      - app-creds:/creds:ro
+      # where the observations land; the verifier reads them back with `docker exec`
+      - probe-out:/out
+    networks: [internal]
+    depends_on:
+      # service_started, not service_healthy: the probe's own polling is the wait, and a bot
+      # that never becomes ready should surface as a failed CHECK with evidence, not as
+      # `docker compose up` refusing to start the container that would have collected it.
+      appbot: {condition: service_started}
+      appbot-unscoped: {condition: service_started}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/probe-done"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+volumes:
+  app-agent-data:
+  app-agent-unscoped-data:
+  appbot-data:
+  appbot-unscoped-data:
+  appbot-notfound-data:
+  app-creds:
+  probe-out:

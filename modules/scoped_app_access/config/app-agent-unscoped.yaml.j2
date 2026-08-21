@@ -1,0 +1,29 @@
+{# The UNSCOPED app agent — the decoy. It registers:
+     - `{{ app_name }}`: the SAME app name as the scoped agent, pointing at a DIFFERENT
+       backend. Whichever backend answers a tunnel therefore identifies which of the two
+       same-named apps the bot resolved.
+     - `{{ unscoped_only_app }}`: exists only outside the scope, so a scoped bot asking for
+       `{{ scope }}::{{ unscoped_only_app }}` must get "not found" rather than this app.
+   Joins with a classic token and no scope, so both apps stay unscoped. #}
+version: v3
+teleport:
+  nodename: {{ cluster_id }}-app-agent-unscoped
+  data_dir: /var/lib/teleport
+  diag_addr: 0.0.0.0:3000
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: token
+    token_name: {{ unscoped_agent_token }}
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service: {enabled: "no"}
+app_service:
+  enabled: "yes"
+  apps:
+    - name: {{ app_name }}
+      uri: http://httpbin-decoy:8080
+      labels: {harness: unscoped}
+    - name: {{ unscoped_only_app }}
+      uri: http://httpbin-decoy:8080
+      labels: {harness: unscoped}

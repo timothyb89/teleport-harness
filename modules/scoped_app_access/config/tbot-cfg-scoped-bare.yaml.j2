@@ -1,0 +1,23 @@
+{# CONFIG NEGATIVE: scoped mode + a BARE app name. In scoped mode `app_name` is now
+   strong-validated as a scope-qualified name (output_config.go:
+   `scopes.StrongValidateQualifiedName(o.AppName)`), so this must be rejected at startup.
+
+   The three cfg-* bots deliberately reference a token that does not exist: config validation
+   runs in BotConfig.CheckAndSetDefaults() BEFORE any join (config.go calls each service's
+   CheckAndSetDefaults(conf.Scoped)), so a valid token is unnecessary — and using a fake one
+   keeps a regression honest. If the validation were dropped, the bot would get as far as
+   joining and fail with a token error, which is NOT the message these checks assert. #}
+version: v2
+scoped: true
+onboarding:
+  join_method: bound_keypair
+  token: {{ scope }}::config-only-token
+  bound_keypair:
+    registration_secret: config-only-secret
+proxy_server: {{ fqdn }}:{{ port }}
+storage: {type: directory, path: /var/lib/tbot}
+services:
+  - type: application
+    name: app-output
+    app_name: {{ app_name }}
+    destination: {type: directory, path: /out/app}

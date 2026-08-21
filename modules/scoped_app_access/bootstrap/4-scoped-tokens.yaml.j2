@@ -1,0 +1,62 @@
+{# Scoped join tokens: one for the App AGENT, one per scoped BOT.
+
+   The AGENT token is what makes the app scoped at all: `assigned_scope` is consumed at host
+   join time and becomes the agent's scope pin, and lib/srv/app/server.go stamps that scope
+   onto every app the agent registers (`copy.Scope = s.c.GetScope()`). App is one of the
+   roles that support scoping (lib/scopes/joining/token.go rolesSupportingScopes).
+
+   `status.secret` is PRESET rather than server-generated (maybeSetTokenSecret only fills an
+   empty one) so the agent's join string is renderable at build time — see the `token_name`
+   line in config/app-agent.yaml.j2 for the encoding. #}
+kind: scoped_token
+version: v1
+metadata:
+  name: app-agent-token
+scope: "{{ scope }}"
+spec:
+  roles: [App]
+  join_method: token
+  usage_mode: unlimited
+  assigned_scope: "{{ scope }}"
+status:
+  secret: "{{ app_agent_secret }}"
+---
+{# The scoped bot's token. bound_keypair, not `token`: a scoped BOT token with the `token`
+   join method is rejected outright ("scoped bot tokens do not support the `token` join
+   method, `bound_keypair` should be used instead"). The bot registers its keypair on first
+   join using the preset registration secret.
+
+   recovery.mode `insecure` lifts the recovery-attempt limit, so a container restart (the
+   compose `restart: on-failure` on the bots) can re-join instead of being locked out after
+   the default limit of 1. #}
+kind: scoped_token
+version: v1
+metadata:
+  name: app-bot-token
+scope: "{{ scope }}"
+spec:
+  roles: [Bot]
+  join_method: bound_keypair
+  usage_mode: bot
+  bot: "{{ scope }}::app-bot"
+  bound_keypair:
+    onboarding:
+      registration_secret: "{{ app_bot_secret }}"
+    recovery:
+      mode: insecure
+---
+kind: scoped_token
+version: v1
+metadata:
+  name: nf-bot-token
+scope: "{{ scope }}"
+spec:
+  roles: [Bot]
+  join_method: bound_keypair
+  usage_mode: bot
+  bot: "{{ scope }}::nf-bot"
+  bound_keypair:
+    onboarding:
+      registration_secret: "{{ nf_bot_secret }}"
+    recovery:
+      mode: insecure

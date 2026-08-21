@@ -1,0 +1,36 @@
+{# The star of the module: a SCOPED bot running BOTH services this branch taught about
+   scopes, against the same scoped app.
+
+     - `application` (output)        -> writes app credentials to /out/app
+     - `application-tunnel` (service)-> serves plain HTTP on :{{ tunnel_port }}
+
+   `app_name` is a Scope-Qualified Name. In scoped mode that is mandatory: the config now
+   strong-validates it (output_config.go / tunnel_config.go), and `getApp` adds
+   `resource.scope == "{{ scope }}"` to the app-server predicate, so a bare name would be
+   both rejected up front and ambiguous against the unscoped `{{ app_name }}` next door.
+
+   Short credential lifetime because the app must be discoverable before the output can
+   succeed: the output service retries on its renewal interval (RunOnInterval, which does NOT
+   exit on exhausted retries), so a 2m interval bounds how long a slow app registration can
+   keep the output empty — the default is 20m, longer than the verifier waits. #}
+version: v2
+scoped: true
+onboarding:
+  join_method: bound_keypair
+  token: {{ scope }}::app-bot-token
+  bound_keypair:
+    registration_secret: {{ app_bot_secret }}
+proxy_server: {{ fqdn }}:{{ port }}
+credential_ttl: 10m
+renewal_interval: 2m
+storage: {type: directory, path: /var/lib/tbot}
+diag_addr: 0.0.0.0:3001
+services:
+  - type: application
+    name: app-output
+    app_name: {{ scope }}::{{ app_name }}
+    destination: {type: directory, path: /out/app}
+  - type: application-tunnel
+    name: app-tunnel
+    app_name: {{ scope }}::{{ app_name }}
+    listen: tcp://0.0.0.0:{{ tunnel_port }}
