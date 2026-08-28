@@ -1,0 +1,70 @@
+{# The L7 load balancer under test. Rendered to $OUT/config/lb.conf and mounted as the
+   nginx container's WHOLE nginx.conf (so nothing from the image's default config leaks
+   in — there is no conf.d include here on purpose).
+
+   Two properties matter, and they are the two halves of the customer's environment:
+
+   1. TLS is TERMINATED here, and `http2` is OFF, so nginx advertises `http/1.1` as its
+      only ALPN protocol. gRPC offers exactly `h2`, the sets do not intersect, and nginx
+      returns a fatal `no_application_protocol` alert — the "remote error: tls: no
+      application protocol" the customer reported. This is not a misconfiguration we
+      invented: it is what api/client's own IsALPNConnUpgradeRequired treats as the
+      signature of an ALPN-stripping L7 balancer (isRemoteNoALPNError).
+
+   2. The websocket Upgrade IS forwarded, so Teleport's connection-upgrade fallback
+      (/webapi/connectionupgrade) works through it. That is the CORRECT behaviour for an
+      L7 balancer in front of a Teleport proxy, and it is why an ALPN-stripping balancer
+      alone does not reproduce the customer's failure — see the module's claims. #}
+worker_processes 1;
+error_log /dev/stderr info;
+pid /var/run/nginx.pid;
+
+events {
+  worker_connections 1024;
+}
+
+http {
+  access_log /dev/stdout;
+
+  # The standard websocket idiom: only echo a Connection: upgrade when the client asked
+  # for one, so ordinary requests still get a keep-alive connection.
+  map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+  }
+
+  server {
+    # NOTE the absence of `http2 on` — that single omission is the whole fault being
+    # modelled. Adding it would let gRPC negotiate h2 and the direct dial would succeed.
+    listen {{ lb_port }} ssl;
+    server_name lb.{{ lab_domain }};
+
+    # The shared Let's Encrypt wildcard, so clients verify this hop for real. An
+    # `insecure` repro would prove nothing: it would mask which hop rejected what.
+    ssl_certificate     /certs/wildcard.crt;
+    ssl_certificate_key /certs/wildcard.key;
+
+    location / {
+      proxy_pass https://{{ cluster_id }}-auth:{{ port }};
+
+      # Present the proxy's own name upstream so its SNI/ALPN router sees a normal
+      # request. Verification is off because the upstream leg is inside the cluster
+      # network and the proxy answers on its FQDN alias, not this container name.
+      proxy_ssl_server_name on;
+      proxy_ssl_name {{ fqdn }};
+
+      proxy_http_version 1.1;
+      proxy_set_header Host              $host;
+      proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto https;
+      proxy_set_header Upgrade           $http_upgrade;
+      proxy_set_header Connection        $connection_upgrade;
+
+      # An upgraded ALPN tunnel is long-lived and mostly idle; the defaults (60s) would
+      # cut it and turn a working fallback into an intermittent one.
+      proxy_buffering off;
+      proxy_read_timeout  1h;
+      proxy_send_timeout  1h;
+    }
+  }
+}

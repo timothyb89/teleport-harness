@@ -205,6 +205,26 @@ def test_log_contains_match_and_skip():
     assert _run(c, "log_contains agent-deny nonsense-pattern-xyz").status == "SKIP"
 
 
+def test_log_must_contain_fails_on_miss_and_shows_the_tail():
+    c = FakeCluster(logs={"tf-lb-blackhole": "line1\nremote error: tls: no application protocol\nline3"})
+    assert _run(c, "log_must_contain tf-lb-blackhole tls: no application protocol").status == "PASS"
+    # the whole point: a miss is a FAIL, where log_contains would SKIP and stay green
+    miss = _run(c, "log_must_contain tf-lb-blackhole nonsense-pattern-xyz")
+    assert miss.status == "FAIL"
+    assert _run(c, "log_contains tf-lb-blackhole nonsense-pattern-xyz").status == "SKIP"
+    # the failure proof carries the log tail, so a miss is diagnosable from the report
+    (proof,) = miss.proofs
+    assert proof.source == "logs/tf-lb-blackhole.log"
+    assert "line3" in proof.content and "no application protocol" in proof.content
+
+
+def test_log_must_contain_empty_log_is_a_fail_not_a_crash():
+    c = FakeCluster(logs={"tf-lb-native": ""})
+    res = _run(c, "log_must_contain tf-lb-native TF_APPLY_EXIT=0")
+    assert res.status == "FAIL"
+    assert "log is empty" in _proof_text(res)
+
+
 def test_log_count_operators_and_tally():
     # an IdP-style request log: 3 token mints (workload), 1 discovery fetch (cached)
     log = "\n".join([

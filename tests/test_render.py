@@ -27,7 +27,7 @@ CTX = {
 
 ALL_MODULES = ["tbot", "bound_keypair", "bound_keypair_apply_on_startup", "generic_oidc",
                "kubernetes", "terraform_bot", "terraform_generic_oidc", "docs_bound_keypair",
-               "scoped_app_access"]
+               "scoped_app_access", "terraform_native_join_lb"]
 
 EXPECTED_SERVICES = {
     "tbot": {"auth", "tbot", "tbot-deny"},
@@ -52,6 +52,12 @@ EXPECTED_SERVICES = {
         "auth", "httpbin", "httpbin-decoy", "app-agent", "app-agent-unscoped",
         "appbot", "appbot-unscoped", "appbot-notfound",
         "cfg-scoped-bare", "cfg-unscoped-sqn", "cfg-scoped-proxy", "probe",
+    },
+    # the L7 balancer + its blackhole, the SA minter, and one runner per variable under
+    # test; oidc + tf-idbot come from the oidc-server / terraform-runner components
+    "terraform_native_join_lb": {
+        "auth", "oidc", "tf-idbot", "lb", "tarpit", "sa-minter",
+        "tf-lb-native", "tf-lb-blackhole", "tf-lb-idfile", "tf-proxy-native",
     },
 }
 
@@ -127,6 +133,9 @@ EXPECTED_BOTS = {
     # only the UNSCOPED control bot is a manifest entry: a scoped bot is a `bot` resource
     # with a `scope` (bootstrap/2-scoped-bots.yaml), which `tctl bots add` cannot create
     "scoped_app_access": {"unscoped-app-bot"},
+    # tf-admin from the terraform-runner component + one bot per natively-joining runner
+    "terraform_native_join_lb": {"tf-admin", "tf-lbnative-bot", "tf-blackhole-bot",
+                                 "tf-proxynative-bot"},
 }
 
 
@@ -273,3 +282,23 @@ def test_mounted_configs_exist(rendered):
             host = vol.split(":", 1)[0]
             assert (out / "config" / Path(host).name).is_file(), \
                 f"{name} mounts {host}, which the renderer did not write"
+
+
+def test_proxy_public_addrs_are_additive_and_fqdn_stays_first(rendered):
+    """A unit may put another hostname in front of the proxy (an L7 balancer) via
+    `proxy_public_addrs:` in its render.yaml.
+
+    Two properties are load-bearing. The proxy must RECOGNISE the extra name or it treats
+    that Host as application access and 302s (lib/web/apiserver.go), which surfaces as
+    webclient.Find failing to parse HTML rather than as a routing error. And the cluster
+    FQDN must stay FIRST, because PublicAddrs[0] is the address the proxy ADVERTISES
+    (lib/web/proxy_settings.go) — displacing it would move every client's reverse tunnel.
+    """
+    mod, out, _ = rendered
+    addrs = yaml.safe_load((out / "config" / "auth.yaml").read_text())["proxy_service"]["public_addr"]
+    assert addrs[0] == "zz1.lab.example.com:8443"
+    if mod == "terraform_native_join_lb":
+        # jinja-rendered against the cluster context + the unit's own render.yaml
+        assert addrs == ["zz1.lab.example.com:8443", "lb.lab.example.com:443"]
+    else:
+        assert addrs == ["zz1.lab.example.com:8443"]  # unchanged for every other module

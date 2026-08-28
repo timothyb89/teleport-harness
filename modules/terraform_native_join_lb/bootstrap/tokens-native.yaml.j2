@@ -1,0 +1,26 @@
+{# One kubernetes join token per natively-joining runner, so a `bot_joined` check names
+   exactly which runner reached the cluster. `type: oidc` makes teleport fetch the
+   issuer's discovery + JWKS at join time from the shared oidc-server, which serves the
+   system-trusted wildcard cert (same shape as modules/kubernetes).
+
+   The join METHOD is incidental to what this module tests: the customer uses env0, and
+   any method fails identically because the provider's failure happens after the join
+   returns. kubernetes is simply the method that needs no cloud provider here. #}
+{% for j in native_joiners %}
+{% if not loop.first %}---
+{% endif %}
+kind: token
+version: v2
+metadata:
+  name: {{ j.token }}
+spec:
+  roles: [Bot]
+  bot_name: {{ j.bot }}
+  join_method: kubernetes
+  kubernetes:
+    type: oidc
+    oidc:
+      issuer: https://oidc.{{ lab_domain }}:8443
+    allow:
+      - service_account: "default:{{ j.sa }}"
+{% endfor %}

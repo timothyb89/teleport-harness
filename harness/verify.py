@@ -14,7 +14,9 @@ deduped registry for the report.
 
 Behavior mirrors the old bash asserts exactly:
   - only FAIL fails the run; SKIP is neutral (a not-yet-satisfied soft check).
-  - log_contains is case-insensitive and SKIPs (not FAILs) when there's no match.
+  - log_contains is case-insensitive and SKIPs (not FAILs) when there's no match;
+    log_must_contain is the same match with FAIL semantics, for a line whose absence
+    means the claim is false rather than "not yet".
 """
 
 from __future__ import annotations
@@ -264,16 +266,52 @@ def _scoped_node_count(c, nodes, args):
 
 
 # --- log / audit --------------------------------------------------------------
-def _log_contains(c, nodes, args):
+def _log_match(c, args) -> tuple[str, str, str, list[str], list[int]]:
+    """Shared match for the log_contains/log_must_contain pair.
+
+    Returns (suffix, container, pattern, lines, matched-indexes). Case-insensitive like
+    `grep -iE`; match windows capped so one noisy pattern can't flood the report."""
     suffix, pattern = args[0], " ".join(args[1:])
-    cname = c.container(suffix)
     lines = c.logs(suffix).splitlines()
     rx = re.compile(pattern, re.IGNORECASE)
-    idxs = [i for i, ln in enumerate(lines) if rx.search(ln)][:5]  # cap match windows
+    return (suffix, c.container(suffix), pattern, lines,
+            [i for i, ln in enumerate(lines) if rx.search(ln)][:5])
+
+
+def _log_contains(c, nodes, args):
+    suffix, cname, pattern, lines, idxs = _log_match(c, args)
     if idxs:
         proof = _log_proof(cname, suffix, f"{cname} log matches /{pattern}/", _excerpt(lines, idxs))
         return CheckResult(PASS, f"{cname} log matches /{pattern}/", proofs=[proof])
     return CheckResult(SKIP, f"{cname} log has no match for /{pattern}/ yet")
+
+
+def _log_must_contain(c, nodes, args):
+    """log_contains with FAIL — not SKIP — when the line is absent.
+
+    `log_contains` is deliberately soft, which is right for a diagnostic that should go
+    neutral once a bug is fixed, and wrong for a line the module actually ASSERTS: a miss
+    then reads as a neutral skip and the run stays green. Both the `--globoff` and the
+    scoped-SQN traps in CLAUDE.md are that mistake. Use this when "the line is not there"
+    means the claim is false.
+
+    `log_count <suffix> ge 1 <re>` expresses the same assertion; this exists so the common
+    case reads as what it means in the report rather than as a tally, and so a miss shows
+    the tail of the log it searched instead of only naming the pattern.
+    """
+    suffix, cname, pattern, lines, idxs = _log_match(c, args)
+    if idxs:
+        proof = _log_proof(cname, suffix, f"{cname} log matches /{pattern}/", _excerpt(lines, idxs))
+        return CheckResult(PASS, f"{cname} log matches /{pattern}/", proofs=[proof])
+    # Show the tail so a miss is diagnosable from the report alone: "no match" plus the
+    # pattern says nothing about whether the service ran, crashed, or matched differently.
+    tail_from = max(0, len(lines) - 25)
+    width = len(str(len(lines)))
+    tail = [f"  [{str(i + 1).rjust(width)}] {lines[i].rstrip()}" for i in range(tail_from, len(lines))]
+    return CheckResult(FAIL, f"{cname} log has no match for /{pattern}/",
+                       proofs=[_log_proof(cname, suffix,
+                                          f"{cname} log tail (no match for /{pattern}/)",
+                                          tail or ["(log is empty)"])])
 
 
 # count comparators for log_count (test(1)-style, so no shell/markdown-special chars)
@@ -796,6 +834,7 @@ IMPLS: dict[str, Impl] = {
     "node_count": _node_count,
     "scoped_node_count": _scoped_node_count,
     "log_contains": _log_contains,
+    "log_must_contain": _log_must_contain,
     "log_count": _log_count,
     "audit_event": _audit_event,
     "bot_joined": _bot_joined,

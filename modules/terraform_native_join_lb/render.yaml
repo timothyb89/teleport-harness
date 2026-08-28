@@ -1,0 +1,49 @@
+# Render context for terraform_native_join_lb (see harness/render.py).
+#
+# terraform-runner  — builds the provider from the clone + the tf-admin identity file
+#                     (which this module reuses as its CONTROL credential source).
+# oidc-server       — mints the Kubernetes service-account JWTs the provider joins with.
+#                     `kubernetes` is used purely as a join method that needs no cloud;
+#                     the customer's env0 fails identically because the failure happens
+#                     AFTER the join (see module.yaml).
+components: [terraform-runner, oidc-server]
+
+# Terraform engine (each module owns its runner containers, so these live here — a module
+# fragment cannot see a component's render vars). Doubles as the tarpit image: it is
+# alpine, so busybox `nc` is already present and nothing extra is pulled.
+tf_image: hashicorp/terraform:1.9
+tf_bin: terraform
+
+# The L7 load balancer standing in for the customer's. nginx WITHOUT `http2 on`, so its
+# ALPN advertisement is `http/1.1` only.
+lb_image: nginx:1.27-alpine
+# Deliberately 443 rather than the cluster's ingress port. The all-ports-are-{{ port }}
+# invariant is about the proxy and its reverse tunnels; this is an extra hop reached by
+# container alias, never through the host ingress. 443 matters because the join client
+# routes on it: authjoin.LooksLikeProxy treats only 3080/443 as proxy-shaped, so any
+# other port makes the bot try (and slowly fail) auth-joining first, eating the
+# provider's 20s preflight budget. It is also what a real deployment looks like.
+lb_port: 443
+tarpit_port: 443
+
+# The proxy must RECOGNISE the LB's hostname. A Host that is not one of its public
+# addresses is treated as application access and 302-redirected to the app launcher
+# (lib/web/apiserver.go), which makes webclient.Find through the LB fail with
+# `cannot parse server find response` long before any of this module's claims are
+# reached. Real deployments satisfy this implicitly — the LB hostname IS the proxy's
+# public_addr. Here it is additive: the cluster FQDN stays first and keeps being the
+# ADVERTISED address, so nothing else in the cluster moves.
+proxy_public_addrs: ["lb.{{ lab_domain }}:{{ lb_port }}"]
+
+# One bot + token + service account per runner that joins natively, so `bot_joined` names
+# exactly which runner joined — the evidence that the failure is post-join.
+native_joiners:
+  - {bot: tf-lbnative-bot, token: tf-lbnative-token, sa: tf-lbnative-sa}
+  - {bot: tf-blackhole-bot, token: tf-blackhole-token, sa: tf-blackhole-sa}
+  - {bot: tf-proxynative-bot, token: tf-proxynative-token, sa: tf-proxynative-sa}
+
+# Roles mirror the terraform-runner's tf-admin: the provider manages bots + tokens.
+bots:
+  - {name: tf-lbnative-bot, roles: "editor,access,auditor"}
+  - {name: tf-blackhole-bot, roles: "editor,access,auditor"}
+  - {name: tf-proxynative-bot, roles: "editor,access,auditor"}

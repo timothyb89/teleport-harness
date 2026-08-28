@@ -187,6 +187,13 @@ unit-testable with a `FakeCluster` (they never were in bash). Adding a verb = an
 `harness/verify.py` `IMPLS` + a `VerbSpec` in `harness/checks.py` (a test enforces they match).
 Current verbs: `node_present`/`node_absent`/`node_scope`/`node_count`/`scoped_node_count`,
 `log_contains <suffix> <regex…>` (case-insensitive; SKIP on no match),
+`log_must_contain <suffix> <regex…>` (the same match with FAIL on no match, and the log
+TAIL as the failure proof so a miss is diagnosable from the report alone. `log_contains`
+is deliberately soft — right for a diagnostic that should go neutral once a bug is fixed,
+wrong for a line the module ASSERTS, where a miss reads as a neutral skip and the run
+stays green. Both the `--globoff` and scoped-SQN traps below are that mistake.
+`log_count … ge 1 <re>` says the same thing; this exists so the common case reads as what
+it means instead of as a tally),
 `log_count <suffix> <eq|ne|lt|le|gt|ge> <n> <regex…>` (assert the COUNT of matching log
 lines against a threshold — proves e.g. "≥3 joins drove traffic yet discovery was fetched
 ≤1×"; proof lists the matched, line-numbered lines),
@@ -343,6 +350,29 @@ out of the written cert's SUBJECT and re-uses that cert against the proxy at the
 address, RECORDING each case as observations. Also covers the out-of-scope-app denial and all
 three configs the change rejects. NEGATIVE-CONTROLLED: 24/24 on the branch, 18 FAIL / 6 PASS on
 a clone with every other scoped-app piece but not the tbot side).
+`terraform_native_join_lb` (a NEW *kind* of environment — an **L7 load balancer in the path**:
+nginx terminates TLS in front of the proxy with `http2` OFF, so its ALPN advertisement is
+`http/1.1` alone and gRPC's `h2` gets a fatal `no_application_protocol`. Written to localise a
+customer report against the Terraform provider's NATIVE MachineID joining, and the localisation
+is the finding: an ALPN-stripping LB ALONE does not break the provider. Four runners differ in
+ONE value each — via the LB / via the LB with an unreachable advertised tunnel address / via the
+LB with a tbot identity file / straight at the proxy — so each verdict brackets one variable.
+The bot's JOIN succeeds in every case (`bot_joined` on the FAILING runner's own bot, plus
+`log_count … eq 0 joining with token`), which is what rules the join method out and makes the
+customer's env0 irrelevant: `integrations/lib/embeddedtbot` hardcodes AddressKind=auth +
+AllowProxyAsAuthServer, and its `dialDirectly` never sets `ALPNConnUpgradeRequired`, so only the
+DIRECT half of `lib/tbot/client.New`'s dial pair cannot survive the LB — the reverse-tunnel half
+detects and performs the connection upgrade and rescues it. Reproducing the report therefore
+needs a SECOND fault, and the module injects it per-CONTAINER with `TELEPORT_TUNNEL_PUBLIC_ADDR`
+(the supported override of exactly the value the resolver reads) pointed at a **tarpit** that
+accepts TCP and never answers. That precision is load-bearing: gRPC only says `while waiting for
+connections to become ready` when it recorded NO connection error, so the reported error proves
+the fallback STALLED rather than failed — a refusal would read `latest balancer error: …`. The
+stall is unbounded because the tunnel dial's 30s timeout exceeds the provider's hardcoded 20s
+preflight budget (`integrations/terraform/provider/credentials.go`). Nothing here mutates the
+cluster — the proxy keeps its own `public_addr` and auth keeps its FQDN alias — so it needs no
+`exclusive: true` and composes freely. Pulls in terraform-runner + oidc-server; the join method
+is `kubernetes` purely because it needs no cloud),
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`

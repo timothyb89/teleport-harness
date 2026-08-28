@@ -295,6 +295,19 @@ binary is rebuilt every render (an uncommitted provider fix always takes — no 
 known-failing-that-flips test (see `terraform_generic_oidc`, the `must_match_fields` bug) just
 sets the not-yet-supported field and lets the resource checks FAIL until the provider is fixed.
 
+To test the provider's **native MachineID joining** (its embedded tbot) instead of an identity
+file, set `TF_TELEPORT_JOIN_METHOD`/`TF_TELEPORT_JOIN_TOKEN` on the runner and leave
+`TF_TELEPORT_IDENTITY_FILE_PATH` unset — that swaps the credential source to
+`CredentialsFromNativeMachineID` and nothing else. `kubernetes` is the cheapest method here (a
+service-account JWT from the `oidc-server` component + `KUBERNETES_TOKEN_PATH`; no cloud), and
+the method is usually not the variable anyway: the embedded bot JOINS first and builds its API
+client after, so most native-join failures happen after a successful join. Give each such runner
+its OWN bot + token so `bot_joined` names which runner reached the cluster — that check is what
+separates "the join method is broken" from "the client built afterwards is". See
+`modules/terraform_native_join_lb/`, which also shows how to put an L7 load balancer in front of
+the proxy without mutating the cluster (an nginx service with a `lb.<lab_domain>` alias; the
+proxy keeps its own `public_addr`, so no `exclusive: true`).
+
 ## Add an agent-driven test (`agent-runner` component)
 Test whether a real task is *doable* — e.g. "can someone follow this guide?" — by letting a
 locked-down AI agent drive the cluster and report what it hit. The shared

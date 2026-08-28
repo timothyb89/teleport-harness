@@ -220,11 +220,33 @@ def render_cluster(
     unit_labels.update({m: f"module:{m.name}" for m in module_dirs})
     units = [(d, comp_rv[d]) for d in component_dirs] + [(m, module_rv[m]) for m in module_dirs]
 
-    # Merge auth_env across every unit; render the base with it.
+    # Merge auth_env + extra proxy public addresses across every unit; render the base
+    # with them.
     merged_auth_env: dict = {}
-    for _, rv in units:
+    extra_public_addrs: list[str] = []
+    for unit_dir, rv in units:
         merged_auth_env.update(rv.get("auth_env", {}) or {})
-    base_ctx = {**base_ctx, "auth_env": merged_auth_env, "shared_scripts": str(SHARED_SCRIPTS)}
+        # A unit that puts ANOTHER hostname in front of the proxy (an L7 load balancer,
+        # an ingress) must add it here or every request through that hostname is treated
+        # as APPLICATION ACCESS and 302-redirected to the app launcher
+        # (lib/web/apiserver.go, `app.HasName(r, proxyAddrs)`). The symptom is not a
+        # routing error but a parse one — webclient.Find gets HTML and reports
+        # `cannot parse server find response; is "https://…" a Teleport proxy?` — so it
+        # reads as "the LB is broken" rather than "the proxy does not know this name".
+        #
+        # Entries are jinja-rendered against the cluster context + the unit's own
+        # render.yaml, so they can name `{{ lab_domain }}` / a port the unit declares.
+        # The cluster FQDN always stays FIRST in the rendered list: PublicAddrs[0] is what
+        # the proxy ADVERTISES (lib/web/proxy_settings.go), and moving that would change
+        # where every client's reverse tunnel goes.
+        addr_env = _env(TEMPLATES)
+        for a in rv.get("proxy_public_addrs", []) or []:
+            rendered = addr_env.from_string(str(a)).render(**{**base_ctx, **rv})
+            if rendered not in extra_public_addrs:
+                extra_public_addrs.append(rendered)
+    base_ctx = {**base_ctx, "auth_env": merged_auth_env,
+                "extra_proxy_public_addrs": extra_public_addrs,
+                "shared_scripts": str(SHARED_SCRIPTS)}
     compose = yaml.safe_load(_render_str(_env(TEMPLATES), "base.compose.yml.j2", base_ctx))
     compose.setdefault("services", {})
     compose.setdefault("volumes", {})

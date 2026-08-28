@@ -37,6 +37,11 @@ _SPECS: list[VerbSpec] = [
     VerbSpec("scoped_node_count", 2, 2, "scoped_node_count <scope> <n>"),
     VerbSpec("log_contains", 2, None, "log_contains <container-suffix> <regex...>"),
     VerbSpec(
+        "log_must_contain", 2, None,
+        "log_must_contain <container-suffix> <regex...>  "
+        "(like log_contains but FAILs — not SKIPs — when the line is absent)",
+    ),
+    VerbSpec(
         "log_count", 4, None,
         "log_count <container-suffix> <eq|ne|lt|le|gt|ge> <n> <regex...>  "
         "(assert the # of matching log lines)",

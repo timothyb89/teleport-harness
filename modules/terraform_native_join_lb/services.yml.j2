@@ -1,0 +1,190 @@
+{# terraform_native_join_lb: the Terraform provider's NATIVE MachineID joining, run at a
+   Teleport proxy that sits behind an ALPN-stripping L7 load balancer.
+
+   Four runners differing in ONE variable each, so a failure localises itself:
+
+     tf-lb-native     via the LB, native join, tunnel fallback pointed AT the LB
+     tf-lb-blackhole  identical, except the advertised tunnel address is a blackhole
+     tf-lb-idfile     via the LB, but authenticated with a tbot identity file (control)
+     tf-proxy-native  native join straight at the proxy, no LB in the path (control)
+
+   Nothing here mutates the cluster: the proxy keeps its own public_addr and the auth
+   container keeps its FQDN alias, so this module composes with others and needs no
+   `exclusive: true`. The "advertised tunnel address" fault is injected per-CONTAINER
+   with TELEPORT_TUNNEL_PUBLIC_ADDR, the supported client-side override of exactly the
+   value the resolver reads (api/client/webclient ProxySettings.TunnelAddr). #}
+{% set lb_host = 'lb.' ~ lab_domain %}
+{% set tarpit_host = 'tarpit.' ~ lab_domain %}
+{% set oidc_host = 'oidc.' ~ lab_domain %}
+{% set lb_addr = lb_host ~ ':' ~ lb_port %}
+services:
+  # ---- the environment under test ------------------------------------------------
+  lb:
+    image: {{ lb_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-lb
+    volumes:
+      - harness-certs:/certs:ro
+      - {{ out }}/config/lb.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      internal:
+        aliases: ["{{ lb_host }}"]
+    depends_on:
+      auth: {condition: service_healthy}
+
+  # Accepts the TCP connection and then says nothing, forever. This is what an
+  # advertised-but-unreachable tunnel address looks like to a client: not a refusal
+  # (which surfaces as a connection error) but a stall, which is why the customer's
+  # gRPC error carries no underlying cause — see the module's claims.
+  tarpit:
+    image: {{ tf_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tarpit
+    # `-lk … -e` is busybox nc's PERSISTENT server: every connection is accepted and handed
+    # to `sleep`, which holds the socket open and never writes. It must be persistent and
+    # concurrent — the client opens several connections here (the ALPN-upgrade probe, then
+    # the real dial, then gRPC's retries), and a one-shot listener would REFUSE the later
+    # ones. That matters: a refusal gives gRPC a connection error to report, which produces
+    # `latest balancer error: …` instead of the bare DeadlineExceeded being reproduced.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        echo "[tarpit] accepting and never answering on :{{ tarpit_port }}";
+        nc -lk -p {{ tarpit_port }} -e sleep 3600
+    networks:
+      internal:
+        aliases: ["{{ tarpit_host }}"]
+
+  # ---- join material ---------------------------------------------------------------
+  # The Terraform runners are alpine/terraform images, not the teleport image, so the SA
+  # JWTs are minted here (curl is guaranteed) into a volume they all mount read-only.
+  sa-minter:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-sa-minter
+    entrypoint: ["/scripts/mint-sa-tokens.sh"]
+    environment:
+      OIDC_URL: https://{{ oidc_host }}:8443
+      NAMESPACE: default
+      SERVICE_ACCOUNTS: "{{ native_joiners | map(attribute='sa') | join(' ') }}"
+    volumes:
+      - {{ scripts }}:/scripts:ro
+      - native-sa:/sa
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /sa/.ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+  # ---- runners ---------------------------------------------------------------------
+  # THE SCENARIO. Everything reaches Teleport through the ALPN-stripping LB, including
+  # the reverse-tunnel fallback (TELEPORT_TUNNEL_PUBLIC_ADDR pins it to the LB, which is
+  # what a real deployment advertises). The direct auth dial cannot survive the LB; the
+  # connection upgrade can, so this is expected to SUCCEED.
+  tf-lb-native:
+    image: {{ tf_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tf-lb-native
+    entrypoint: ["sh", "/scripts/tf-entrypoint.sh"]
+    environment:
+      TF_BIN: "{{ tf_bin }}"
+      TF_TELEPORT_ADDR: "{{ lb_addr }}"
+      TF_TELEPORT_JOIN_METHOD: "kubernetes"
+      TF_TELEPORT_JOIN_TOKEN: "{{ native_joiners[0].token }}"
+      KUBERNETES_TOKEN_PATH: "/sa/{{ native_joiners[0].sa }}.token"
+      TELEPORT_TUNNEL_PUBLIC_ADDR: "{{ lb_addr }}"
+      TF_VAR_name_prefix: "tf-lbnative"
+    volumes:
+      - {{ out }}/tf-plugins:/plugins:ro
+      - {{ shared_scripts }}/tf-entrypoint.sh:/scripts/tf-entrypoint.sh:ro
+      - {{ module_dir }}/tf:/work:ro
+      - native-sa:/sa:ro
+    networks: [internal]
+    depends_on:
+      sa-minter: {condition: service_healthy}
+      lb: {condition: service_started}
+
+  # THE CUSTOMER'S REPORT. Identical to tf-lb-native but for the one value: the tunnel
+  # address the client is told to use is a blackhole, so the fallback stalls instead of
+  # rescuing the failed direct dial and both halves of the aggregate error appear.
+  tf-lb-blackhole:
+    image: {{ tf_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tf-lb-blackhole
+    entrypoint: ["sh", "/scripts/tf-entrypoint.sh"]
+    environment:
+      TF_BIN: "{{ tf_bin }}"
+      TF_TELEPORT_ADDR: "{{ lb_addr }}"
+      TF_TELEPORT_JOIN_METHOD: "kubernetes"
+      TF_TELEPORT_JOIN_TOKEN: "{{ native_joiners[1].token }}"
+      KUBERNETES_TOKEN_PATH: "/sa/{{ native_joiners[1].sa }}.token"
+      TELEPORT_TUNNEL_PUBLIC_ADDR: "{{ tarpit_host }}:{{ tarpit_port }}"
+      TF_VAR_name_prefix: "tf-blackhole"
+    volumes:
+      - {{ out }}/tf-plugins:/plugins:ro
+      - {{ shared_scripts }}/tf-entrypoint.sh:/scripts/tf-entrypoint.sh:ro
+      - {{ module_dir }}/tf:/work:ro
+      - native-sa:/sa:ro
+    networks: [internal]
+    depends_on:
+      sa-minter: {condition: service_healthy}
+      lb: {condition: service_started}
+      tarpit: {condition: service_started}
+
+  # CONTROL 1 — same LB, same address, different CREDENTIAL SOURCE. A tbot sidecar (the
+  # terraform-runner component) holds a proxy_server connection and writes an identity
+  # file; the provider loads it and never runs an embedded bot. If this passes while
+  # tf-lb-blackhole fails, the LB is not what breaks the provider.
+  tf-lb-idfile:
+    image: {{ tf_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tf-lb-idfile
+    entrypoint: ["sh", "/scripts/tf-entrypoint.sh"]
+    environment:
+      TF_BIN: "{{ tf_bin }}"
+      TF_TELEPORT_ADDR: "{{ lb_addr }}"
+      TF_TELEPORT_IDENTITY_FILE_PATH: "/id/identity"
+      TF_VAR_name_prefix: "tf-lbidfile"
+    volumes:
+      - {{ out }}/tf-plugins:/plugins:ro
+      - {{ shared_scripts }}/tf-entrypoint.sh:/scripts/tf-entrypoint.sh:ro
+      - {{ module_dir }}/tf:/work:ro
+      - tf-identity:/id:ro
+    networks: [internal]
+    depends_on:
+      tf-idbot: {condition: service_healthy}
+      lb: {condition: service_started}
+
+  # CONTROL 2 — same native joining, no LB in the path (straight at the proxy). If this
+  # passes while tf-lb-blackhole fails, native joining itself is not what breaks.
+  tf-proxy-native:
+    image: {{ tf_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tf-proxy-native
+    entrypoint: ["sh", "/scripts/tf-entrypoint.sh"]
+    environment:
+      TF_BIN: "{{ tf_bin }}"
+      TF_TELEPORT_ADDR: "{{ fqdn }}:{{ port }}"
+      TF_TELEPORT_JOIN_METHOD: "kubernetes"
+      TF_TELEPORT_JOIN_TOKEN: "{{ native_joiners[2].token }}"
+      KUBERNETES_TOKEN_PATH: "/sa/{{ native_joiners[2].sa }}.token"
+      TF_VAR_name_prefix: "tf-proxynative"
+    volumes:
+      - {{ out }}/tf-plugins:/plugins:ro
+      - {{ shared_scripts }}/tf-entrypoint.sh:/scripts/tf-entrypoint.sh:ro
+      - {{ module_dir }}/tf:/work:ro
+      - native-sa:/sa:ro
+    networks: [internal]
+    depends_on:
+      sa-minter: {condition: service_healthy}
+
+volumes:
+  native-sa:
+  harness-certs:
+    external: true
+    name: harness-certs

@@ -1,0 +1,176 @@
+# terraform_native_join_lb: the Teleport Terraform provider's NATIVE MachineID joining
+# (join_method + join_token, i.e. the embedded tbot) against a proxy behind an
+# ALPN-stripping L7 load balancer.
+#
+# Written to reproduce a customer report: with the proxy behind an L7 LB and the env0 join
+# method, `terraform apply` fails at
+#
+#   Failed to preflight bot configuration > building identity service >
+#   initializing identity service > failed direct dial to auth server:
+#   ... "transport: authentication handshake failed: remote error: tls: no application
+#   protocol", failed dial to auth server through reverse tunnel: rpc error:
+#   code = DeadlineExceeded desc = context deadline exceeded while waiting for
+#   connections to become ready
+#
+# That string is assembled in exactly one place — lib/tbot/client/client.go's aggregate of
+# dialDirectly + dialViaProxy — which is only reachable with AddressKind=auth and an
+# AuthServerAddressMode that permits the proxy fallback. integrations/lib/embeddedtbot
+# hardcodes both, and its direct dial never sets ALPNConnUpgradeRequired (which, in
+# DialInBackground mode with no Dialer, api/client requires the caller to supply). So the
+# direct half cannot survive an ALPN-stripping LB. The tunnel half CAN — it detects and
+# performs the connection upgrade — which is why this module deliberately separates the
+# two faults instead of asserting that "an L7 LB breaks the provider".
+#
+# The join method is incidental (kubernetes here, env0 for the customer): every runner's
+# join SUCCEEDS, and the failure is in the client built afterwards. That is the finding.
+name: terraform_native_join_lb
+description: >
+  Terraform provider native MachineID joining behind an ALPN-stripping L7 load balancer
+  (nginx, HTTP/1.1 only). Localises a customer failure: the join succeeds and the direct
+  auth dial cannot survive the LB, but the connection-upgrade fallback rescues it — so the
+  reported error needs a SECOND fault, an advertised tunnel address the client cannot
+  reach. Controls prove neither the LB nor native joining is independently at fault.
+provides_feature: terraform_native_join_lb
+requires_features: []
+min_version: v17
+
+# Scaffolding: did the scenario actually happen? A failure here means the claims were
+# never exercised, not that they are false.
+preconditions: |
+  # Every runner reached the point of printing an apply exit code, so no verdict below
+  # rests on a container that never started or is still running.
+  log_must_contain tf-lb-native    TF_APPLY_EXIT=
+  log_must_contain tf-lb-blackhole TF_APPLY_EXIT=
+  log_must_contain tf-lb-idfile    TF_APPLY_EXIT=
+  log_must_contain tf-proxy-native TF_APPLY_EXIT=
+  # The LB really is in the path for the two LB runners: it logged proxied requests.
+  log_must_contain lb GET /webapi/  # nginx access log — the provider's traffic went through the LB
+
+claims:
+  - id: join-succeeds-failure-is-after
+    statement: >
+      Behind the LB the bot's JOIN succeeds; the provider fails afterwards, while building
+      its API client — so the join method is not what breaks.
+    why: >
+      **What was observed.** The failing runner's bot appears in a `bot.join` audit event,
+      and its error chain is `building identity service > initializing identity service`.
+
+      - The join runs first (`botIdentityFromToken`) and wraps its own failures as
+        `joining with token`; that string is asserted ABSENT, so this is not a join that
+        failed and got misreported.
+      - The join reaches the cluster over the same LB, via the proxy's insecure gRPC
+        endpoint, which detects and performs the ALPN connection upgrade. The client built
+        immediately afterwards does not.
+      - This is why the customer's env0 method is not the variable: any method that gets
+        past the join lands in the same place.
+    artifacts: [bootstrap/tokens-native.yaml.j2, services.yml.j2]
+    checks: |
+      bot_joined       tf-blackhole-bot kubernetes  # the failing runner's bot DID reach the cluster
+      log_must_contain tf-lb-blackhole building identity service
+      log_must_contain tf-lb-blackhole initializing identity service
+      log_count        tf-lb-blackhole eq 0 joining with token  # not a join failure
+
+  - id: direct-dial-cannot-survive-alpn-stripping
+    statement: >
+      The embedded bot's DIRECT auth dial fails against the LB with
+      `tls: no application protocol`, exactly as reported.
+    why: >
+      **What was observed.** The failing runner reports `failed direct dial to auth server`
+      with the TLS alert the customer quoted.
+
+      - nginx here terminates TLS with `http2` OFF, so it advertises `http/1.1` alone;
+        gRPC offers `h2` alone; the sets do not intersect and nginx sends a fatal
+        `no_application_protocol`.
+      - api/client treats that exact alert as the signature of an ALPN-stripping balancer
+        (`isRemoteNoALPNError`), so this is Teleport's own diagnosis of the environment,
+        not an inference from the string.
+      - A real Teleport proxy advertises `h2`, so this alert cannot come from the proxy —
+        it localises the fault to the terminating hop.
+    artifacts: [config/lb.conf.j2]
+    checks: |
+      log_must_contain tf-lb-blackhole failed direct dial to auth server
+      log_must_contain tf-lb-blackhole tls: no application protocol
+
+  - id: connection-upgrade-fallback-rescues-it
+    statement: >
+      An ALPN-stripping L7 LB alone does NOT break the provider: the reverse-tunnel
+      fallback completes the websocket connection upgrade through the LB and the apply
+      succeeds.
+    why: >
+      **The discriminating case.** `tf-lb-native` differs from the failing runner in one
+      value — where the advertised tunnel address points — and it succeeds.
+
+      - Its address AND its tunnel address are both the LB, so the fallback's
+        `/webapi/connectionupgrade` traffic really does traverse the terminating hop.
+      - Its direct dial failed for the same reason as the failing runner's; the difference
+        is only that the second dial had somewhere to go.
+      - **Consequence for the report:** the customer's environment must carry a second
+        fault beyond "the proxy is behind an L7 LB", because that alone reproduces a
+        SUCCESS here.
+    artifacts: [config/lb.conf.j2, services.yml.j2]
+    checks: |
+      log_must_contain tf-lb-native TF_APPLY_EXIT=0
+      resource_present bot/tf-lbnative-probe-bot
+      resource_present token/tf-lbnative-probe-token
+
+  - id: unreachable-tunnel-address-reproduces-the-report
+    statement: >
+      With the advertised tunnel address unreachable, both dials fail and the provider
+      emits the customer's error verbatim, including the bare DeadlineExceeded with no
+      underlying cause.
+    why: >
+      **What the second half of the error means.** gRPC only says
+      `while waiting for connections to become ready` when it recorded NO connection error
+      — the channel sat in CONNECTING until the deadline.
+
+      - So the tunnel dial STALLED rather than failing; a refusal or a TLS error would have
+        produced `latest balancer error: …` instead.
+      - The tarpit models that precisely: it accepts the TCP connection and never answers.
+      - The deadline is the provider's own hardcoded 20s preflight budget, which is
+        shorter than the 30s tunnel dial timeout — so a stalled fallback can only ever
+        surface as this uninformative error.
+      - **Consequence for the report:** ask what the customer's proxy ADVERTISES
+        (`public_addr` / `tunnel_public_addr`) and whether the runner can reach it — not
+        just about their LB.
+    artifacts: [services.yml.j2]
+    checks: |
+      log_must_contain tf-lb-blackhole failed dial to auth server through reverse tunnel  # the second half of the aggregate: the fallback was tried and did not connect
+      log_must_contain tf-lb-blackhole while waiting for connections to become ready  # gRPC recorded NO connection error — the dial stalled rather than failed
+      log_must_contain tf-lb-blackhole TF_APPLY_EXIT=1
+
+  - id: identity-file-workaround-is-unaffected
+    statement: >
+      The recommended workaround holds: at the SAME address through the SAME LB, a
+      provider authenticated from a tbot-written identity file applies successfully.
+    why: >
+      **Control — one variable.** `tf-lb-idfile` differs from the failing runner only in
+      credential source.
+
+      - It runs no embedded bot, so it never touches
+        `lib/tbot/client`'s auth-address dial pair.
+      - Its client is built by the provider's ordinary path, whose connect fan-out includes
+        `tlsRoutingWithConnUpgradeConnect` and therefore handles the LB.
+      - The sidecar tbot itself uses `proxy_server`, the option embeddedtbot cannot
+        express — which is the shape of the eventual fix.
+    artifacts: [services.yml.j2]
+    checks: |
+      log_must_contain tf-lb-idfile TF_APPLY_EXIT=0
+      resource_present bot/tf-lbidfile-probe-bot
+
+  - id: native-joining-is-fine-without-the-lb
+    statement: >
+      Native joining is not independently at fault: the same provider, same join method,
+      pointed straight at the proxy, applies successfully.
+    why: >
+      **Control — the other variable.** `tf-proxy-native` removes the LB and changes
+      nothing else.
+
+      - Its direct auth dial also fails (it is talking to a proxy, not an auth server),
+        so it exercises the same fallback path — which works, because the proxy advertises
+        ALPN normally.
+      - Together with the previous claim this brackets the failure: neither the LB alone
+        nor native joining alone reproduces it.
+    artifacts: [services.yml.j2]
+    checks: |
+      log_must_contain tf-proxy-native TF_APPLY_EXIT=0
+      resource_present bot/tf-proxynative-probe-bot

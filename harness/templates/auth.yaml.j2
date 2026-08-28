@@ -25,7 +25,12 @@ auth_service:
 proxy_service:
   enabled: "yes"
   web_listen_addr: 0.0.0.0:{{ port }}
-  public_addr: ["{{ fqdn }}:{{ port }}"]
+  {# The cluster FQDN stays FIRST — PublicAddrs[0] is the address the proxy ADVERTISES
+     (lib/web/proxy_settings.go setProxyPublicAddressesSettings), so extra entries must
+     never displace it. Extras come from units declaring `proxy_public_addrs:` in their
+     render.yaml, i.e. another hostname in front of the proxy; without them the proxy
+     treats that Host as application access and 302s. #}
+  public_addr: ["{{ fqdn }}:{{ port }}"{% for a in extra_proxy_public_addrs | default([]) %}, "{{ a }}"{% endfor %}]
   https_keypairs:
     - key_file: /certs/wildcard.key
       cert_file: /certs/wildcard.crt
