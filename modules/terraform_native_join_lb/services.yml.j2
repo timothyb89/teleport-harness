@@ -67,7 +67,7 @@ services:
     environment:
       OIDC_URL: https://{{ oidc_host }}:8443
       NAMESPACE: default
-      SERVICE_ACCOUNTS: "{{ native_joiners | map(attribute='sa') | join(' ') }}"
+      SERVICE_ACCOUNTS: "{{ joiners.values() | map(attribute='sa') | join(' ') }}"
     volumes:
       - {{ scripts }}:/scripts:ro
       - native-sa:/sa
@@ -95,8 +95,8 @@ services:
       TF_BIN: "{{ tf_bin }}"
       TF_TELEPORT_ADDR: "{{ lb_addr }}"
       TF_TELEPORT_JOIN_METHOD: "kubernetes"
-      TF_TELEPORT_JOIN_TOKEN: "{{ native_joiners[0].token }}"
-      KUBERNETES_TOKEN_PATH: "/sa/{{ native_joiners[0].sa }}.token"
+      TF_TELEPORT_JOIN_TOKEN: "{{ joiners['lb-native'].token }}"
+      KUBERNETES_TOKEN_PATH: "/sa/{{ joiners['lb-native'].sa }}.token"
       TELEPORT_TUNNEL_PUBLIC_ADDR: "{{ lb_addr }}"
       TF_VAR_name_prefix: "tf-lbnative"
     volumes:
@@ -121,8 +121,8 @@ services:
       TF_BIN: "{{ tf_bin }}"
       TF_TELEPORT_ADDR: "{{ lb_addr }}"
       TF_TELEPORT_JOIN_METHOD: "kubernetes"
-      TF_TELEPORT_JOIN_TOKEN: "{{ native_joiners[1].token }}"
-      KUBERNETES_TOKEN_PATH: "/sa/{{ native_joiners[1].sa }}.token"
+      TF_TELEPORT_JOIN_TOKEN: "{{ joiners['lb-blackhole'].token }}"
+      KUBERNETES_TOKEN_PATH: "/sa/{{ joiners['lb-blackhole'].sa }}.token"
       TELEPORT_TUNNEL_PUBLIC_ADDR: "{{ tarpit_host }}:{{ tarpit_port }}"
       TF_VAR_name_prefix: "tf-blackhole"
     volumes:
@@ -171,8 +171,8 @@ services:
       TF_BIN: "{{ tf_bin }}"
       TF_TELEPORT_ADDR: "{{ fqdn }}:{{ port }}"
       TF_TELEPORT_JOIN_METHOD: "kubernetes"
-      TF_TELEPORT_JOIN_TOKEN: "{{ native_joiners[2].token }}"
-      KUBERNETES_TOKEN_PATH: "/sa/{{ native_joiners[2].sa }}.token"
+      TF_TELEPORT_JOIN_TOKEN: "{{ joiners['proxy-native'].token }}"
+      KUBERNETES_TOKEN_PATH: "/sa/{{ joiners['proxy-native'].sa }}.token"
       TF_VAR_name_prefix: "tf-proxynative"
     volumes:
       - {{ out }}/tf-plugins:/plugins:ro
@@ -198,8 +198,8 @@ services:
       TF_BIN: "{{ tf_bin }}"
       TF_TELEPORT_ADDR: "{{ fqdn }}:{{ port }}"
       TF_TELEPORT_JOIN_METHOD: "kubernetes"
-      TF_TELEPORT_JOIN_TOKEN: "{{ native_joiners[3].token }}"
-      KUBERNETES_TOKEN_PATH: "/sa/{{ native_joiners[3].sa }}.token"
+      TF_TELEPORT_JOIN_TOKEN: "{{ joiners['proxy-blackhole'].token }}"
+      KUBERNETES_TOKEN_PATH: "/sa/{{ joiners['proxy-blackhole'].sa }}.token"
       TELEPORT_TUNNEL_PUBLIC_ADDR: "{{ tarpit_host }}:{{ tarpit_port }}"
       TF_VAR_name_prefix: "tf-proxyblackhole"
     volumes:
@@ -211,6 +211,72 @@ services:
     depends_on:
       sa-minter: {condition: service_healthy}
       tarpit: {condition: service_started}
+
+  # ---- evaluating the candidate FIXES, on the real code path ------------------------
+  # These three are REAL tbot, not the provider, because tbot can already express what the
+  # provider cannot. tbot and embeddedtbot share lib/tbot/client.New and lib/tbot/bot's
+  # buildResolver, and `proxy_server` / TBOT_USE_PROXY_ADDR are the exact two inputs a fix
+  # would have to plumb — so these answer "which fix works" before the fix is written.
+  # All three see the SAME poisoned advertised tunnel address as tf-lb-blackhole.
+
+  # FIX CANDIDATE 1 — `proxy_server` alone. Skips the direct dial (so the ALPN alert is
+  # gone), but buildResolver still uses a WebClientResolver, so the tunnel target is still
+  # the ADVERTISED address. Expected to still fail to produce an identity.
+  tbot-proxy:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tbot-proxy
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    environment:
+      KUBERNETES_TOKEN_PATH: "/sa/{{ joiners['tbot-proxy'].sa }}.token"
+      TELEPORT_TUNNEL_PUBLIC_ADDR: "{{ tarpit_host }}:{{ tarpit_port }}"
+    volumes:
+      - {{ out }}/config/tbot-proxy.yaml:/etc/tbot.yaml:ro
+      - native-sa:/sa:ro
+    networks: [internal]
+    depends_on:
+      sa-minter: {condition: service_healthy}
+      lb: {condition: service_started}
+      tarpit: {condition: service_started}
+
+  # FIX CANDIDATE 2 — `proxy_server` PLUS a static proxy address. buildResolver returns a
+  # StaticResolver over the CONFIGURED address (and forces multiplex mode), so the poisoned
+  # advertised address is never consulted. Expected to SUCCEED.
+  tbot-static:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tbot-static
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    environment:
+      KUBERNETES_TOKEN_PATH: "/sa/{{ joiners['tbot-static'].sa }}.token"
+      TELEPORT_TUNNEL_PUBLIC_ADDR: "{{ tarpit_host }}:{{ tarpit_port }}"
+      TBOT_USE_PROXY_ADDR: "yes"
+    volumes:
+      - {{ out }}/config/tbot-static.yaml:/etc/tbot.yaml:ro
+      - native-sa:/sa:ro
+    networks: [internal]
+    depends_on:
+      sa-minter: {condition: service_healthy}
+      lb: {condition: service_started}
+      tarpit: {condition: service_started}
+
+  # NEGATIVE — a static proxy address WITHOUT the proxy address kind, i.e. what wiring
+  # TBOT_USE_PROXY_ADDR into today's embeddedtbot would produce. Must be refused at startup.
+  tbot-authkind:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tbot-authkind
+    command: [tbot, start, -c, /etc/tbot.yaml]
+    environment:
+      KUBERNETES_TOKEN_PATH: "/sa/{{ joiners['tbot-proxy'].sa }}.token"
+      TBOT_USE_PROXY_ADDR: "yes"
+    volumes:
+      - {{ out }}/config/tbot-authkind.yaml:/etc/tbot.yaml:ro
+      - native-sa:/sa:ro
+    networks: [internal]
+    depends_on:
+      sa-minter: {condition: service_healthy}
+      lb: {condition: service_started}
 
 volumes:
   native-sa:

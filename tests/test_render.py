@@ -59,6 +59,8 @@ EXPECTED_SERVICES = {
         "auth", "oidc", "tf-idbot", "lb", "tarpit", "sa-minter",
         "tf-lb-native", "tf-lb-blackhole", "tf-lb-idfile", "tf-proxy-native",
         "tf-proxy-blackhole",
+        # real tbot standing in for a FIXED provider, to evaluate the candidate fixes
+        "tbot-proxy", "tbot-static", "tbot-authkind",
     },
 }
 
@@ -136,7 +138,8 @@ EXPECTED_BOTS = {
     "scoped_app_access": {"unscoped-app-bot"},
     # tf-admin from the terraform-runner component + one bot per natively-joining runner
     "terraform_native_join_lb": {"tf-admin", "tf-lbnative-bot", "tf-blackhole-bot",
-                                 "tf-proxynative-bot", "tf-proxyblackhole-bot"},
+                                 "tf-proxynative-bot", "tf-proxyblackhole-bot",
+                                 "tbot-proxy-bot", "tbot-static-bot"},
 }
 
 

@@ -1,0 +1,20 @@
+{# Real tbot standing in for a FIXED provider that supports `proxy_server`.
+
+   This is not an approximation. `proxy_server` sets AddressKind=proxy, which is the ONE
+   input that makes lib/tbot/client.New short-circuit to dialViaProxy and skip the direct
+   auth dial entirely — and embeddedtbot would reach the same code with the same value.
+   So this container answers "is `proxy_server` alone enough?" against the real code path,
+   before the option exists on the provider.
+
+   Its advertised tunnel address is poisoned by TELEPORT_TUNNEL_PUBLIC_ADDR on the
+   container, which is the same value webclient.ProxySettings.TunnelAddr would return from
+   a proxy whose first public_addr the client cannot reach. #}
+version: v2
+proxy_server: lb.{{ lab_domain }}:{{ lb_port }}
+onboarding:
+  join_method: kubernetes
+  token: {{ joiners['tbot-proxy'].token }}
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}

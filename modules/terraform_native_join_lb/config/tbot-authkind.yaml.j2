@@ -1,0 +1,22 @@
+{# The dependency between the two candidate fixes, made observable.
+
+   `auth_server:` (AddressKind=auth) is what embeddedtbot hardcodes TODAY. Combined with
+   TBOT_USE_PROXY_ADDR=yes this must be REFUSED at startup by
+   connection.Config.Validate(): "static proxy address requested (e.g. via the
+   TBOT_USE_PROXY_ADDR environment variable) but no explicit proxy address was configured".
+
+   That refusal is the point: a static proxy address is not independently shippable. Wiring
+   TBOT_USE_PROXY_ADDR through embeddedtbot without also letting the caller declare the
+   address a PROXY would make the provider fail to start rather than fix anything.
+
+   The token deliberately does not exist — validation fails before any join is attempted,
+   and naming a real token would risk a successful join muddying the result. #}
+version: v2
+auth_server: lb.{{ lab_domain }}:{{ lb_port }}
+onboarding:
+  join_method: kubernetes
+  token: tbot-authkind-token-does-not-exist
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}

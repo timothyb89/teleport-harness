@@ -167,6 +167,72 @@ claims:
       log_count        tf-proxy-blackhole eq 0 tls: no application protocol  # the ALPN alert is absent without the LB — the discriminating check
       log_must_contain tf-proxy-blackhole TF_APPLY_EXIT=1
 
+  - id: proxy-server-alone-is-not-enough
+    statement: >
+      Giving the provider a `proxy_server` option would remove the ALPN alert but NOT make
+      it reach the cluster when the advertised tunnel address is unreachable — so on its own
+      it is not a fix for this environment.
+    why: >
+      **Evaluated on the real code path, before the option exists.** `tbot-proxy` is real
+      tbot with `proxy_server` and the same poisoned advertised address as the failing
+      provider runner. tbot and embeddedtbot share `lib/tbot/client.New` and
+      `lib/tbot/bot`'s `buildResolver`, and `proxy_server` sets the one input that matters
+      (`AddressKind=proxy`).
+
+      - The alert is gone: `AddressKind=proxy` short-circuits to `dialViaProxy`, so the
+        direct auth dial never happens. Asserted as an absence.
+      - The bot still JOINS, so this is again a post-join failure.
+      - But no identity is ever written, because `buildResolver` still returns a
+        `WebClientResolver` — the tunnel target is still the ADVERTISED address.
+      - **It also gets quieter, not clearer:** with `proxy_server`, `client.New` returns a
+        client WITHOUT testing it (the documented degraded-mode behaviour), so the failure
+        no longer surfaces as the aggregate dial error but later, on first use.
+    artifacts: [config/tbot-proxy.yaml.j2, services.yml.j2]
+    checks: |
+      bot_joined     tbot-proxy-bot kubernetes  # `proxy_server` still joins fine through the LB
+      log_count      tbot-proxy eq 0 tls: no application protocol  # the direct dial is gone, so the alert is too
+      no_output_file tbot-proxy /out/id/identity  # ...but it still never reaches the cluster
+
+  - id: static-proxy-address-is-what-fixes-it
+    statement: >
+      `proxy_server` PLUS a static proxy address does reach the cluster — same LB, same
+      unreachable advertised address, identity written.
+    why: >
+      **The discriminating pair.** `tbot-static` differs from `tbot-proxy` by one
+      environment variable, `TBOT_USE_PROXY_ADDR=yes`.
+
+      - That sets `StaticProxyAddress`, which makes `buildResolver` return a
+        `StaticResolver` over the address the USER configured rather than a
+        `WebClientResolver` over the one the proxy advertises — so the poisoned value is
+        never consulted.
+      - It also forces multiplex mode, which is what keeps the connection-upgrade branch of
+        `AuthDialerThroughProxy` reachable.
+      - The written identity is then used against the cluster
+        (`identity_authorized`), so this is a working client and not merely a file.
+    artifacts: [config/tbot-static.yaml.j2, services.yml.j2]
+    checks: |
+      bot_joined          tbot-static-bot kubernetes
+      output_file         tbot-static /out/id/identity
+      identity_authorized tbot-static /out/id/identity  # the identity actually works against auth
+
+  - id: static-proxy-address-requires-the-proxy-address-kind
+    statement: >
+      A static proxy address is not independently shippable: without the proxy address kind
+      it is refused at startup, so the two candidate fixes must be plumbed together.
+    why: >
+      **Why the ordering is forced.** `tbot-authkind` is `auth_server:` — what embeddedtbot
+      hardcodes today — plus `TBOT_USE_PROXY_ADDR=yes`.
+
+      - `connection.Config.Validate()` rejects the combination outright, naming the env var.
+      - So wiring `TBOT_USE_PROXY_ADDR` into today's embeddedtbot would make the provider
+        fail to start rather than fix anything.
+      - Taken with the two claims above: `proxy_server` is necessary but not sufficient, the
+        static address is what closes the gap, and it cannot land first.
+    artifacts: [config/tbot-authkind.yaml.j2]
+    checks: |
+      log_must_contain tbot-authkind static proxy address requested
+      no_output_file   tbot-authkind /out/id/identity
+
   - id: identity-file-workaround-is-unaffected
     statement: >
       The recommended workaround holds: at the SAME address through the SAME LB, a

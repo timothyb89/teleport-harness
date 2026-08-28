@@ -1,0 +1,17 @@
+{# Identical to tbot-proxy.yaml apart from the join token. The variable under test is not
+   in this file: it is TBOT_USE_PROXY_ADDR=yes on the container, which sets
+   connection.Config.StaticProxyAddress (lib/tbot/config/config.go shouldUseProxyAddr) and
+   makes lib/tbot/bot's buildResolver return a StaticResolver over the CONFIGURED address
+   instead of a WebClientResolver over the ADVERTISED one.
+
+   So this pair isolates exactly the second question: given `proxy_server`, does the static
+   proxy address change the outcome when the advertised address is unreachable? #}
+version: v2
+proxy_server: lb.{{ lab_domain }}:{{ lb_port }}
+onboarding:
+  join_method: kubernetes
+  token: {{ joiners['tbot-static'].token }}
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}

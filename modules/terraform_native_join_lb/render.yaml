@@ -35,13 +35,19 @@ tarpit_port: 443
 # ADVERTISED address, so nothing else in the cluster moves.
 proxy_public_addrs: ["lb.{{ lab_domain }}:{{ lb_port }}"]
 
-# One bot + token + service account per runner that joins natively, so `bot_joined` names
-# exactly which runner joined — the evidence that the failure is post-join.
-native_joiners:
-  - {bot: tf-lbnative-bot, token: tf-lbnative-token, sa: tf-lbnative-sa}
-  - {bot: tf-blackhole-bot, token: tf-blackhole-token, sa: tf-blackhole-sa}
-  - {bot: tf-proxynative-bot, token: tf-proxynative-token, sa: tf-proxynative-sa}
-  - {bot: tf-proxyblackhole-bot, token: tf-proxyblackhole-token, sa: tf-proxyblackhole-sa}
+# One bot + token + service account per runner that joins with a delegated method, keyed by
+# the runner it belongs to, so `bot_joined` names exactly which runner reached the cluster.
+# The `tbot-*` entries belong to the REAL-tbot runners that stand in for a FIXED provider:
+# tbot and embeddedtbot share lib/tbot/client and lib/tbot/bot's buildResolver, so tbot with
+# `proxy_server` exercises precisely the code path a `proxy_server` option would give the
+# provider — which lets the fix be evaluated before it is written.
+joiners:
+  lb-native:        {bot: tf-lbnative-bot,        token: tf-lbnative-token,        sa: tf-lbnative-sa}
+  lb-blackhole:     {bot: tf-blackhole-bot,       token: tf-blackhole-token,       sa: tf-blackhole-sa}
+  proxy-native:     {bot: tf-proxynative-bot,     token: tf-proxynative-token,     sa: tf-proxynative-sa}
+  proxy-blackhole:  {bot: tf-proxyblackhole-bot,  token: tf-proxyblackhole-token,  sa: tf-proxyblackhole-sa}
+  tbot-proxy:       {bot: tbot-proxy-bot,         token: tbot-proxy-token,         sa: tbot-proxy-sa}
+  tbot-static:      {bot: tbot-static-bot,        token: tbot-static-token,        sa: tbot-static-sa}
 
 # Roles mirror the terraform-runner's tf-admin: the provider manages bots + tokens.
 bots:
@@ -49,3 +55,5 @@ bots:
   - {name: tf-blackhole-bot, roles: "editor,access,auditor"}
   - {name: tf-proxynative-bot, roles: "editor,access,auditor"}
   - {name: tf-proxyblackhole-bot, roles: "editor,access,auditor"}
+  - {name: tbot-proxy-bot, roles: "editor,access,auditor"}
+  - {name: tbot-static-bot, roles: "editor,access,auditor"}

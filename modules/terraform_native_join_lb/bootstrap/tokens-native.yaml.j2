@@ -6,7 +6,7 @@
    The join METHOD is incidental to what this module tests: the customer uses env0, and
    any method fails identically because the provider's failure happens after the join
    returns. kubernetes is simply the method that needs no cloud provider here. #}
-{% for j in native_joiners %}
+{% for j in joiners.values() %}
 {% if not loop.first %}---
 {% endif %}
 kind: token
