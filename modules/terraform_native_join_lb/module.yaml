@@ -43,6 +43,7 @@ preconditions: |
   log_must_contain tf-lb-blackhole TF_APPLY_EXIT=
   log_must_contain tf-lb-idfile    TF_APPLY_EXIT=
   log_must_contain tf-proxy-native TF_APPLY_EXIT=
+  log_must_contain tf-proxy-blackhole TF_APPLY_EXIT=
   # The LB really is in the path for the two LB runners: it logged proxied requests.
   log_must_contain lb GET /webapi/  # nginx access log — the provider's traffic went through the LB
 
@@ -137,6 +138,34 @@ claims:
       log_must_contain tf-lb-blackhole failed dial to auth server through reverse tunnel  # the second half of the aggregate: the fallback was tried and did not connect
       log_must_contain tf-lb-blackhole while waiting for connections to become ready  # gRPC recorded NO connection error — the dial stalled rather than failed
       log_must_contain tf-lb-blackhole TF_APPLY_EXIT=1
+
+  - id: neither-fault-alone-reproduces-the-pair
+    statement: >
+      The two faults are JOINTLY necessary. With the unreachable advertised tunnel address
+      but no LB in the path, the apply still fails — but `tls: no application protocol`
+      never appears, so that half of the report is attributable to the LB alone.
+    why: >
+      **Completing the 2x2.** The four native-join runners cross (LB / no LB) with
+      (reachable advertised address / blackhole), and only one cell is the customer's.
+
+      - LB + reachable = SUCCESS (`tf-lb-native`); no LB + reachable = SUCCESS
+        (`tf-proxy-native`); no LB + blackhole = FAILS, but with a different first half
+        (this claim); LB + blackhole = the reported pair (`tf-lb-blackhole`).
+      - Here the direct dial reaches a REAL proxy, which advertises `h2` normally, so it
+        fails for an ordinary reason (it is not an auth server) rather than with an alert.
+      - The second half is identical to the report, because the stalled fallback does not
+        care what the first dial's error was.
+      - **Why the first dial's SPEED matters, not just its failure:** the fallback in
+        `lib/tbot/client.New` is sequential and error-driven — `dialDirectly`, then `Ping`,
+        and only on a returned error is `dialViaProxy` tried, sharing the same 20s budget.
+        A direct dial that STALLED would consume the budget and leave the fallback nothing.
+        Both runners get their fallback attempted only because their first dial fails fast.
+    artifacts: [services.yml.j2]
+    checks: |
+      log_must_contain tf-proxy-blackhole failed direct dial to auth server
+      log_must_contain tf-proxy-blackhole while waiting for connections to become ready  # same second half as the report
+      log_count        tf-proxy-blackhole eq 0 tls: no application protocol  # the ALPN alert is absent without the LB — the discriminating check
+      log_must_contain tf-proxy-blackhole TF_APPLY_EXIT=1
 
   - id: identity-file-workaround-is-unaffected
     statement: >

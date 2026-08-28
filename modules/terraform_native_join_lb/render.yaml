@@ -41,9 +41,11 @@ native_joiners:
   - {bot: tf-lbnative-bot, token: tf-lbnative-token, sa: tf-lbnative-sa}
   - {bot: tf-blackhole-bot, token: tf-blackhole-token, sa: tf-blackhole-sa}
   - {bot: tf-proxynative-bot, token: tf-proxynative-token, sa: tf-proxynative-sa}
+  - {bot: tf-proxyblackhole-bot, token: tf-proxyblackhole-token, sa: tf-proxyblackhole-sa}
 
 # Roles mirror the terraform-runner's tf-admin: the provider manages bots + tokens.
 bots:
   - {name: tf-lbnative-bot, roles: "editor,access,auditor"}
   - {name: tf-blackhole-bot, roles: "editor,access,auditor"}
   - {name: tf-proxynative-bot, roles: "editor,access,auditor"}
+  - {name: tf-proxyblackhole-bot, roles: "editor,access,auditor"}

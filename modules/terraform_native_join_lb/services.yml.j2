@@ -183,6 +183,35 @@ services:
     depends_on:
       sa-minter: {condition: service_healthy}
 
+  # THE OTHER FAULT, ISOLATED. The unreachable advertised tunnel address WITHOUT the LB,
+  # completing the 2x2: this is what "their proxy advertises something the runner cannot
+  # reach" looks like on its own. It still fails — but its direct dial reaches a real
+  # Teleport proxy, which advertises ALPN normally, so the first half of the aggregate is
+  # a DIFFERENT error and `tls: no application protocol` never appears. That is what makes
+  # the two faults jointly necessary for the reported pair rather than either sufficient.
+  tf-proxy-blackhole:
+    image: {{ tf_image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-tf-proxy-blackhole
+    entrypoint: ["sh", "/scripts/tf-entrypoint.sh"]
+    environment:
+      TF_BIN: "{{ tf_bin }}"
+      TF_TELEPORT_ADDR: "{{ fqdn }}:{{ port }}"
+      TF_TELEPORT_JOIN_METHOD: "kubernetes"
+      TF_TELEPORT_JOIN_TOKEN: "{{ native_joiners[3].token }}"
+      KUBERNETES_TOKEN_PATH: "/sa/{{ native_joiners[3].sa }}.token"
+      TELEPORT_TUNNEL_PUBLIC_ADDR: "{{ tarpit_host }}:{{ tarpit_port }}"
+      TF_VAR_name_prefix: "tf-proxyblackhole"
+    volumes:
+      - {{ out }}/tf-plugins:/plugins:ro
+      - {{ shared_scripts }}/tf-entrypoint.sh:/scripts/tf-entrypoint.sh:ro
+      - {{ module_dir }}/tf:/work:ro
+      - native-sa:/sa:ro
+    networks: [internal]
+    depends_on:
+      sa-minter: {condition: service_healthy}
+      tarpit: {condition: service_started}
+
 volumes:
   native-sa:
   harness-certs:
