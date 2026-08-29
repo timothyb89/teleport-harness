@@ -1,0 +1,87 @@
+{# One trio per profile (see render.yaml): a shaper that OWNS a network namespace, a tbot that
+   joins that namespace and serves the Workload API on a unix socket, and a probe that consumes
+   the socket with a real SPIFFE client.
+
+   WHY THE SHAPER OWNS THE NAMESPACE. The obvious arrangement — shape the tbot container from a
+   sidecar that joins ITS namespace — races: docker starts both at once, tbot joins the cluster
+   in well under a second on an unshaped link, and the qdisc can land after the identity it was
+   supposed to delay was already issued. Inverting it removes the race entirely: the shaper is
+   `service_healthy` only once `tc` reports the qdisc installed, and tbot does not start until
+   then, so its first packet cannot predate the shaping. The cost is that tbot has no network
+   identity of its own, which is free here — it only dials out.
+
+   The teleport image has no iproute2 (see lib/build.sh), hence a separate small image rather
+   than a wrapper entrypoint on the tbot container itself. #}
+services:
+{% for p in profiles %}
+  # ---- profile "{{ p.name }}": {{ p.desc }} ----------------------------------------------
+  # Installs the qdisc, then holds the namespace open for the tbot that joins it.
+  wi-shaper-{{ p.name }}:
+    image: {{ shaper_image }}
+    platform: {{ shaper_platform }}
+    container_name: {{ cluster_id }}-wi-shaper-{{ p.name }}
+    # tc needs CAP_NET_ADMIN. This works under lima's ROOTLESS docker because the container's
+    # netns is owned by the user namespace the capability is granted in — verified on this host.
+    cap_add: [NET_ADMIN]
+    entrypoint: ["/bin/sh", "/scripts/shape.sh"]
+    environment:
+      NETEM: "{{ p.netem }}"
+    volumes:
+      - {{ scripts }}:/scripts:ro
+    networks: [internal]
+    # Healthy only once the qdisc is in place (or deliberately skipped), which is what makes
+    # the ordering above a guarantee rather than a hope.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/shaped"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 2s
+
+  # The service under test. Identical across profiles — same image, same config, same command;
+  # the ONLY thing that varies is the namespace it is placed in, so a difference in outcome can
+  # only be the link.
+  wi-tbot-{{ p.name }}:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-wi-tbot-{{ p.name }}
+    # `-d` is load-bearing, not noise: the two lines that bracket the wait under test are
+    # DebugContext calls, and tbot configures its logger from this GLOBAL flag before the YAML
+    # is loaded (tool/tbot/main.go setupLogger(globalCfg.Debug, ...)), so a `debug: true` in the
+    # config file does NOT raise the log level. Without it checks.py can measure nothing.
+    command: [tbot, start, -d, -c, /etc/tbot.yaml, "--token={{ p.token }}", "--join-method=token"]
+    volumes:
+      - {{ out }}/config/tbot.yaml:/etc/tbot.yaml:ro
+      - sockets-{{ p.name }}:/sockets
+    # Joins the shaper's (already shaped) namespace. Mutually exclusive with `networks:`.
+    network_mode: "service:wi-shaper-{{ p.name }}"
+    depends_on:
+      auth: {condition: service_healthy}
+      wi-shaper-{{ p.name }}: {condition: service_healthy}
+
+  # A real SPIFFE Workload API client, not a liveness check: `tbot spiffe-inspect` performs the
+  # full FetchX509Context/FetchJWTSVIDs exchange, so a served SVID proves the service is usable
+  # rather than merely listening. Deliberately OUTSIDE the shaped namespace — it talks over a
+  # unix socket, and keeping it unshaped means the measured wait is tbot's, not the probe's.
+  wi-probe-{{ p.name }}:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-wi-probe-{{ p.name }}
+    entrypoint: ["/bin/bash", "/scripts/probe.sh"]
+    environment:
+      CASE: "{{ p.name }}"
+      SOCKET: "unix:///sockets/workload.sock"
+      DEADLINE: "{{ probe_deadline }}"
+    volumes:
+      - {{ scripts }}:/scripts:ro
+      - sockets-{{ p.name }}:/sockets
+    networks: [internal]
+    depends_on:
+      wi-tbot-{{ p.name }}: {condition: service_started}
+{% endfor %}
+
+volumes:
+{% for p in profiles %}
+  # Per-profile, so every tbot can use the same config file and the same socket path.
+  sockets-{{ p.name }}:
+{% endfor %}

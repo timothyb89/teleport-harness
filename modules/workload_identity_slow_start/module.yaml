@@ -1,0 +1,117 @@
+# workload_identity_slow_start — tbot's workload-identity-api must survive a SLOW link at startup.
+#
+# THE FIX UNDER TEST (lib/tbot/services/workloadidentity/workload_api.go, setup()):
+# the service used to bound its wait for the impersonated service identity with a hardcoded
+#
+#     case <-time.After(10 * time.Second):
+#         return trace.BadParameter("timeout waiting for identity to be ready")
+#
+# On a constrained uplink a customer's initial identity issuance took longer than that, so the
+# service failed setup and tbot exited — on a network that was slow but perfectly usable. The fix
+# deletes the timer, leaving ctx cancellation as the only way out of the wait, and adds two DEBUG
+# lines ("Waiting for initial service identity" / "Received initial service identity") that
+# bracket it.
+#
+# WHAT THIS MODULE DOES: runs the same tbot config over links of different quality and asks
+# whether the Workload API ends up serving an X509-SVID. The link is degraded with `tc netem`
+# inside the container's own network namespace — EGRESS shaping, which is what the customer
+# actually had (a saturated outgoing queue with tbot's traffic unprioritized), not a symmetric
+# "slow internet" abstraction. A shaper sidecar OWNS the namespace and tbot joins it
+# (network_mode: service:), so the qdisc is provably in place before tbot's first packet.
+#
+# The discriminating profile is `slow`: it is shaped hard enough that tbot's own logs show the
+# initial identity wait exceeding the 10s the deleted timer allowed, yet the Workload API still
+# comes up and a real SPIFFE client (`tbot spiffe-inspect`) gets an SVID out of it. `fast` is the
+# unshaped control that proves the rig works and that the wait is normally sub-second, so the
+# slow profile's verdict cannot be explained by the setup being broken in general.
+#
+# NEGATIVE-CONTROLLED, live, on `~/projects/core-d` @ 634c878436dd:
+#   with the fix     13 PASS / 0 FAIL   fast waits 0.12s, slow waits 21.56s and still serves
+#   without it        9 PASS / 4 FAIL   slow: no SVID, 4x "timeout waiting for identity to be ready"
+# Only the SHAPED profile flips; every `fast` check passes on both builds, so the failure cannot
+# be "the module doesn't work on that binary". Every PRECONDITION passes on both too, so the
+# pre-fix run reads as DISPROVEN rather than UNTESTED — the run really did exercise the claim
+# and the claim really is false there. Timings reproduced within 0.02s across runs.
+#
+# Building the pre-fix side needs `--binary`, not `--repo`: SOURCE_KEY is `git rev-parse HEAD`
+# (lib/build.sh), so reverting the fix in the working tree WITHOUT committing produces the same
+# cache key and silently reuses the fixed image. Cross-build a pre-fix tbot the way build.sh
+# does (GOOS=linux GOARCH=amd64 CGO_ENABLED=1 CC=$HARNESS_CC go build -tags grpcnotrace
+# ./tool/tbot), drop it beside the other three binaries, and point --binary at that directory.
+#
+# OSS: plain WorkloadIdentity issuance has no entitlement gate in this tree (the enterprise piece
+# is the X509 issuer OVERRIDE — e/lib/auth/machineid/workloadidentityv1/x509_overrides_service.go —
+# which this module deliberately does not use, unlike workload_identity_sds_override). No --ent.
+name: workload_identity_slow_start
+description: >
+  tbot's workload-identity-api service over a `tc netem`-degraded egress link. Proves the service
+  still starts and serves an X509-SVID when the initial service-identity wait exceeds the 10s
+  hardcoded timeout that was removed from WorkloadAPIService.setup(), with an unshaped control
+  profile beside it. Reproduces the customer's constrained-uplink report in a container.
+provides_feature: workload_identity_slow_start
+requires_features: []
+min_version: v17
+
+# Scaffolding: did the scenario actually happen? A failure here marks the claims UNTESTED rather
+# than DISPROVEN — none of these discriminate between a fixed and an unfixed build.
+preconditions: |
+  # Both bots joined, so any later failure is about the Workload API rather than about joining.
+  bot_joined            wi-fast
+  bot_joined            wi-slow
+  # The shapers installed (or deliberately did not install) their qdisc, in the namespace tbot
+  # then joined. Without this the `slow` profile could be passing simply because it was never slow.
+  observation_equals    host fast shaped no    # control: no qdisc, the link is untouched
+  observation_equals    host slow shaped yes   # netem installed BEFORE tbot started
+  # The probes ran to completion and recorded a verdict either way (a crashed probe is
+  # scaffolding failure, not evidence about the fix).
+  observation_equals    host fast probe_ran yes
+  observation_equals    host slow probe_ran yes
+
+claims:
+  - id: serves-on-a-normal-link
+    statement: On an unshaped link the workload-identity-api starts and serves an X509-SVID.
+    why: >
+      **The rig works, and the wait is normally trivial.**
+
+      - A real SPIFFE client (`tbot spiffe-inspect`) fetched an SVID over the service's unix
+        socket, so this is the whole path — join, impersonated identity, client build, issuance —
+        not just a process that stayed alive.
+      - tbot's own log brackets the initial identity wait, and on this profile it closes in well
+        under the 10s the deleted timer allowed. That is what makes the `slow` profile's result
+        attributable to the LINK rather than to anything else in the setup.
+    artifacts:
+      - config/tbot.yaml.j2
+      - scripts/probe.sh
+      - scripts/shape.sh
+    checks: |
+      observation_equals host fast svid_served yes            # spiffe-inspect got a spiffe:// ID back
+      observation_equals host fast identity_wait_over_10s no  # the wait the timer used to bound
+      log_must_contain   wi-tbot-fast Received initial service identity
+
+  - id: serves-when-the-wait-exceeds-the-removed-timeout
+    statement: >-
+      With egress shaped, the initial service-identity wait exceeds 10s and the service still
+      starts and serves an X509-SVID.
+    why: >
+      **This is the customer's failure condition, reproduced and then survived.**
+
+      - The qdisc was installed in the network namespace BEFORE tbot started (see the
+        preconditions), so every packet tbot sent crossed the degraded link.
+      - tbot's own bracketing log lines put the initial identity wait past 10 seconds — longer
+        than the deleted `time.After(10 * time.Second)` would have allowed. So the removed timer
+        would have fired here; this is not a run that merely happened to be a bit slow.
+      - The service nonetheless reached "Received initial service identity" and a real SPIFFE
+        client then got an SVID out of it, which rules out "survived setup but is useless".
+      - `timeout waiting for identity to be ready` appears zero times. On a pre-fix build this
+        is the line that appears instead, and it is asserted as a count rather than a soft
+        `log_contains` so its absence cannot read as a neutral skip.
+    artifacts:
+      - config/tbot.yaml.j2
+      - scripts/probe.sh
+      - scripts/shape.sh
+      - checks.py
+    checks: |
+      observation_equals host slow identity_wait_over_10s yes  # the removed timer would have fired
+      observation_equals host slow svid_served yes             # ...and the API still served an SVID
+      log_must_contain   wi-tbot-slow Received initial service identity
+      log_count          wi-tbot-slow eq 0 timeout waiting for identity to be ready

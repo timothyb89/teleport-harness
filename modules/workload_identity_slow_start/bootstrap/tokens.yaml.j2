@@ -1,0 +1,11 @@
+{# One join token per profile, rendered from `profiles` so the tokens and the containers that
+   redeem them cannot drift apart. The `token` method is single-use, which is why each profile
+   needs its own bot and token rather than sharing one (see render.yaml). #}
+{% for p in profiles %}
+{% if not loop.first %}---
+{% endif %}
+kind: token
+version: v2
+metadata: {name: {{ p.token }}}
+spec: {roles: [Bot], bot_name: {{ p.bot }}, join_method: token}
+{% endfor %}

@@ -1,0 +1,18 @@
+{# ONE config, shared by every profile: they differ only in the network namespace they run in
+   (see services.yml.j2), which is what makes the comparison between them meaningful. The join
+   token is passed on the command line, and each profile gets its own `sockets-<name>` volume,
+   so nothing here has to vary. #}
+version: v2
+proxy_server: {{ fqdn }}:{{ port }}
+# NOTE: debug logging is turned on with `-d` on the COMMAND LINE (see services.yml.j2), not with
+# a `debug: true` key here — tbot builds its logger from the global flag before this file is
+# read, so the YAML key never reaches the log level. The two DEBUG lines that bracket the wait
+# under test are what checks.py measures, so getting this wrong silently costs the measurement.
+storage: {type: directory, path: /var/lib/tbot}
+services:
+  # The surface under test. Nothing else runs in this tbot: an output that renewed on its own
+  # schedule would issue certificates over the same shaped link and muddy the measurement.
+  - type: workload-identity-api
+    listen: unix:///sockets/workload.sock
+    selector:
+      name: {{ workload_identity_name }}

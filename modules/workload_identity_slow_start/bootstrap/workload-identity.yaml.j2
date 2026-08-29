@@ -1,0 +1,10 @@
+# The WorkloadIdentity every profile's tbot selects by name.
+kind: workload_identity
+version: v1
+metadata:
+  name: {{ workload_identity_name }}
+  labels:
+    harness: slow-start
+spec:
+  spiffe:
+    id: /harness/slow-start

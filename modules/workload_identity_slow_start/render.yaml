@@ -1,0 +1,48 @@
+# Render context for workload_identity_slow_start (see harness/render.py).
+
+# The WorkloadIdentity resource both tbots select by name (bootstrap/workload-identity.yaml.j2).
+workload_identity_name: harness-slow-start
+
+# Shaper sidecar. Runs NATIVELY (arm64 on this Apple-Silicon lima host) rather than under the
+# amd64 emulation the teleport binaries use: it only needs `tc`, which is arch-independent, and
+# emulating it would add latency to the very thing that is measuring latency. Override
+# shaper_platform for an amd64 host. iproute2 is installed at start (before any shaping, so the
+# apk fetch itself is never throttled).
+shaper_image: alpine:3.20
+shaper_platform: linux/arm64
+
+# Hard stop for a probe's retry loop, NOT its reporting cadence — it reports after every attempt
+# (see scripts/probe.sh), so the checks can read its state at any instant. Keep this comfortably
+# ABOVE run-plan's ~90s verify budget: the probe should still be trying when the last verify
+# attempt reads it, so "no SVID yet" is never confused with "the probe gave up".
+probe_deadline: 240
+
+# One tbot + shaper + probe per profile. `netem` is the argument list handed to
+# `tc qdisc ... root netem` inside the tbot container's namespace; empty = no shaping at all.
+#
+# EGRESS ONLY, by design and by constraint: a root qdisc shapes what leaves the interface, and
+# ingress shaping would need an ifb device whose module a rootless container cannot load. That
+# matches the customer's report (a deep outgoing queue), so it is a fair model rather than a
+# limitation worked around.
+#
+# CALIBRATION: `delay` sets the floor (one-way, so each round trip costs at least this much) and
+# `rate`+`limit` add the queuing that a saturated uplink really has. The target for `slow` is a
+# link where the initial identity wait lands above 10s but the join still completes.
+profiles:
+  - name: fast
+    desc: unshaped control — the link the setup normally has
+    bot: wi-fast
+    token: harness-wi-fast
+    netem: ""
+  - name: slow
+    desc: deep, slow outgoing queue — the customer's constrained uplink
+    bot: wi-slow
+    token: harness-wi-slow
+    netem: "delay 900ms rate 64kbit limit 40"
+
+# One bot per profile: the `token` join method is SINGLE-USE (auth deletes the token on
+# redemption), so two tbots cannot share one. Keep in sync with `profiles` above — the tokens
+# themselves are rendered from `profiles` in bootstrap/tokens.yaml.j2.
+bots:
+  - {name: wi-fast, roles: wi-issuer, token: harness-wi-fast}
+  - {name: wi-slow, roles: wi-issuer, token: harness-wi-slow}

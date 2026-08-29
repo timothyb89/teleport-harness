@@ -1,0 +1,12 @@
+# Role for the tbots: issue any WorkloadIdentity + read the resource they select by name.
+kind: role
+version: v7
+metadata:
+  name: wi-issuer
+spec:
+  allow:
+    workload_identity_labels:
+      '*': ['*']
+    rules:
+      - resources: [workload_identity]
+        verbs: [read, list]

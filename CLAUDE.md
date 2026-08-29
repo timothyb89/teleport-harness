@@ -331,11 +331,18 @@ TOKEN, never the device, so ONE VM boot covers the whole matrix — 12s for 18 c
 re-run against a live cluster with `TPM_FORCE=1` is ~14s. Covers, unscoped AND scoped: EKCert
 CA verification (right CA joins / unrelated CA denied), the root-not-issuer trap, allow-rule
 matching on `ek_public_hash` and `ek_certificate_serial` (correct CA in all four, so only the
-matcher can explain a denial), and admission-time validation that a serial with no
-`ekcert_allowed_cas` is REJECTED at create — including `serial-hash-no-cas`, the ONLY config
-the two candidate rules disagree about, so that one check is what pins the strict rule.
-Requires `--ent` [tpmjoin.CheckTPMRequest refuses OSS outright] + lima/qemu/swtpm/gnutls;
-`cluster teardown` deletes the VM. VERIFIED live: 20/20 on `~/projects/core` @ eb4ab6f769a7),
+matcher can explain a denial), and admission-time validation of a serial pinned with no
+`ekcert_allowed_cas`, where the two token kinds DELIBERATELY DIVERGE and the module asserts
+both sides: a SCOPED token always requires CAs alongside a serial
+[`lib/scopes/joining/token.go` validateTPM], while CLASSIC ProvisionTokenV2 keeps its older
+hash-OR-CAs rule [`lib/services/local/provisioning.go` validateTPMToken] because tightening
+it would reject tokens already in the field. `serial-hash-no-cas` is the ONLY config the two
+rules disagree about, so it is the one case whose verdict differs by kind (rejected scoped,
+accepted classic) — one claim pins each side, and if they ever AGREE on it one side of the
+split has been lost. Requires `--ent` [tpmjoin.CheckTPMRequest refuses OSS outright] +
+lima/qemu/swtpm/gnutls; `cluster teardown` deletes the VM. VERIFIED live: 20/20 on
+`~/projects/core` @ eb4ab6f769a7, when the strict rule still applied to BOTH kinds — the
+classic half was re-pointed at the reverted behavior and has NOT been re-run live since),
 `scoped_app_access` (tbot's `application` output + `application-tunnel` in SCOPED mode, end to
 end against a real httpbin — the first module to exercise an app, and the first to test a tbot
 SERVICE rather than a join method. The change under test lets both services take a
@@ -373,6 +380,28 @@ preflight budget (`integrations/terraform/provider/credentials.go`). Nothing her
 cluster — the proxy keeps its own `public_addr` and auth keeps its FQDN alias — so it needs no
 `exclusive: true` and composes freely. Pulls in terraform-runner + oidc-server; the join method
 is `kubernetes` purely because it needs no cloud),
+`workload_identity_slow_start` (a NEW *kind* of environment — a **DEGRADED LINK**: `tc netem`
+inside the container's own netns, which works under lima's rootless docker with `cap_add:
+[NET_ADMIN]` — see the netem invariant below. Written for the removal of a hardcoded
+`time.After(10 * time.Second)` from `lib/tbot/services/workloadidentity/workload_api.go`
+setup(), which made tbot's workload-identity-api give up on a constrained uplink where the
+initial impersonated identity took longer than that to issue. Two profiles differing in ONE
+value — the qdisc — run the same tbot config: `fast` (unshaped control) and `slow` (`delay
+900ms rate 64kbit limit 40`). The shaper OWNS the namespace and tbot joins it via
+`network_mode: service:`, so `service_healthy` on "qdisc installed" makes the shaping provably
+precede tbot's first packet; the obvious inverse (sidecar joins tbot's netns) RACES, because
+an unshaped join finishes in under a second. The measurement is the wait itself, read
+host-side by `checks.py`'s `act()` from the two DEBUG lines the fix added around it. EGRESS
+ONLY, which is both a constraint and the point: it is what the customer had (a deep outgoing
+queue), and ingress shaping would need an `ifb` module a rootless container cannot load.
+NEGATIVE-CONTROLLED against a pre-fix `tbot` cross-built into a `--binary` dir (a `--repo`
+rebuild would NOT do — `SOURCE_KEY` is `rev-parse HEAD`, so an uncommitted revert collides in
+the build cache): 13/13 with the fix (`fast` waits 0.14s, `slow` waits 21.54s and still serves
+an SVID) and 9 PASS / 4 FAIL without it, where ONLY the shaped profile flips — `slow` logs
+`timeout waiting for identity to be ready` and never serves, while every `fast` check still
+passes. OSS: plain WorkloadIdentity issuance has no entitlement gate; the enterprise piece is
+the X509 issuer OVERRIDE, which is `workload_identity_sds_override`'s business, not this
+module's),
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`
@@ -617,6 +646,22 @@ if the cluster enforces it, an MFA device).
   unquoted `ek_certificate_serial` silently pins a number instead of the serial. Same for a
   pure-digit `ek_public_hash`. Intermittent by construction — it depends on the serial the CA
   happened to issue — which is exactly why it's quoted unconditionally.
+- **`tc`/netem WORKS in lima's rootless docker** — `--cap-add NET_ADMIN` (compose: `cap_add:
+  [NET_ADMIN]`) is enough, because the container's netns is owned by the user namespace the
+  capability is granted in, and `sch_netem` is present in the VM kernel. Three caveats. (1) A
+  root qdisc shapes **EGRESS ONLY**: a `rate` on the client throttles its ACKs, not the bytes
+  coming back, so a 2 MB download over `rate 256kbit` finishes in ~4s rather than the ~64s the
+  number suggests. Shape the side whose traffic you care about, or both. (2) **Ingress shaping
+  is out of reach** — it needs an `ifb` device, and `modprobe ifb` wants CAP_SYS_MODULE in the
+  INIT namespace, which a rootless container does not have (pre-load it in the lima VM if you
+  ever truly need it). (3) The teleport image has **no iproute2** (`lib/build.sh` installs only
+  ca-certificates/curl/openssl/bash/jq), so shaping needs a separate small image; making that
+  image OWN the netns and having the teleport container join it with `network_mode: service:`
+  also removes the ordering race for free. See `workload_identity_slow_start`.
+- **tbot's `debug: true` YAML key does NOT raise the log level** — `tool/tbot/main.go` builds the
+  logger from the GLOBAL CLI flag (`setupLogger(globalCfg.Debug, …)`) before the config file is
+  read, so DEBUG lines only appear with **`-d` on the command line**. Costs a whole run to spot,
+  because everything else works and the lines you were going to measure are simply absent.
 - **The `token` join method is SINGLE-USE** (auth deletes the token on redemption,
   `lib/auth/join.go`) and `embeddedtbot` stores state in memory (`destination.NewMemory()`) — so a
   restarted operator pod can NEVER re-join. Hence the Deployment has readiness but deliberately
@@ -686,7 +731,11 @@ if the cluster enforces it, an MFA device).
   + `bootstrap/` + `checks:` now that composition + shared components exist.
 - **Deepen `tbot`**: `application` is DONE (`scoped_app_access` covers the output AND the
   application-tunnel, with real traffic to an httpbin and the written cert re-used against the
-  proxy). Still open: `ssh`, `kubernetes`, `database` outputs with artifact + usability checks;
+  proxy). `workload-identity-api` is DONE twice over — `workload_identity_sds_override` on the
+  SDS side, `workload_identity_slow_start` on a degraded link. The netem rig the latter
+  introduces is generic (shaper owns the netns, teleport container joins it), so ANY module can
+  now ask "does this survive a bad network?"; the obvious next users are join methods with their
+  own timeouts and the reverse-tunnel path. Still open: `ssh`, `kubernetes`, `database` outputs with artifact + usability checks;
   the UNSCOPED application path as its own module (today it appears only as the control in
   `scoped_app_access`); `application-proxy` once it gains scope support (the module asserts its
   refusal, so that check flips when it does); and exercising the `tsh_ssh` primitive end-to-end
