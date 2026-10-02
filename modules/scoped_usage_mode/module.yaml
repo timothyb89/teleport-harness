@@ -1,0 +1,208 @@
+# Scoped token `usage_mode: single_use` across join methods.
+#
+# The change under test (core 128a190f596, "Scopes: handle or reject `usage_mode: single`
+# across all join methods"):
+#
+#   1. lib/scopes/joining/token.go validateUsageMode — called from StrongValidateToken (so at
+#      create time AND at join time via ValidateTokenForUse, but NOT from weak validation) —
+#      is an explicit ALLOWLIST of methods that may use single_use: token, ec2, iam, gcp,
+#      azure, oracle, kubernetes, tpm, generic_oidc. Every other method is rejected.
+#   2. lib/join/server.go makeHostResult now calls UseScopedToken for every scoped HOST join,
+#      not just the `token` method (it used to live in server_token.go only). So a single_use
+#      token on any allowlisted method is actually consumed.
+#
+# Before it, every method other than token/github/gitlab ACCEPTED single_use and then never
+# consumed it: the token silently behaved as unlimited.
+#
+# NEGATIVE CONTROL: against the parent commit (ae0414fb165) this module should report
+#   - admission-rejects-single-use DISPROVEN: azure_devops, bound_keypair, circleci,
+#     bitbucket, terraform_cloud, spacelift and env0 all accept single_use (github/gitlab
+#     already rejected it, so those two checks still pass);
+#   - generic_oidc-/kubernetes-single-use DISPROVEN: the second agent joins and the token is
+#     never consumed;
+#   - token-single-use PROVEN either way — it is the regression guard for the move.
+#
+# VERIFIED live (2026-10-02): 70/70 PASS, 6/6 claims PROVEN on core 128a190f596; on the parent
+# ae0414fb165, exactly the predicted 22 checks FAIL (48 PASS, 2 SKIP — the second agents'
+# diagnostic log_contains, since they were never denied), all preconditions hold, and
+# admission-rejects-single-use / generic_oidc-single-use / kubernetes-single-use come back
+# DISPROVEN while the other three stay PROVEN.
+name: scoped_usage_mode
+description: >
+  Scoped tokens with usage_mode single_use: allowlisted join methods accept it and admit
+  exactly one host (token, generic_oidc and kubernetes joined end to end, each with an
+  unlimited control pair); every other method rejects it at creation.
+provides_feature: scoped_usage_mode
+requires_features: [generic_oidc]
+min_version: v18
+
+preconditions: |
+  output_file su-idbot /idents/identity                 # the actor has a tctl identity
+  output_file su-actor /out/observations.json           # the actor ran and recorded what it saw
+  observation_equals su-actor status-su-token-single first_joined yes   # each single_use pair's FIRST agent registered before its token was read
+  observation_equals su-actor status-su-oidc-single first_joined yes
+  observation_equals su-actor status-su-kube-single first_joined yes
+
+claims:
+  - id: admission-allows-single-use
+    statement: Every allowlisted join method accepts a single_use scoped token.
+    why: |
+      `actor.sh` creates a minimal, otherwise-valid scoped **Node** token with
+      `usage_mode: single_use` for each method on `validateUsageMode`'s allowlist.
+
+      - **This is the opt-in side of the allowlist.** A method missing here would make
+        `single_use` unusable for it, which would be a silent regression for users of
+        ec2/iam/gcp/azure/oracle/tpm, which the harness can't join with.
+      - **The specs are inert.** The values (account ids, project ids) only have to pass
+        validation; nothing joins with these tokens.
+    artifacts: [scripts/actor.sh]
+    checks: |
+      observation_equals su-actor admit-token-single_use accepted yes
+      observation_equals su-actor admit-ec2-single_use accepted yes
+      observation_equals su-actor admit-iam-single_use accepted yes
+      observation_equals su-actor admit-gcp-single_use accepted yes
+      observation_equals su-actor admit-azure-single_use accepted yes
+      observation_equals su-actor admit-oracle-single_use accepted yes
+      observation_equals su-actor admit-kubernetes-single_use accepted yes
+      observation_equals su-actor admit-tpm-single_use accepted yes
+      observation_equals su-actor admit-generic_oidc-single_use accepted yes
+
+  - id: admission-rejects-single-use
+    statement: Every other join method rejects a single_use scoped token at creation, because of its usage mode.
+    why: |
+      For each method off the allowlist, `actor.sh` creates the same token twice, differing
+      only in `usage_mode`:
+
+      - **`single_use` must be rejected, and the error must name the usage mode.** A
+        rejection for any other reason (a bad method spec) would not mention it.
+      - **The `unlimited` twin must be accepted.** It shares the method spec byte for byte,
+        so it proves the spec is valid, and leaves the usage mode as the only difference.
+
+      Two groups:
+
+      - **CI/CD and Terraform-provider methods** are effectively bot-only. Bots are always
+        `usage_mode: bot`, so `single_use` could only ever apply to an agent run from a CI job.
+      - **`bound_keypair` cannot support it structurally.** `status.usage` is a oneof, and
+        bound_keypair already owns the `bound_keypair` branch. Consuming the token would
+        clobber its keypair state.
+
+      Against the parent commit, every method here except github and gitlab ACCEPTS
+      `single_use`.
+    artifacts: [scripts/actor.sh]
+    checks: |
+      observation_equals su-actor admit-azure_devops-single_use accepted no
+      observation_equals su-actor admit-azure_devops-single_use rejected_for_usage_mode yes
+      observation_equals su-actor admit-azure_devops-unlimited accepted yes
+      observation_equals su-actor admit-bound_keypair-single_use accepted no
+      observation_equals su-actor admit-bound_keypair-single_use rejected_for_usage_mode yes
+      observation_equals su-actor admit-bound_keypair-unlimited accepted yes
+      observation_equals su-actor admit-github-single_use accepted no
+      observation_equals su-actor admit-github-single_use rejected_for_usage_mode yes
+      observation_equals su-actor admit-github-unlimited accepted yes
+      observation_equals su-actor admit-gitlab-single_use accepted no
+      observation_equals su-actor admit-gitlab-single_use rejected_for_usage_mode yes
+      observation_equals su-actor admit-gitlab-unlimited accepted yes
+      observation_equals su-actor admit-circleci-single_use accepted no
+      observation_equals su-actor admit-circleci-single_use rejected_for_usage_mode yes
+      observation_equals su-actor admit-circleci-unlimited accepted yes
+      observation_equals su-actor admit-bitbucket-single_use accepted no
+      observation_equals su-actor admit-bitbucket-single_use rejected_for_usage_mode yes
+      observation_equals su-actor admit-bitbucket-unlimited accepted yes
+      observation_equals su-actor admit-terraform_cloud-single_use accepted no
+      observation_equals su-actor admit-terraform_cloud-single_use rejected_for_usage_mode yes
+      observation_equals su-actor admit-terraform_cloud-unlimited accepted yes
+      observation_equals su-actor admit-spacelift-single_use accepted no
+      observation_equals su-actor admit-spacelift-single_use rejected_for_usage_mode yes
+      observation_equals su-actor admit-spacelift-unlimited accepted yes
+      observation_equals su-actor admit-env0-single_use accepted no
+      observation_equals su-actor admit-env0-single_use rejected_for_usage_mode yes
+      observation_equals su-actor admit-env0-unlimited accepted yes
+
+  - id: bot-tokens-never-single-use
+    statement: A bot token cannot be single_use, so single_use only ever governs agent joins.
+    why: |
+      **Pre-existing behavior, not part of this change.** It is asserted because it is the
+      premise for denying `single_use` to bot-centric methods. Scoped bot tokens must be
+      `usage_mode: bot` (`strongValidateBotToken`), so on a CI method `single_use` could only
+      ever apply to an agent. The case uses `kubernetes`, a method that *allows*
+      `single_use`, so the rejection can only come from the bot rule.
+    artifacts: [scripts/actor.sh]
+    checks: |
+      observation_equals su-actor admit-bot-single_use accepted no
+      observation_equals su-actor admit-bot-single_use rejected_for_usage_mode yes
+
+  - id: token-single-use
+    statement: A single_use `token`-method token admits exactly one host; an unlimited twin admits both.
+    why: |
+      **The regression guard for the move.** `token` was the only method that consumed
+      single_use tokens before this change (`server_token.go`). The consumption call now lives
+      in `makeHostResult`, shared by every host join, and this proves `token` still goes
+      through it.
+
+      - **The pair is ordered.** The second agent waits for the first to report ready
+        (`agent-entrypoint.sh`), so "the second is the one denied" is a real expectation,
+        not a race.
+      - **The denial is specifically exhaustion.** The audit code `TJ002L` is emitted only
+        for `ErrTokenExhausted`, not for an arbitrary join failure.
+      - **The token records the consumption.** `status.usage.single_use.used_by_fingerprint`
+        is set after the first join.
+      - **The control isolates the usage mode.** An unlimited token, identical apart from
+        name and secret, admits both agents of its pair and records no usage at all.
+    artifacts: [scripts/agent-entrypoint.sh, scripts/actor.sh, config/agent-token-single.yaml.j2, config/agent-token-unlimited.yaml.j2, bootstrap/token-method-tokens.yaml.j2]
+    checks: |
+      node_present  su-token-single-first
+      audit_event   instance.join token_name=su-token-single success=true
+      observation_equals su-actor status-su-token-single consumed yes
+      node_absent   su-token-single-second
+      audit_event   instance.join token_name=su-token-single code=TJ002L
+      log_contains  su-token-single-second exhausted|limit exceeded   # diagnostic: the agent's own view of the denial
+      node_present  su-token-unlimited-first
+      node_present  su-token-unlimited-second
+      observation_equals su-actor status-su-token-unlimited usage_status none
+
+  - id: generic_oidc-single-use
+    statement: A single_use generic_oidc token admits exactly one host; an unlimited twin admits both.
+    why: |
+      **The core of the fix.** Before it, generic_oidc accepted `single_use` but never
+      consumed it, so the second agent here joined.
+
+      - **The pair is ordered**, and **each agent mints its own JWT** (`sub` matches the
+        rule, but `iat`/`exp` differ). The second agent is therefore denied by the token's
+        usage, not by JWT replay protection.
+      - **`static_jwks`**, so no discovery fetch is involved. The validation path isn't
+        the variable under test.
+      - **The control is identical apart from name and `usage_mode`**, both built by the
+        same hook from the same JWKS. Both of its agents join, so nothing about generic_oidc
+        itself stops a second host.
+    artifacts: [scripts/agent-entrypoint.sh, scripts/actor.sh, config/agent-oidc-single.yaml.j2, config/agent-oidc-unlimited.yaml.j2, bootstrap/hooks/jwks-tokens.sh.j2]
+    checks: |
+      node_present  su-oidc-single-first
+      audit_event   instance.join token_name=su-oidc-single success=true
+      observation_equals su-actor status-su-oidc-single consumed yes
+      node_absent   su-oidc-single-second
+      audit_event   instance.join token_name=su-oidc-single code=TJ002L
+      log_contains  su-oidc-single-second exhausted|limit exceeded   # diagnostic: the agent's own view of the denial
+      node_present  su-oidc-unlimited-first
+      node_present  su-oidc-unlimited-second
+      observation_equals su-actor status-su-oidc-unlimited usage_status none
+
+  - id: kubernetes-single-use
+    statement: A single_use kubernetes token admits exactly one host; an unlimited twin admits both.
+    why: |
+      Same shape as generic_oidc, through a different method server (`server_kubernetes.go`).
+      Before the change, this method also accepted `single_use` and never consumed it.
+
+      - **Each agent mints its own SA JWT** (`/k8s/token`, with a distinct `pod` claim) and
+        passes it via `KUBERNETES_TOKEN_PATH`.
+      - **`static_jwks`**, with the control built from the same JWKS by the same hook.
+    artifacts: [scripts/agent-entrypoint.sh, scripts/actor.sh, config/agent-kube-single.yaml.j2, config/agent-kube-unlimited.yaml.j2, bootstrap/hooks/jwks-tokens.sh.j2]
+    checks: |
+      node_present  su-kube-single-first
+      audit_event   instance.join token_name=su-kube-single success=true
+      observation_equals su-actor status-su-kube-single consumed yes
+      node_absent   su-kube-single-second
+      audit_event   instance.join token_name=su-kube-single code=TJ002L
+      log_contains  su-kube-single-second exhausted|limit exceeded   # diagnostic: the agent's own view of the denial
+      node_present  su-kube-unlimited-first
+      node_present  su-kube-unlimited-second
+      observation_equals su-actor status-su-kube-unlimited usage_status none

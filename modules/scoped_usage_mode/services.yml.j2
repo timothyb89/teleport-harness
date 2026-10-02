@@ -1,0 +1,93 @@
+{# scoped_usage_mode: for each joinable method, a PAIR of Node agents shares a single_use
+   scoped token (the second must be denied), and another pair shares an otherwise identical
+   unlimited token (both must join — the control). An actor runs the admission matrix over
+   every join method and records each join token's status after the agents join.
+   Composed onto the base auth + the oidc-server component. #}
+{% set oidc_host = 'oidc.' ~ lab_domain %}
+services:
+  # Privileged identity for the actor (tctl with no login/MFA — the lib/admin.sh trick).
+  su-idbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-su-idbot
+    command: [tbot, start, -c, /etc/tbot.yaml, "--token={{ admin_token }}", "--join-method=token"]
+    volumes:
+      - {{ out }}/config/su-idbot.yaml:/etc/tbot.yaml:ro
+      - su-identity:/idents
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /idents/identity"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+  # The actor: admission matrix + join-token status records (scripts/actor.sh). Records only;
+  # the module's observation_* checks judge.
+  su-actor:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-su-actor
+    entrypoint: ["sh", "/scripts/actor.sh"]
+    environment:
+      AUTH_ADDR: auth:3025
+      IDENTITY: /id/identity
+      SCOPE: "{{ scope }}"
+      CLUSTER_ID: {{ cluster_id }}
+      JOIN_SHORTS: "{{ join_methods | map(attribute='short') | join(' ') }}"
+      TELEPORT_UNSTABLE_SCOPES: "yes"
+    volumes:
+      {# {{ scripts }}, not {{ module_dir }}/scripts, so the actor ships in the run bundle. #}
+      - {{ scripts }}:/scripts:ro
+      - su-identity:/id:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}
+      su-idbot: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/actor-done"]
+      interval: 3s
+      timeout: 3s
+      retries: 100
+      start_period: 5s
+{% for jm in join_methods %}
+{% for mode in modes %}
+{% for order in ['first', 'second'] %}
+{% set name = 'su-' ~ jm.short ~ '-' ~ mode ~ '-' ~ order %}
+
+  # {{ jm.method }} / {{ modes[mode] }} / {{ order }} agent{% if order == 'second' %} — joins only after su-{{ jm.short }}-{{ mode }}-first is ready{% endif %}.
+  {{ name }}:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-{{ name }}
+    # teleport defaults nodename to the OS hostname, so this is the node's name too — which
+    # is what lets the first and second agent share one config file.
+    hostname: {{ cluster_id }}-{{ name }}
+    entrypoint: ["sh", "/scripts/agent-entrypoint.sh"]
+    environment:
+      TELEPORT_UNSTABLE_SCOPES: "yes"
+{% if order == 'second' %}
+      WAIT_FOR: su-{{ jm.short }}-{{ mode }}-first
+{% endif %}
+{% if jm.method == 'kubernetes' %}
+      OIDC_URL: https://{{ oidc_host }}:8443
+      SERVICE_ACCOUNT: {{ kube_sa }}
+{% endif %}
+    volumes:
+      - {{ out }}/config/agent-{{ jm.short }}-{{ mode }}.yaml:/etc/teleport/teleport.yaml:ro
+      - {{ scripts }}:/scripts:ro
+    networks: [internal]
+    # A denied agent must STAY denied: restarting would just produce more denials (fine) or,
+    # once the reuse window lapses, muddy the timeline. Either way one attempt is the test.
+    restart: "no"
+    depends_on:
+      auth: {condition: service_healthy}
+      oidc: {condition: service_started}
+{% endfor %}
+{% endfor %}
+{% endfor %}
+
+volumes:
+  su-identity:

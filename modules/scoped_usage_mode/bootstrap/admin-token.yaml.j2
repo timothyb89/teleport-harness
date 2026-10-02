@@ -1,0 +1,9 @@
+{# Classic token the su-admin idbot joins with (`bots add --token` references it). #}
+kind: token
+version: v2
+metadata:
+  name: {{ admin_token }}
+spec:
+  roles: [Bot]
+  bot_name: su-admin
+  join_method: token

@@ -1,0 +1,20 @@
+{# Node agent joining via the `token` method with the unlimited token. Shared by the FIRST and
+   SECOND agent of the pair; each gets its own nodename from the compose `hostname:`
+   (teleport defaults nodename to the OS hostname), so one config serves both.
+
+   `token_name` is the SQN with the secret appended, `<scope>::<name>:<base64url(secret)>`
+   (EncodeScopedToken); the bare SQN is not enough for the `token` method. #}
+version: v3
+teleport:
+  data_dir: /var/lib/teleport
+  diag_addr: 0.0.0.0:3000
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: token
+    token_name: "{{ scope }}::su-token-unlimited:{{ token_secrets['unlimited'] | b64url }}"
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: scoped-usage-mode, method: token, mode: unlimited}

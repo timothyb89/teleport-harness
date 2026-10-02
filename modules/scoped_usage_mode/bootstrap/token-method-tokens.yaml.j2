@@ -1,0 +1,24 @@
+{# The `token`-method join tokens: one single_use (under test), one unlimited (control).
+   Identical apart from usage_mode and secret. The JWKS-backed generic_oidc + kubernetes
+   tokens are built at runtime instead (bootstrap/hooks/jwks-tokens.sh.j2), since they embed
+   the oidc-server's keys.
+
+   `status.secret` is PRESET so config/agent-token-*.yaml.j2 can render the join string
+   `<scope>::<name>:<base64url(secret)>` at build time. #}
+{% for mode, usage in modes.items() %}
+kind: scoped_token
+version: v1
+metadata:
+  name: su-token-{{ mode }}
+scope: "{{ scope }}"
+spec:
+  roles: [Node]
+  join_method: token
+  usage_mode: {{ usage }}
+  assigned_scope: "{{ scope }}"
+status:
+  secret: "{{ token_secrets[mode] }}"
+{% if not loop.last %}
+---
+{% endif %}
+{% endfor %}

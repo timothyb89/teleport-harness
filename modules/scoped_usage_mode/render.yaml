@@ -1,0 +1,53 @@
+# Render context for scoped_usage_mode (see harness/render.py).
+components: [oidc-server]              # mints the generic_oidc + k8s SA JWTs the agents present
+
+auth_env:
+  # Scoped tokens need the scopes feature. NOT the agent scope-pin feature: these are Node
+  # agents, and ValidateTokenForUse (lib/scopes/joining/token.go) lets Node/Bot join with a
+  # scoped token without TELEPORT_UNSTABLE_AGENT_SCOPE_PIN — the generic_oidc module's
+  # scoped agents rely on the same thing.
+  TELEPORT_UNSTABLE_SCOPES: "yes"
+
+# Everything scoped lives here. Also the SQN prefix every scoped JOIN uses (`<scope>::<name>`,
+# see the generic_oidc module's `scope` note).
+scope: /su-test
+
+# The join methods this module actually JOINS with — the ones the harness can mock end to end.
+# All three are on validateUsageMode's single_use allowlist, so each must admit exactly one
+# host per single_use token. `short` names the tokens, configs and containers.
+#   token        — the only method that consumed single_use tokens before the fix
+#                  (lib/join/server_token.go). Regression guard for the move into
+#                  makeHostResult.
+#   generic_oidc — static_jwks, so the JWT is checked against the oidc-server's keys with no
+#                  discovery fetch (the validation path is not the variable here).
+#   kubernetes   — static_jwks, same reasoning; SA JWTs come from the oidc-server's /k8s/token.
+# The other allowlisted methods (ec2, iam, gcp, azure, oracle, tpm) need a real cloud or a TPM
+# VM, so for them the module asserts ADMISSION only (scripts/actor.sh).
+join_methods:
+  - {short: token, method: token}
+  - {short: oidc, method: generic_oidc}
+  - {short: kube, method: kubernetes}
+
+# Per-token usage modes: `single` -> usage_mode single_use (the case under test), `unlimited`
+# -> the control. The control is what makes a denial attributable: the unlimited token has the
+# SAME method, the same validation config and the same pair of agents, so if its second agent
+# joins and the single_use one's does not, the usage mode is the only difference.
+modes:
+  single: single_use
+  unlimited: unlimited
+
+# `token`-method secrets, PRESET in status.secret so the join string is renderable (see the
+# scoped_app_access render.yaml for why maybeSetTokenSecret can't be left to generate them).
+token_secrets:
+  single: harness-su-token-single-secret
+  unlimited: harness-su-token-unlimited-secret
+
+agent_sub: su-agent                    # generic_oidc `sub` the agents request and the rule allows
+kube_sa: su-kube-sa                    # k8s service account the kubernetes rule allows
+
+# Classic token the privileged idbot joins with, giving the actor a tctl identity with no
+# login/MFA (the lib/admin.sh trick; same shape as bound_keypair_status's bks-idbot).
+admin_token: harness-su-admin
+
+bots:
+  - {name: su-admin, roles: su-token-admin, token: harness-su-admin}

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Bootstrap hook (runs as local-admin in the auth container): create the generic_oidc and
+# kubernetes join tokens, one single_use and one unlimited each, all static_jwks so they
+# embed the oidc-server's JWKS. static_jwks needs the keys at creation time, so these can't
+# be static bootstrap files — the same reason modules/kubernetes uses a hook.
+#
+# Within each method the two tokens are byte-identical apart from name + usage_mode, which is
+# what lets the unlimited token act as the control for the single_use one.
+set -euo pipefail
+OIDC_URL="https://oidc.{{ lab_domain }}:8443"
+SCOPE="{{ scope }}"
+
+echo "[su-hook] fetching JWKS from $OIDC_URL"
+JWKS=""
+for _ in $(seq 1 60); do
+  JWKS="$(curl -fsSk "$OIDC_URL/keys")" && [ -n "$JWKS" ] && break
+  sleep 2
+done
+[ -n "$JWKS" ] || { echo "[su-hook] failed to fetch JWKS" >&2; exit 1; }
+
+indent() { printf '%s\n' "$JWKS" | sed "s/^/$1/"; }
+create() { tctl --config "${CONFIG:-/etc/teleport/auth.yaml}" create -f - && echo "[su-hook] created $1"; }
+
+{% for mode, usage in modes.items() %}
+create su-oidc-{{ mode }} <<YAML
+kind: scoped_token
+version: v1
+metadata:
+  name: su-oidc-{{ mode }}
+scope: "${SCOPE}"
+spec:
+  roles: [Node]
+  join_method: generic_oidc
+  usage_mode: {{ usage }}
+  assigned_scope: "${SCOPE}"
+  generic_oidc:
+    issuer: ${OIDC_URL}
+    audience: {{ fqdn }}/generic-oidc
+    static_jwks: |
+$(indent '      ')
+    allow_any:
+      - conditions:
+          - attribute: sub
+            eq:
+              value: {{ agent_sub }}
+YAML
+
+create su-kube-{{ mode }} <<YAML
+kind: scoped_token
+version: v1
+metadata:
+  name: su-kube-{{ mode }}
+scope: "${SCOPE}"
+spec:
+  roles: [Node]
+  join_method: kubernetes
+  usage_mode: {{ usage }}
+  assigned_scope: "${SCOPE}"
+  kubernetes:
+    type: static_jwks
+    static_jwks:
+      jwks: |
+$(indent '        ')
+    allow:
+      - service_account: "default:{{ kube_sa }}"
+YAML
+{% endfor %}

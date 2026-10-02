@@ -402,6 +402,27 @@ an SVID) and 9 PASS / 4 FAIL without it, where ONLY the shaped profile flips —
 passes. OSS: plain WorkloadIdentity issuance has no entitlement gate; the enterprise piece is
 the X509 issuer OVERRIDE, which is `workload_identity_sds_override`'s business, not this
 module's),
+`scoped_usage_mode` (scoped token `usage_mode: single_use` across EVERY join method — written
+for core `128a190f596`, which made `validateUsageMode` [lib/scopes/joining/token.go, called from
+StrongValidateToken only] an allowlist and moved `UseScopedToken` into `makeHostResult` so every
+scoped HOST join consumes the token, where before only `token` did and most methods silently
+treated single_use as unlimited. Two halves. ADMISSION: an actor creates each of the 18 methods'
+scoped Node tokens as `single_use` AND as an `unlimited` twin with a byte-identical method spec
+— the twin is what proves the spec valid, so a rejection is attributable to the usage mode — and
+records accepted/rejected-for-usage-mode per case; the allowed/denied expectation per method
+lives in module.yaml, one check each. JOINS, for the three methods the harness can mock
+(`token`, `generic_oidc` + `kubernetes` via static_jwks from the oidc-server): a single_use
+token gets an ORDERED agent pair — the second waits on the first's diag `/readyz` in its
+entrypoint, deliberately not `depends_on: service_healthy` (a first agent that never joined would
+fail compose `up` instead of the checks) — and must admit exactly one, proven by `node_absent`
++ the `instance.join` limit code `TJ002L` (emitted only for ErrTokenExhausted) + the token's
+recorded `status.usage.single_use.used_by_fingerprint`; an otherwise identical unlimited token's
+pair both join. A Node agent redeems its token ONCE (the Instance join; role certs come from
+that identity, lib/service/connect.go), so single_use cannot lock out the first agent. Agent
+pairs share one config: nodename defaults to the OS hostname, set via compose `hostname:`.
+NEGATIVE-CONTROLLED: 70/70 on the fix; on its parent exactly the predicted 22 FAIL — 7 CI/TF/
+bound_keypair methods accept single_use (github/gitlab already rejected it) and the oidc/kube
+second agents join — while `token` stays PROVEN. Admission-only for ec2/iam/gcp/azure/oracle/tpm),
 `tbot`/`bound_keypair` differ only in join method + bootstrap + config; a new join-method module
 is a ~25-line `services.yml.j2` fragment + `bootstrap/` + `checks:`.
 Components today: `oidc-server` (shared IdP; serves the wildcard LE cert so the kube `oidc`

@@ -1,0 +1,18 @@
+{# Node agent joining via kubernetes (static_jwks) with the unlimited token. The SA JWT is minted
+   per agent by scripts/agent-entrypoint.sh and handed over via KUBERNETES_TOKEN_PATH (the
+   join client's documented override of the projected-token path, lib/kube/token/source.go).
+   Shared by the FIRST and SECOND agent of the pair (nodename from the compose `hostname:`). #}
+version: v3
+teleport:
+  data_dir: /var/lib/teleport
+  diag_addr: 0.0.0.0:3000
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: kubernetes
+    token_name: "{{ scope }}::su-kube-unlimited"
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: scoped-usage-mode, method: kubernetes, mode: unlimited}

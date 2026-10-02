@@ -1,0 +1,22 @@
+# Role for the su-admin bot, whose identity the actor (scripts/actor.sh) uses to CREATE the
+# admission-matrix tokens and to READ the join tokens' status after the agents join.
+#
+# `scoped_token` works from this unscoped identity: the scoped authorizer wraps an unscoped
+# identity's classic checker (ScopedContextFromUnscopedContext), so a classic rule covering
+# `scoped_token` is what grants access — no scoped_role_assignment needed.
+#
+# `node` read + node_labels lets the actor see which agents have registered, which is the
+# barrier for snapshotting an unlimited token only AFTER a host has joined with it.
+kind: role
+version: v7
+metadata:
+  name: su-token-admin
+spec:
+  allow:
+    node_labels:
+      '*': '*'
+    rules:
+      - resources: [scoped_token]
+        verbs: [create, read, update, list, delete]
+      - resources: [node]
+        verbs: [read, list]

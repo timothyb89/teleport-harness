@@ -1,0 +1,20 @@
+{# Node agent joining via generic_oidc (static_jwks) with the single token. Shared by the
+   FIRST and SECOND agent of the pair (nodename comes from the compose `hostname:`). Each
+   agent mints its OWN JWT at join time, so the two never present the same token — a denial
+   of the second cannot be JWT replay protection. #}
+version: v3
+teleport:
+  data_dir: /var/lib/teleport
+  diag_addr: 0.0.0.0:3000
+  proxy_server: {{ fqdn }}:{{ port }}
+  log: {output: stderr, severity: INFO}
+  join_params:
+    method: generic_oidc
+    token_name: "{{ scope }}::su-oidc-single"
+    generic_oidc:
+      command: ["curl", "-fsSk", "https://oidc:8443/token?sub={{ agent_sub }}"]
+auth_service: {enabled: "no"}
+proxy_service: {enabled: "no"}
+ssh_service:
+  enabled: "yes"
+  labels: {test: scoped-usage-mode, method: generic_oidc, mode: single}
