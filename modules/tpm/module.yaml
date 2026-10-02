@@ -9,13 +9,19 @@
 # The scoped half needs scoped TPM support in the target build. On a build without it the
 # scoped token creations fail and the scoped cases report it as such rather than silently
 # passing.
+#
+# Note the two token kinds are NOT interchangeable here: scoped and classic tokens run the
+# same join-path checks but DIFFERENT admission-time validation of ek_certificate_serial,
+# and the module asserts both sides of that split (see the last two claims).
 name: tpm
 description: >
   TPM joining end-to-end against a hardware-shaped TPM. A bot joins from a VM whose vTPM
   holds a CA-issued EK certificate; tokens vary one thing at a time — the trust anchor, the
   ek_public_hash rule, the ek_certificate_serial rule — and the device must be admitted or
-  refused accordingly, unscoped and scoped. Also covers admission-time validation: a token
-  pinning a certificate serial with no CA to verify it is rejected at create.
+  refused accordingly, unscoped and scoped. Also covers admission-time validation of a
+  certificate serial pinned with no CA to verify it, where the two token kinds deliberately
+  diverge: scoped always requires ekcert_allowed_cas, classic ProvisionTokenV2 keeps its
+  older hash-OR-CAs rule.
 provides_feature: tpm_join
 requires_features: [tpm]
 min_version: v18
@@ -85,10 +91,10 @@ claims:
       observation_equals host scoped-serial-valid     joined true
       observation_equals host scoped-serial-invalid   joined false
 
-  - id: serial-requires-cas
+  - id: scoped-serial-requires-cas
     statement: >
-      A token pinning ek_certificate_serial with no ekcert_allowed_cas is rejected at
-      admission — including when the rule also pins ek_public_hash.
+      A SCOPED token pinning ek_certificate_serial with no ekcert_allowed_cas is rejected
+      at admission — including when the rule also pins ek_public_hash.
     why: >
       **Why the rule exists.** With no CA configured the certificate is parsed but never
       verified, so its serial is a value the client chose. Pinning one is a matcher that
@@ -97,10 +103,29 @@ claims:
       **The second case is the discriminating one.** `serial-hash-no-cas` is the ONLY
       configuration the two candidate rules disagree about: "serial requires CAs" rejects
       it, "serial requires hash OR CAs" accepts it. Asserting rejection here is what pins
-      the strict rule; if it is ever relaxed, this check — and only this check — flips.
+      the strict rule for scoped tokens; if it is ever relaxed, this check — and only this
+      check — flips.
     artifacts: [checks.py]
     checks: |
-      observation_equals host unscoped-serial-no-cas      accepted false
-      observation_equals host unscoped-serial-hash-no-cas accepted false  # the case the two rules disagree about
-      observation_equals host scoped-serial-no-cas        accepted false
-      observation_equals host scoped-serial-hash-no-cas   accepted false
+      observation_equals host scoped-serial-no-cas      accepted false
+      observation_equals host scoped-serial-hash-no-cas accepted false  # the case the two rules disagree about
+
+  - id: classic-serial-rule-unchanged
+    statement: >
+      A CLASSIC ProvisionTokenV2 is NOT held to that rule: ek_certificate_serial still
+      requires only ek_public_hash OR ekcert_allowed_cas, so serial+hash is still accepted.
+    why: >
+      **The divergence is deliberate, so it is asserted rather than assumed.** The strict
+      rule above was applied to scoped tokens only. Tightening ProvisionTokenV2 the same way
+      would reject tokens that already exist in the field — a breaking change judged not
+      worth its benefit — so the classic validator was left as it was.
+
+      **This is the negative half of the pair.** The same two configurations go through the
+      classic validator, and `serial-hash-no-cas` must come out the OTHER way. If the two
+      kinds ever agree on it, one side of the intended split is gone: both rejecting means
+      the classic path was tightened after all (this claim fails), both accepting means the
+      scoped rule never landed (the claim above fails).
+    artifacts: [checks.py]
+    checks: |
+      observation_equals host unscoped-serial-no-cas      accepted false  # serial alone: neither kind accepts it
+      observation_equals host unscoped-serial-hash-no-cas accepted true   # the hash satisfies the classic rule

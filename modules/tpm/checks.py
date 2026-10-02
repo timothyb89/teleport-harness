@@ -12,9 +12,10 @@ Two kinds of case:
   record whether it joined. The interesting half is the denials: a token whose trust anchor
   is a CA that did not sign this EKCert, or whose allow rule pins a hash/serial the device
   does not have, must be refused.
-* **create** — the token is never expected to exist. These cover admission-time validation
-  (`ek_certificate_serial` without `ekcert_allowed_cas`), so the observation is whether
-  `tctl create` was ACCEPTED, and no tbot runs at all.
+* **create** — no tbot runs at all; the observation is whether `tctl create` was ACCEPTED.
+  These cover admission-time validation of `ek_certificate_serial` without
+  `ekcert_allowed_cas`, where the two token kinds deliberately DISAGREE — so unlike the
+  join cases, the expected verdict here depends on scoped vs classic (see CREATE_SHAPES).
 
 It acts and records; module.yaml's `observation_*` checks judge. That split matters more
 than usual here, because "denied" is only interesting if it was denied for the RIGHT
@@ -74,11 +75,30 @@ JOIN_SHAPES = [
 ]
 
 # Admission-time validation: a serial is a client-assertable value, so pinning one without
-# a CA to verify the certificate it came from proves nothing. Both shapes must be REJECTED
-# at create time. `serial-hash-no-cas` is the discriminating one — it is the only config
-# the two candidate rules disagree about ("serial requires CAs" rejects it; "serial
-# requires hash OR CAs" accepts it), so this case is what a rule change actually moves.
+# a CA to verify the certificate it came from proves nothing. The two token kinds enforce
+# that observation to DIFFERENT depths, on purpose:
+#
+#   * SCOPED (lib/scopes/joining/token.go validateTPM) — a serial ALWAYS requires
+#     ekcert_allowed_cas, hash or no hash.
+#   * CLASSIC ProvisionTokenV2 (lib/services/local/provisioning.go validateTPMToken) — the
+#     original, looser rule: a serial requires ek_public_hash OR ekcert_allowed_cas.
+#     Tightening it to match scoped would reject tokens that already exist in the field, so
+#     it was deliberately left alone.
+#
+# `serial-hash-no-cas` is therefore the discriminating case, and the ONLY one whose verdict
+# differs by token kind — rejected scoped, accepted classic. `serial-no-cas` is rejected by
+# both and holds the other variable still.
 CREATE_SHAPES = ["serial-no-cas", "serial-hash-no-cas"]
+
+# (shape, scoped) -> whether `tctl create` should ACCEPT it. Spelled out as a table rather
+# than derived, because the divergence is the point: a reader can see at a glance that
+# exactly one cell differs, and that it is the serial+hash one.
+CREATE_ACCEPTED = {
+    ("serial-no-cas", False): False,
+    ("serial-no-cas", True): False,
+    ("serial-hash-no-cas", False): True,
+    ("serial-hash-no-cas", True): False,
+}
 
 
 def _case_id(scoped: bool, shape: str, valid: bool | None = None) -> str:
@@ -117,15 +137,23 @@ def _tpm_block(shape: str, valid: bool, facts: dict) -> tuple[list[str], dict, s
     raise ValueError(f"unknown shape {shape}")
 
 
-def _create_shape(shape: str, facts: dict) -> tuple[list[str], dict, str]:
-    """(cas, rule, note) for an admission-validation case — always CA-less by design."""
+def _create_shape(shape: str, scoped: bool, facts: dict) -> tuple[list[str], dict, str]:
+    """(cas, rule, note) for an admission-validation case — always CA-less by design.
+
+    The note names the rule that decides this cell, since the same configuration gets
+    opposite verdicts depending on the token kind.
+    """
     if shape == "serial-no-cas":
         return ([], {"ek_certificate_serial": facts["ek_certificate_serial"]},
-                "serial pinned with no CA to verify the certificate it came from")
+                "serial pinned with no CA to verify the certificate it came from — "
+                "neither token kind accepts this")
     if shape == "serial-hash-no-cas":
         return ([], {"ek_certificate_serial": facts["ek_certificate_serial"],
                      "ek_public_hash": facts["ek_public_hash"]},
-                "serial pinned alongside a hash, still with no CA")
+                "serial pinned alongside a hash, still with no CA — " + (
+                    "scoped still refuses it: a serial requires CAs regardless of the hash"
+                    if scoped else
+                    "classic ProvisionTokenV2 accepts it: hash OR CAs satisfies its rule"))
     raise ValueError(f"unknown create shape {shape}")
 
 
@@ -273,14 +301,14 @@ def _store(cluster, records: list[dict]) -> None:
 # --------------------------------------------------------------------------------------
 def _run_create_case(cluster, scoped: bool, shape: str, facts: dict) -> dict:
     case = _case_id(scoped, shape)
-    cas, rule, note = _create_shape(shape, facts)
+    cas, rule, note = _create_shape(shape, scoped, facts)
     rc, out = _create_resource(cluster, token_yaml(case, scoped, cas, rule), case)
     return _record(case, {
         "kind": "create",
         "scoped": str(scoped).lower(),
         "ekcert_allowed_cas": "none",
         "allow_rule": ", ".join(f"{k}={v}" for k, v in sorted(rule.items())),
-        "expected": "rejected",
+        "expected": "accepted" if CREATE_ACCEPTED[(shape, scoped)] else "rejected",
     }, {
         "accepted": "true" if rc == 0 else "false",
         "message": _denial(out) if rc != 0 else out.strip()[:400],
