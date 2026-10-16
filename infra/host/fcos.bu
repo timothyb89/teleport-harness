@@ -19,8 +19,6 @@ version: 1.6.0
 passwd:
   users:
     - name: core
-      groups:
-        - libvirt
       ssh_authorized_keys_local:
         - host/out/ssh.pub
 

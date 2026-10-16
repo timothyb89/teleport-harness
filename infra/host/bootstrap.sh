@@ -22,6 +22,13 @@ if ! rpm -q k3s-selinux cockpit-machines libvirt-daemon-kvm >/dev/null 2>&1; the
   exit 0
 fi
 
+# The libvirt group is created by libvirt-daemon-kvm's install, so it doesn't exist
+# until after the reboot above — Ignition's own passwd.users.groups runs too early
+# (in the initramfs, before any package is layered) and fails the whole boot with
+# "useradd: cgroup 'libvirt' does not exist". Add core to it here instead, now that
+# it's real.
+usermod -aG libvirt core
+
 echo "harness: installing k3s $K3S_VERSION"
 # The installer would try to layer k3s-selinux itself (another reboot); pass 1 did it.
 # Skipping that ALSO skips its relabel, so the binary keeps the tmp_t label it was
