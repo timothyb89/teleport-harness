@@ -7,6 +7,11 @@
 # and a module owns its own runner container.
 k3s_version: v1.31.5-k3s1
 
+# k3s runs in a privileged container with its own cgroup namespace and /dev/kmsg bound
+# over — a docker-host construction with no k8s-backend equivalent yet (a CRD per run
+# would collide across concurrent clusters; docs/remote-kubernetes.md phase 7).
+requires_backend: docker
+
 # prebuild.sh cross-builds the operator out of $REPO/integrations/operator (and the CRDs
 # come from the clone's generated manifests), so every module pulling this in needs a
 # clone: it gates out on a --package/--binary run.

@@ -33,6 +33,8 @@ gate_args_common() {
   # Nothing can be BUILT from a package/binary, so modules whose composition needs the
   # clone (terraform provider, k8s operator, the docs tree) gate out with a reason.
   [ "${SOURCE_KIND:-repo}" != repo ] && gate_args+=(--no-repo)
+  # Modules whose composition needs a different backend (tpm, k8s-runner: docker) gate out.
+  gate_args+=(--backend "${HARNESS_BACKEND:-docker}")
   return 0
 }
 

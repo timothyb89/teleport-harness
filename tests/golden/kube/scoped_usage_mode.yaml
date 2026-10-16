@@ -1,0 +1,1722 @@
+objects:
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    name: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      pod-security.kubernetes.io/enforce: privileged
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-agent-kube-single-yaml-d3f124f1
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - agent-kube-single.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-agent-kube-unlimited-yaml-9895281b
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - agent-kube-unlimited.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-agent-oidc-single-yaml-793fe793
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - agent-oidc-single.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-agent-oidc-unlimited-yaml-93370178
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - agent-oidc-unlimited.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-agent-token-single-yaml-df61853e
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - agent-token-single.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-agent-token-unlimited-yaml-863c2ea3
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - agent-token-unlimited.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-auth-entrypoint-sh-7301428d
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - auth-entrypoint.sh
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-auth-yaml-470aa137
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - auth.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-bootstrap-480b084b
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - bots.manifest
+  - hooks_scoped_usage_mode__jwks-tokens.sh
+  - scoped_usage_mode__admin-token.yaml
+  - scoped_usage_mode__role-su-token-admin.yaml
+  - scoped_usage_mode__token-method-tokens.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-scoped-usage-mode-73e7e57a
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - actor.sh
+  - agent-entrypoint.sh
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-su-idbot-yaml-25e17887
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - su-idbot.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: bind-apply-on-startup-fa025427
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-auth-data
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-oidc-data
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-su-identity
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-auth
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-auth
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-oidc
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-oidc
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-actor
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-actor
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-actor
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-actor
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-idbot
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-idbot
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-idbot
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-idbot
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-kube-single-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-kube-single-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-kube-single-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-kube-single-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-kube-single-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-kube-single-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-kube-single-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-kube-single-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-kube-unlimited-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-kube-unlimited-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-kube-unlimited-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-kube-unlimited-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-kube-unlimited-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-kube-unlimited-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-kube-unlimited-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-kube-unlimited-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-oidc-single-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-oidc-single-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-oidc-single-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-oidc-single-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-oidc-single-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-oidc-single-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-oidc-single-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-oidc-single-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-oidc-unlimited-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-oidc-unlimited-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-oidc-unlimited-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-oidc-unlimited-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-oidc-unlimited-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-oidc-unlimited-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-oidc-unlimited-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-oidc-unlimited-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-token-single-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-token-single-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-token-single-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-token-single-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-token-single-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-token-single-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-token-single-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-token-single-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-token-unlimited-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-token-unlimited-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-token-unlimited-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-token-unlimited-first
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: su-token-unlimited-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-token-unlimited-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-su-token-unlimited-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-su-token-unlimited-second
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ingress
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    selector:
+      harness.teleport/pod: zz1-auth
+    ports:
+    - name: web
+      port: 8443
+      targetPort: 8443
+- apiVersion: traefik.io/v1alpha1
+  kind: IngressRouteTCP
+  metadata:
+    name: auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    entryPoints:
+    - harness
+    routes:
+    - match: HostSNI(`zz1.lab.example.com`) || HostSNIRegexp(`^.+\.zz1\.lab\.example\.com$`)
+      services:
+      - name: ingress
+        port: 8443
+    tls:
+      passthrough: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-oidc
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: vol-oidc-data
+      persistentVolumeClaim:
+        claimName: vol-oidc-data
+    containers:
+    - name: oidc
+      image: registry.harness:5000/teleport-harness-oidc:v4
+      args:
+      - -issuer=https://oidc.lab.example.com:8443
+      - -addr=:8443
+      - -audience=zz1.lab.example.com/generic-oidc
+      - -cluster-name=zz1.lab.example.com
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: vol-oidc-data
+        mountPath: /data
+        readOnly: false
+    hostAliases:
+    - ip: 127.0.0.1
+      hostnames:
+      - oidc.lab.example.com
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-auth
+  spec:
+    restartPolicy: Always
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: cm-auth-yaml-470aa137
+      configMap:
+        name: cm-auth-yaml-470aa137
+        items:
+        - key: auth.yaml
+          path: auth.yaml
+    - name: cm-bootstrap-480b084b
+      configMap:
+        name: cm-bootstrap-480b084b
+        items:
+        - key: bots.manifest
+          path: bots.manifest
+        - key: hooks_scoped_usage_mode__jwks-tokens.sh
+          path: hooks/scoped_usage_mode__jwks-tokens.sh
+        - key: scoped_usage_mode__admin-token.yaml
+          path: scoped_usage_mode__admin-token.yaml
+        - key: scoped_usage_mode__role-su-token-admin.yaml
+          path: scoped_usage_mode__role-su-token-admin.yaml
+        - key: scoped_usage_mode__token-method-tokens.yaml
+          path: scoped_usage_mode__token-method-tokens.yaml
+    - name: bind-apply-on-startup-fa025427
+      persistentVolumeClaim:
+        claimName: bind-apply-on-startup-fa025427
+    - name: cm-auth-entrypoint-sh-7301428d
+      configMap:
+        name: cm-auth-entrypoint-sh-7301428d
+        items:
+        - key: auth-entrypoint.sh
+          path: auth-entrypoint.sh
+          mode: 493
+    - name: vol-auth-data
+      persistentVolumeClaim:
+        claimName: vol-auth-data
+    containers:
+    - name: auth
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - /scripts/auth-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: cm-auth-yaml-470aa137
+        mountPath: /etc/teleport/auth.yaml
+        readOnly: true
+        subPath: auth.yaml
+      - name: cm-bootstrap-480b084b
+        mountPath: /bootstrap
+        readOnly: true
+      - name: bind-apply-on-startup-fa025427
+        mountPath: /apply-on-startup
+      - name: cm-auth-entrypoint-sh-7301428d
+        mountPath: /scripts/auth-entrypoint.sh
+        readOnly: true
+        subPath: auth-entrypoint.sh
+      - name: vol-auth-data
+        mountPath: /var/lib/teleport
+        readOnly: false
+      readinessProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - curl -fsS http://localhost:3000/healthz && test -f /tmp/bootstrap-done
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 40
+    hostAliases:
+    - ip: 127.0.0.1
+      hostnames:
+      - zz1.lab.example.com
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-idbot
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-idbot
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-su-idbot-yaml-25e17887
+      configMap:
+        name: cm-su-idbot-yaml-25e17887
+        items:
+        - key: su-idbot.yaml
+          path: su-idbot.yaml
+    - name: vol-su-identity
+      persistentVolumeClaim:
+        claimName: vol-su-identity
+    containers:
+    - name: su-idbot
+      image: registry.harness:5000/teleport-harness:test
+      args:
+      - tbot
+      - start
+      - -c
+      - /etc/tbot.yaml
+      - --token=harness-su-admin
+      - --join-method=token
+      volumeMounts:
+      - name: cm-su-idbot-yaml-25e17887
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: su-idbot.yaml
+      - name: vol-su-identity
+        mountPath: /idents
+        readOnly: false
+      readinessProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - test -s /idents/identity
+        periodSeconds: 3
+        timeoutSeconds: 3
+        failureThreshold: 40
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-kube-single-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-kube-single-first
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-kube-single-first
+    volumes:
+    - name: cm-agent-kube-single-yaml-d3f124f1
+      configMap:
+        name: cm-agent-kube-single-yaml-d3f124f1
+        items:
+        - key: agent-kube-single.yaml
+          path: agent-kube-single.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-kube-single-first
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      - name: OIDC_URL
+        value: https://oidc.lab.example.com:8443
+      - name: SERVICE_ACCOUNT
+        value: su-kube-sa
+      volumeMounts:
+      - name: cm-agent-kube-single-yaml-d3f124f1
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-kube-single.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-kube-single-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-kube-single-second
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-kube-single-second
+    volumes:
+    - name: cm-agent-kube-single-yaml-d3f124f1
+      configMap:
+        name: cm-agent-kube-single-yaml-d3f124f1
+        items:
+        - key: agent-kube-single.yaml
+          path: agent-kube-single.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-kube-single-second
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      - name: WAIT_FOR
+        value: su-kube-single-first
+      - name: OIDC_URL
+        value: https://oidc.lab.example.com:8443
+      - name: SERVICE_ACCOUNT
+        value: su-kube-sa
+      volumeMounts:
+      - name: cm-agent-kube-single-yaml-d3f124f1
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-kube-single.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-kube-unlimited-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-kube-unlimited-first
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-kube-unlimited-first
+    volumes:
+    - name: cm-agent-kube-unlimited-yaml-9895281b
+      configMap:
+        name: cm-agent-kube-unlimited-yaml-9895281b
+        items:
+        - key: agent-kube-unlimited.yaml
+          path: agent-kube-unlimited.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-kube-unlimited-first
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      - name: OIDC_URL
+        value: https://oidc.lab.example.com:8443
+      - name: SERVICE_ACCOUNT
+        value: su-kube-sa
+      volumeMounts:
+      - name: cm-agent-kube-unlimited-yaml-9895281b
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-kube-unlimited.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-kube-unlimited-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-kube-unlimited-second
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-kube-unlimited-second
+    volumes:
+    - name: cm-agent-kube-unlimited-yaml-9895281b
+      configMap:
+        name: cm-agent-kube-unlimited-yaml-9895281b
+        items:
+        - key: agent-kube-unlimited.yaml
+          path: agent-kube-unlimited.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-kube-unlimited-second
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      - name: WAIT_FOR
+        value: su-kube-unlimited-first
+      - name: OIDC_URL
+        value: https://oidc.lab.example.com:8443
+      - name: SERVICE_ACCOUNT
+        value: su-kube-sa
+      volumeMounts:
+      - name: cm-agent-kube-unlimited-yaml-9895281b
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-kube-unlimited.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-oidc-single-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-oidc-single-first
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-oidc-single-first
+    volumes:
+    - name: cm-agent-oidc-single-yaml-793fe793
+      configMap:
+        name: cm-agent-oidc-single-yaml-793fe793
+        items:
+        - key: agent-oidc-single.yaml
+          path: agent-oidc-single.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-oidc-single-first
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      volumeMounts:
+      - name: cm-agent-oidc-single-yaml-793fe793
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-oidc-single.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-oidc-single-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-oidc-single-second
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-oidc-single-second
+    volumes:
+    - name: cm-agent-oidc-single-yaml-793fe793
+      configMap:
+        name: cm-agent-oidc-single-yaml-793fe793
+        items:
+        - key: agent-oidc-single.yaml
+          path: agent-oidc-single.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-oidc-single-second
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      - name: WAIT_FOR
+        value: su-oidc-single-first
+      volumeMounts:
+      - name: cm-agent-oidc-single-yaml-793fe793
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-oidc-single.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-oidc-unlimited-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-oidc-unlimited-first
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-oidc-unlimited-first
+    volumes:
+    - name: cm-agent-oidc-unlimited-yaml-93370178
+      configMap:
+        name: cm-agent-oidc-unlimited-yaml-93370178
+        items:
+        - key: agent-oidc-unlimited.yaml
+          path: agent-oidc-unlimited.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-oidc-unlimited-first
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      volumeMounts:
+      - name: cm-agent-oidc-unlimited-yaml-93370178
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-oidc-unlimited.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-oidc-unlimited-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-oidc-unlimited-second
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-oidc-unlimited-second
+    volumes:
+    - name: cm-agent-oidc-unlimited-yaml-93370178
+      configMap:
+        name: cm-agent-oidc-unlimited-yaml-93370178
+        items:
+        - key: agent-oidc-unlimited.yaml
+          path: agent-oidc-unlimited.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-oidc-unlimited-second
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      - name: WAIT_FOR
+        value: su-oidc-unlimited-first
+      volumeMounts:
+      - name: cm-agent-oidc-unlimited-yaml-93370178
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-oidc-unlimited.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-token-single-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-token-single-first
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-token-single-first
+    volumes:
+    - name: cm-agent-token-single-yaml-df61853e
+      configMap:
+        name: cm-agent-token-single-yaml-df61853e
+        items:
+        - key: agent-token-single.yaml
+          path: agent-token-single.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-token-single-first
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      volumeMounts:
+      - name: cm-agent-token-single-yaml-df61853e
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-token-single.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-token-single-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-token-single-second
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-token-single-second
+    volumes:
+    - name: cm-agent-token-single-yaml-df61853e
+      configMap:
+        name: cm-agent-token-single-yaml-df61853e
+        items:
+        - key: agent-token-single.yaml
+          path: agent-token-single.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-token-single-second
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      - name: WAIT_FOR
+        value: su-token-single-first
+      volumeMounts:
+      - name: cm-agent-token-single-yaml-df61853e
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-token-single.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-token-unlimited-first
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-token-unlimited-first
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-token-unlimited-first
+    volumes:
+    - name: cm-agent-token-unlimited-yaml-863c2ea3
+      configMap:
+        name: cm-agent-token-unlimited-yaml-863c2ea3
+        items:
+        - key: agent-token-unlimited.yaml
+          path: agent-token-unlimited.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-token-unlimited-first
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      volumeMounts:
+      - name: cm-agent-token-unlimited-yaml-863c2ea3
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-token-unlimited.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-token-unlimited-second
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-token-unlimited-second
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    hostname: zz1-su-token-unlimited-second
+    volumes:
+    - name: cm-agent-token-unlimited-yaml-863c2ea3
+      configMap:
+        name: cm-agent-token-unlimited-yaml-863c2ea3
+        items:
+        - key: agent-token-unlimited.yaml
+          path: agent-token-unlimited.yaml
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    containers:
+    - name: su-token-unlimited-second
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/agent-entrypoint.sh
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      - name: WAIT_FOR
+        value: su-token-unlimited-first
+      volumeMounts:
+      - name: cm-agent-token-unlimited-yaml-863c2ea3
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: agent-token-unlimited.yaml
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-su-actor
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-su-actor
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-scoped-usage-mode-73e7e57a
+      configMap:
+        name: cm-scoped-usage-mode-73e7e57a
+        items:
+        - key: actor.sh
+          path: actor.sh
+          mode: 493
+        - key: agent-entrypoint.sh
+          path: agent-entrypoint.sh
+          mode: 493
+    - name: vol-su-identity
+      persistentVolumeClaim:
+        claimName: vol-su-identity
+    containers:
+    - name: su-actor
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - sh
+      - /scripts/actor.sh
+      env:
+      - name: AUTH_ADDR
+        value: auth:3025
+      - name: IDENTITY
+        value: /id/identity
+      - name: SCOPE
+        value: /su-test
+      - name: CLUSTER_ID
+        value: zz1
+      - name: JOIN_SHORTS
+        value: token oidc kube
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      volumeMounts:
+      - name: cm-scoped-usage-mode-73e7e57a
+        mountPath: /scripts
+        readOnly: true
+      - name: vol-su-identity
+        mountPath: /id
+        readOnly: true
+      readinessProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - test -f /tmp/actor-done
+        periodSeconds: 3
+        timeoutSeconds: 3
+        failureThreshold: 100
+plan:
+  namespace: th-zz1
+  order:
+  - - zz1-oidc
+  - - zz1-auth
+  - - zz1-su-idbot
+    - zz1-su-kube-single-first
+    - zz1-su-kube-single-second
+    - zz1-su-kube-unlimited-first
+    - zz1-su-kube-unlimited-second
+    - zz1-su-oidc-single-first
+    - zz1-su-oidc-single-second
+    - zz1-su-oidc-unlimited-first
+    - zz1-su-oidc-unlimited-second
+    - zz1-su-token-single-first
+    - zz1-su-token-single-second
+    - zz1-su-token-unlimited-first
+    - zz1-su-token-unlimited-second
+  - - zz1-su-actor
+  pods:
+    zz1-auth:
+      needs:
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+    zz1-oidc:
+      needs: []
+      host_aliases: {}
+    zz1-su-actor:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      - pod: zz1-su-idbot
+        condition: ready
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-idbot:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-kube-single-first:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-kube-single-second:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-kube-unlimited-first:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-kube-unlimited-second:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-oidc-single-first:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-oidc-single-second:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-oidc-unlimited-first:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-oidc-unlimited-second:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-token-single-first:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-token-single-second:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-token-unlimited-first:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-su-token-unlimited-second:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+  services:
+    auth:
+      pod: zz1-auth
+      container: auth
+    oidc:
+      pod: zz1-oidc
+      container: oidc
+    su-actor:
+      pod: zz1-su-actor
+      container: su-actor
+    su-idbot:
+      pod: zz1-su-idbot
+      container: su-idbot
+    su-kube-single-first:
+      pod: zz1-su-kube-single-first
+      container: su-kube-single-first
+    su-kube-single-second:
+      pod: zz1-su-kube-single-second
+      container: su-kube-single-second
+    su-kube-unlimited-first:
+      pod: zz1-su-kube-unlimited-first
+      container: su-kube-unlimited-first
+    su-kube-unlimited-second:
+      pod: zz1-su-kube-unlimited-second
+      container: su-kube-unlimited-second
+    su-oidc-single-first:
+      pod: zz1-su-oidc-single-first
+      container: su-oidc-single-first
+    su-oidc-single-second:
+      pod: zz1-su-oidc-single-second
+      container: su-oidc-single-second
+    su-oidc-unlimited-first:
+      pod: zz1-su-oidc-unlimited-first
+      container: su-oidc-unlimited-first
+    su-oidc-unlimited-second:
+      pod: zz1-su-oidc-unlimited-second
+      container: su-oidc-unlimited-second
+    su-token-single-first:
+      pod: zz1-su-token-single-first
+      container: su-token-single-first
+    su-token-single-second:
+      pod: zz1-su-token-single-second
+      container: su-token-single-second
+    su-token-unlimited-first:
+      pod: zz1-su-token-unlimited-first
+      container: su-token-unlimited-first
+    su-token-unlimited-second:
+      pod: zz1-su-token-unlimited-second
+      container: su-token-unlimited-second
+  secrets:
+  - name: wildcard-cert
+    from: harness-system
+  artifacts: []
+  pullbacks:
+  - source: apply-on-startup
+    pod: zz1-auth
+    container: auth
+    path: /apply-on-startup
+  local_images:
+  - teleport-harness-oidc:v4
+  - teleport-harness:test

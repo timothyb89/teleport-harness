@@ -5,6 +5,7 @@
 # container cannot have one). prebuild.sh owns that VM; checks.py drives it. What lives
 # here is only the cluster-side scaffolding the joins need.
 requires_repo: true                    # prebuild.sh cross-builds tbot from the clone
+requires_backend: docker               # the client is a lima VM on the docker host (k8s: phase 8, KubeVirt)
 
 auth_env:
   TELEPORT_UNSTABLE_SCOPES: "yes"      # scoped tokens/roles/bots need this on auth

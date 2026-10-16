@@ -329,11 +329,41 @@ def repo_requirement(module_dir: Path, components_dir: Path) -> str:
     return ""
 
 
+def backend_requirement(module_dir: Path, components_dir: Path, backend: str) -> str:
+    """Which unit in this module's composition can't run on `backend`, or "" if none.
+
+    Declared as `requires_backend: <name>` in a render.yaml (module or component; a module
+    inherits it from its components, as with requires_repo). Today only `docker` is ever
+    required: the tpm module's client is a lima VM on the docker host, and k8s-runner runs
+    k3s in a privileged container with a cgroup namespace — neither has a k8s-backend
+    equivalent yet (docs/remote-kubernetes.md, phases 7 and 8).
+    """
+
+    def _rv(d: Path) -> dict:
+        f = d / "render.yaml"
+        if not f.is_file():
+            return {}
+        data = yaml.safe_load(f.read_text()) or {}
+        return data if isinstance(data, dict) else {}
+
+    rv = _rv(module_dir)
+    need = rv.get("requires_backend")
+    if need and need != backend:
+        return f"module {module_dir.name} (requires_backend: {need})"
+    for c in rv.get("components", []) or []:
+        need = _rv(components_dir / c).get("requires_backend")
+        if need and need != backend:
+            return f"component {c} (requires_backend: {need})"
+    return ""
+
+
 def gate(
     module: Module,
     features: list[str] | None,
     version: str | None,
     repo_unit: str = "",
+    backend_unit: str = "",
+    backend: str = "docker",
 ) -> GateResult:
     """Decide whether to run `module` given the target's features/version.
 
@@ -344,6 +374,8 @@ def gate(
     `repo_unit` is set by the caller (from repo_requirement) only when the run has NO
     teleport clone — a package/binary source — and this module's composition needs one.
     """
+    if backend_unit:
+        return GateResult(skip=True, reason=f"{backend_unit} cannot run on the {backend} backend")
     if repo_unit:
         return GateResult(
             skip=True,

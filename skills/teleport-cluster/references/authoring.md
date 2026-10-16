@@ -183,7 +183,11 @@ Two rules that apply to any script, observations or not:
   depends on ordering, say so in `why` — and prefer asserting on state nothing else rewrites
   (see the bound_keypair_status note about bootstrap re-application reverting a spec edit).
 - **`services.yml.j2`** — a compose FRAGMENT (`services:` + optional `volumes:`), your bots/agents
-  only (no auth — that's the base). Jinja context: `cluster_id fqdn port image out module_dir
+  only (no auth — that's the base). It must also translate for the k8s backend
+  (`harness/kube.py`): stick to the compose keys existing modules use; a new one needs a
+  translator rule, and `tests/test_kube.py` snapshots fail until the golden file is
+  regenerated (`HARNESS_UPDATE_GOLDEN=1`). A docker-only unit declares
+  `requires_backend: docker` in its render.yaml. Jinja context: `cluster_id fqdn port image out module_dir
   lab_domain harness_domain` + everything in `render.yaml`. Container names become
   `{{ cluster_id }}-<service>`; checks reference the suffix after `<id>-`. Example:
   ```yaml

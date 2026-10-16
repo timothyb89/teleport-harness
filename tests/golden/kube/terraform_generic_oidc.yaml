@@ -1,0 +1,767 @@
+objects:
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    name: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      pod-security.kubernetes.io/enforce: privileged
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-auth-entrypoint-sh-7301428d
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - auth-entrypoint.sh
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-auth-yaml-470aa137
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - auth.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-bootstrap-480b084b
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - bots.manifest
+  - terraform-runner__token.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-tf-agent-badorg-yaml-b31d810c
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - tf-agent-badorg.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-tf-agent-ok-yaml-087f0fc7
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - tf-agent-ok.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-tf-e8f44c4a
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - main.tf
+  - variables.tf
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-tf-entrypoint-sh-16adf958
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - tf-entrypoint.sh
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-tf-idbot-yaml-dc349ae7
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - tf-idbot.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: bind-apply-on-startup-fa025427
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-auth-data
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-oidc-data
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-tf-identity
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-auth
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-auth
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-oidc
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-oidc
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: tf-agent-badorg
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-tf-agent-badorg
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-tf-agent-badorg
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-tf-agent-badorg
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: tf-agent-ok
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-tf-agent-ok
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-tf-agent-ok
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-tf-agent-ok
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: tf-idbot
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-tf-idbot
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-tf-idbot
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-tf-idbot
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: tf-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-tf-oidc
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-tf-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-tf-oidc
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ingress
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    selector:
+      harness.teleport/pod: zz1-auth
+    ports:
+    - name: web
+      port: 8443
+      targetPort: 8443
+- apiVersion: traefik.io/v1alpha1
+  kind: IngressRouteTCP
+  metadata:
+    name: auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    entryPoints:
+    - harness
+    routes:
+    - match: HostSNI(`zz1.lab.example.com`) || HostSNIRegexp(`^.+\.zz1\.lab\.example\.com$`)
+      services:
+      - name: ingress
+        port: 8443
+    tls:
+      passthrough: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-oidc
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: vol-oidc-data
+      persistentVolumeClaim:
+        claimName: vol-oidc-data
+    containers:
+    - name: oidc
+      image: registry.harness:5000/teleport-harness-oidc:v4
+      args:
+      - -issuer=https://oidc.lab.example.com:8443
+      - -addr=:8443
+      - -audience=zz1.lab.example.com/generic-oidc
+      - -cluster-name=zz1.lab.example.com
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: vol-oidc-data
+        mountPath: /data
+        readOnly: false
+    hostAliases:
+    - ip: 127.0.0.1
+      hostnames:
+      - oidc.lab.example.com
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-auth
+  spec:
+    restartPolicy: Always
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: cm-auth-yaml-470aa137
+      configMap:
+        name: cm-auth-yaml-470aa137
+        items:
+        - key: auth.yaml
+          path: auth.yaml
+    - name: cm-bootstrap-480b084b
+      configMap:
+        name: cm-bootstrap-480b084b
+        items:
+        - key: bots.manifest
+          path: bots.manifest
+        - key: terraform-runner__token.yaml
+          path: terraform-runner__token.yaml
+    - name: bind-apply-on-startup-fa025427
+      persistentVolumeClaim:
+        claimName: bind-apply-on-startup-fa025427
+    - name: cm-auth-entrypoint-sh-7301428d
+      configMap:
+        name: cm-auth-entrypoint-sh-7301428d
+        items:
+        - key: auth-entrypoint.sh
+          path: auth-entrypoint.sh
+          mode: 493
+    - name: vol-auth-data
+      persistentVolumeClaim:
+        claimName: vol-auth-data
+    containers:
+    - name: auth
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - /scripts/auth-entrypoint.sh
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: cm-auth-yaml-470aa137
+        mountPath: /etc/teleport/auth.yaml
+        readOnly: true
+        subPath: auth.yaml
+      - name: cm-bootstrap-480b084b
+        mountPath: /bootstrap
+        readOnly: true
+      - name: bind-apply-on-startup-fa025427
+        mountPath: /apply-on-startup
+      - name: cm-auth-entrypoint-sh-7301428d
+        mountPath: /scripts/auth-entrypoint.sh
+        readOnly: true
+        subPath: auth-entrypoint.sh
+      - name: vol-auth-data
+        mountPath: /var/lib/teleport
+        readOnly: false
+      readinessProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - curl -fsS http://localhost:3000/healthz && test -f /tmp/bootstrap-done
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 40
+    hostAliases:
+    - ip: 127.0.0.1
+      hostnames:
+      - zz1.lab.example.com
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-tf-idbot
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-tf-idbot
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-tf-idbot-yaml-dc349ae7
+      configMap:
+        name: cm-tf-idbot-yaml-dc349ae7
+        items:
+        - key: tf-idbot.yaml
+          path: tf-idbot.yaml
+    - name: vol-tf-identity
+      persistentVolumeClaim:
+        claimName: vol-tf-identity
+    containers:
+    - name: tf-idbot
+      image: registry.harness:5000/teleport-harness:test
+      args:
+      - tbot
+      - start
+      - -c
+      - /etc/tbot.yaml
+      - --token=harness-tf-admin-secret
+      - --join-method=token
+      volumeMounts:
+      - name: cm-tf-idbot-yaml-dc349ae7
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: tf-idbot.yaml
+      - name: vol-tf-identity
+        mountPath: /idents
+        readOnly: false
+      readinessProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - test -s /idents/identity
+        periodSeconds: 3
+        timeoutSeconds: 3
+        failureThreshold: 40
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-tf-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-tf-oidc
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: art-tf-plugins-f61551dd
+      emptyDir: {}
+    - name: cm-tf-entrypoint-sh-16adf958
+      configMap:
+        name: cm-tf-entrypoint-sh-16adf958
+        items:
+        - key: tf-entrypoint.sh
+          path: tf-entrypoint.sh
+    - name: cm-tf-e8f44c4a
+      configMap:
+        name: cm-tf-e8f44c4a
+        items:
+        - key: main.tf
+          path: main.tf
+        - key: variables.tf
+          path: variables.tf
+    - name: vol-tf-identity
+      persistentVolumeClaim:
+        claimName: vol-tf-identity
+    initContainers:
+    - name: artifact-0
+      image: registry.harness:5000/harness-artifact:zz1-art-tf-plugins-f61551dd
+      command:
+      - sh
+      - -c
+      - cp -R /artifact/. /dst/
+      volumeMounts:
+      - name: art-tf-plugins-f61551dd
+        mountPath: /dst
+    containers:
+    - name: tf-oidc
+      image: hashicorp/terraform:1.9
+      command:
+      - sh
+      - /scripts/tf-entrypoint.sh
+      env:
+      - name: TF_BIN
+        value: terraform
+      - name: TF_TELEPORT_ADDR
+        value: zz1-auth:3025
+      - name: TF_TELEPORT_IDENTITY_FILE_PATH
+        value: /id/identity
+      - name: TF_VAR_issuer
+        value: https://oidc.lab.example.com:8443
+      - name: TF_VAR_audience
+        value: zz1.lab.example.com/generic-oidc
+      volumeMounts:
+      - name: art-tf-plugins-f61551dd
+        mountPath: /plugins
+        readOnly: true
+      - name: cm-tf-entrypoint-sh-16adf958
+        mountPath: /scripts/tf-entrypoint.sh
+        readOnly: true
+        subPath: tf-entrypoint.sh
+      - name: cm-tf-e8f44c4a
+        mountPath: /work
+        readOnly: true
+      - name: vol-tf-identity
+        mountPath: /id
+        readOnly: true
+      readinessProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - test -f /tmp/tf-apply-done
+        periodSeconds: 3
+        timeoutSeconds: 3
+        failureThreshold: 40
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-tf-agent-badorg
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-tf-agent-badorg
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-tf-agent-badorg-yaml-b31d810c
+      configMap:
+        name: cm-tf-agent-badorg-yaml-b31d810c
+        items:
+        - key: tf-agent-badorg.yaml
+          path: tf-agent-badorg.yaml
+    containers:
+    - name: tf-agent-badorg
+      image: registry.harness:5000/teleport-harness:test
+      args:
+      - teleport
+      - start
+      - --config
+      - /etc/teleport/teleport.yaml
+      volumeMounts:
+      - name: cm-tf-agent-badorg-yaml-b31d810c
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: tf-agent-badorg.yaml
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-tf-agent-ok
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-tf-agent-ok
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-tf-agent-ok-yaml-087f0fc7
+      configMap:
+        name: cm-tf-agent-ok-yaml-087f0fc7
+        items:
+        - key: tf-agent-ok.yaml
+          path: tf-agent-ok.yaml
+    containers:
+    - name: tf-agent-ok
+      image: registry.harness:5000/teleport-harness:test
+      args:
+      - teleport
+      - start
+      - --config
+      - /etc/teleport/teleport.yaml
+      volumeMounts:
+      - name: cm-tf-agent-ok-yaml-087f0fc7
+        mountPath: /etc/teleport/teleport.yaml
+        readOnly: true
+        subPath: tf-agent-ok.yaml
+plan:
+  namespace: th-zz1
+  order:
+  - - zz1-oidc
+  - - zz1-auth
+  - - zz1-tf-idbot
+  - - zz1-tf-oidc
+  - - zz1-tf-agent-badorg
+    - zz1-tf-agent-ok
+  pods:
+    zz1-auth:
+      needs:
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+    zz1-oidc:
+      needs: []
+      host_aliases: {}
+    zz1-tf-agent-badorg:
+      needs:
+      - pod: zz1-auth
+        condition: started
+      - pod: zz1-oidc
+        condition: started
+      - pod: zz1-tf-oidc
+        condition: ready
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-tf-agent-ok:
+      needs:
+      - pod: zz1-auth
+        condition: started
+      - pod: zz1-oidc
+        condition: started
+      - pod: zz1-tf-oidc
+        condition: ready
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-tf-idbot:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-tf-oidc:
+      needs:
+      - pod: zz1-auth
+        condition: started
+      - pod: zz1-oidc
+        condition: started
+      - pod: zz1-tf-idbot
+        condition: ready
+      host_aliases:
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+  services:
+    auth:
+      pod: zz1-auth
+      container: auth
+    oidc:
+      pod: zz1-oidc
+      container: oidc
+    tf-agent-badorg:
+      pod: zz1-tf-agent-badorg
+      container: tf-agent-badorg
+    tf-agent-ok:
+      pod: zz1-tf-agent-ok
+      container: tf-agent-ok
+    tf-idbot:
+      pod: zz1-tf-idbot
+      container: tf-idbot
+    tf-oidc:
+      pod: zz1-tf-oidc
+      container: tf-oidc
+  secrets:
+  - name: wildcard-cert
+    from: harness-system
+  artifacts:
+  - image: registry.harness:5000/harness-artifact:zz1-art-tf-plugins-f61551dd
+    source: $STATE/tf-plugins
+    kind: dir
+  pullbacks:
+  - source: apply-on-startup
+    pod: zz1-auth
+    container: auth
+    path: /apply-on-startup
+  local_images:
+  - teleport-harness-oidc:v4
+  - teleport-harness:test

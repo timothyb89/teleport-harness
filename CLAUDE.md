@@ -129,6 +129,14 @@ brain owns decisions + rendering, the shell owns orchestration.
   provision-token resources applied at bootstrap (rendered if `.j2`). `prebuild.sh` *(optional)* —
   imperative pre-step (build a side image), run with the context as `UPPER_CASE` env (incl.
   `$REPO`, the clone path — how `terraform-runner` builds the provider, and `$OUT`, the state dir).
+  **`requires_backend: docker`** — this unit only runs on the docker backend (`tpm`: its
+  client is a lima VM on the docker host; `k8s-runner`: k3s in a privileged container with
+  its own cgroup namespace). Inherited from components like `requires_repo`;
+  `gate`/`plan-resolve --backend k8s` SKIP such a module with the unit's name, and
+  `kube-render` refuses it. Everything else must TRANSLATE: `harness/kube.py` turns the
+  rendered compose into k8s objects and rejects any compose key, mount form or network
+  shape it has no rule for — adding one to a fragment means adding a rule there too
+  (`tests/test_kube.py` snapshots every module, so the diff is reviewable).
   **`requires_repo: true`** — this unit BUILDS from the clone (a `prebuild.sh` `go build`, a
   `{{ repo }}/docs` mount), so it cannot run against a `--package`/`--binary` source. A module
   inherits it from its components (`terraform-runner`, `k8s-runner`), so `terraform_bot` and

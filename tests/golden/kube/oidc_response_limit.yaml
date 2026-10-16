@@ -1,0 +1,856 @@
+objects:
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    name: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      pod-security.kubernetes.io/enforce: privileged
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-auth-entrypoint-sh-7301428d
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - auth-entrypoint.sh
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-auth-yaml-470aa137
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - auth.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-bootstrap-480b084b
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - bots.manifest
+  - oidc_response_limit__role-limit-tester.yaml
+  - oidc_response_limit__token-limit-bigdisco.yaml
+  - oidc_response_limit__token-limit-bigjwks.yaml
+  - oidc_response_limit__token-limit-ok.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-scripts-46f8e2fb
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - join-oneshot.sh
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-tbot-bigdisco-yaml-df8d6fbc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - tbot-bigdisco.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-tbot-bigjwks-yaml-f426cb35
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - tbot-bigjwks.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-tbot-ok-yaml-59c95498
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - tbot-ok.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: bind-apply-on-startup-fa025427
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-auth-data
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-bigdisco-data
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-bigjwks-data
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-oidc-data
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-auth
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-auth
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: bigdisco
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-bigdisco
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-bigdisco
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-bigdisco
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: bigjwks
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-bigjwks
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-bigjwks
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-bigjwks
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: limit-bigdisco
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-limit-bigdisco
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-limit-bigdisco
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-limit-bigdisco
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: limit-bigjwks
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-limit-bigjwks
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-limit-bigjwks
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-limit-bigjwks
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: limit-ok
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-limit-ok
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-limit-ok
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-limit-ok
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-oidc
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-oidc
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ingress
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    selector:
+      harness.teleport/pod: zz1-auth
+    ports:
+    - name: web
+      port: 8443
+      targetPort: 8443
+- apiVersion: traefik.io/v1alpha1
+  kind: IngressRouteTCP
+  metadata:
+    name: auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    entryPoints:
+    - harness
+    routes:
+    - match: HostSNI(`zz1.lab.example.com`) || HostSNIRegexp(`^.+\.zz1\.lab\.example\.com$`)
+      services:
+      - name: ingress
+        port: 8443
+    tls:
+      passthrough: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-bigdisco
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-bigdisco
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: vol-bigdisco-data
+      persistentVolumeClaim:
+        claimName: vol-bigdisco-data
+    containers:
+    - name: bigdisco
+      image: registry.harness:5000/teleport-harness-oidc:v2
+      args:
+      - -issuer=https://bigdisco.lab.example.com:8443
+      - -addr=:8443
+      - -cluster-name=zz1.lab.example.com
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      - -oversize-endpoints=discovery
+      - -hang-after-oversize
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: vol-bigdisco-data
+        mountPath: /data
+        readOnly: false
+    hostAliases:
+    - ip: 127.0.0.1
+      hostnames:
+      - bigdisco.lab.example.com
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-bigjwks
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-bigjwks
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: vol-bigjwks-data
+      persistentVolumeClaim:
+        claimName: vol-bigjwks-data
+    containers:
+    - name: bigjwks
+      image: registry.harness:5000/teleport-harness-oidc:v2
+      args:
+      - -issuer=https://bigjwks.lab.example.com:8443
+      - -addr=:8443
+      - -cluster-name=zz1.lab.example.com
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      - -oversize-endpoints=jwks
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: vol-bigjwks-data
+        mountPath: /data
+        readOnly: false
+    hostAliases:
+    - ip: 127.0.0.1
+      hostnames:
+      - bigjwks.lab.example.com
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-oidc
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: vol-oidc-data
+      persistentVolumeClaim:
+        claimName: vol-oidc-data
+    containers:
+    - name: oidc
+      image: registry.harness:5000/teleport-harness-oidc:v4
+      args:
+      - -issuer=https://oidc.lab.example.com:8443
+      - -addr=:8443
+      - -audience=zz1.lab.example.com/generic-oidc
+      - -cluster-name=zz1.lab.example.com
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: vol-oidc-data
+        mountPath: /data
+        readOnly: false
+    hostAliases:
+    - ip: 127.0.0.1
+      hostnames:
+      - oidc.lab.example.com
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-auth
+  spec:
+    restartPolicy: Always
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: cm-auth-yaml-470aa137
+      configMap:
+        name: cm-auth-yaml-470aa137
+        items:
+        - key: auth.yaml
+          path: auth.yaml
+    - name: cm-bootstrap-480b084b
+      configMap:
+        name: cm-bootstrap-480b084b
+        items:
+        - key: bots.manifest
+          path: bots.manifest
+        - key: oidc_response_limit__role-limit-tester.yaml
+          path: oidc_response_limit__role-limit-tester.yaml
+        - key: oidc_response_limit__token-limit-bigdisco.yaml
+          path: oidc_response_limit__token-limit-bigdisco.yaml
+        - key: oidc_response_limit__token-limit-bigjwks.yaml
+          path: oidc_response_limit__token-limit-bigjwks.yaml
+        - key: oidc_response_limit__token-limit-ok.yaml
+          path: oidc_response_limit__token-limit-ok.yaml
+    - name: bind-apply-on-startup-fa025427
+      persistentVolumeClaim:
+        claimName: bind-apply-on-startup-fa025427
+    - name: cm-auth-entrypoint-sh-7301428d
+      configMap:
+        name: cm-auth-entrypoint-sh-7301428d
+        items:
+        - key: auth-entrypoint.sh
+          path: auth-entrypoint.sh
+          mode: 493
+    - name: vol-auth-data
+      persistentVolumeClaim:
+        claimName: vol-auth-data
+    containers:
+    - name: auth
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - /scripts/auth-entrypoint.sh
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: cm-auth-yaml-470aa137
+        mountPath: /etc/teleport/auth.yaml
+        readOnly: true
+        subPath: auth.yaml
+      - name: cm-bootstrap-480b084b
+        mountPath: /bootstrap
+        readOnly: true
+      - name: bind-apply-on-startup-fa025427
+        mountPath: /apply-on-startup
+      - name: cm-auth-entrypoint-sh-7301428d
+        mountPath: /scripts/auth-entrypoint.sh
+        readOnly: true
+        subPath: auth-entrypoint.sh
+      - name: vol-auth-data
+        mountPath: /var/lib/teleport
+        readOnly: false
+      readinessProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - curl -fsS http://localhost:3000/healthz && test -f /tmp/bootstrap-done
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 40
+    hostAliases:
+    - ip: 127.0.0.1
+      hostnames:
+      - zz1.lab.example.com
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-limit-bigdisco
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-limit-bigdisco
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-tbot-bigdisco-yaml-df8d6fbc
+      configMap:
+        name: cm-tbot-bigdisco-yaml-df8d6fbc
+        items:
+        - key: tbot-bigdisco.yaml
+          path: tbot-bigdisco.yaml
+    - name: cm-scripts-46f8e2fb
+      configMap:
+        name: cm-scripts-46f8e2fb
+        items:
+        - key: join-oneshot.sh
+          path: join-oneshot.sh
+          mode: 493
+    containers:
+    - name: limit-bigdisco
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - /scripts/join-oneshot.sh
+      env:
+      - name: OIDC_URL
+        value: https://bigdisco.lab.example.com:8443
+      - name: NAMESPACE
+        value: default
+      - name: SERVICE_ACCOUNT
+        value: limit-bigdisco-sa
+      volumeMounts:
+      - name: cm-tbot-bigdisco-yaml-df8d6fbc
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: tbot-bigdisco.yaml
+      - name: cm-scripts-46f8e2fb
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-limit-bigjwks
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-limit-bigjwks
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-tbot-bigjwks-yaml-f426cb35
+      configMap:
+        name: cm-tbot-bigjwks-yaml-f426cb35
+        items:
+        - key: tbot-bigjwks.yaml
+          path: tbot-bigjwks.yaml
+    - name: cm-scripts-46f8e2fb
+      configMap:
+        name: cm-scripts-46f8e2fb
+        items:
+        - key: join-oneshot.sh
+          path: join-oneshot.sh
+          mode: 493
+    containers:
+    - name: limit-bigjwks
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - /scripts/join-oneshot.sh
+      env:
+      - name: OIDC_URL
+        value: https://bigjwks.lab.example.com:8443
+      - name: NAMESPACE
+        value: default
+      - name: SERVICE_ACCOUNT
+        value: limit-bigjwks-sa
+      volumeMounts:
+      - name: cm-tbot-bigjwks-yaml-f426cb35
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: tbot-bigjwks.yaml
+      - name: cm-scripts-46f8e2fb
+        mountPath: /scripts
+        readOnly: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-limit-ok
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-limit-ok
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-tbot-ok-yaml-59c95498
+      configMap:
+        name: cm-tbot-ok-yaml-59c95498
+        items:
+        - key: tbot-ok.yaml
+          path: tbot-ok.yaml
+    - name: cm-scripts-46f8e2fb
+      configMap:
+        name: cm-scripts-46f8e2fb
+        items:
+        - key: join-oneshot.sh
+          path: join-oneshot.sh
+          mode: 493
+    containers:
+    - name: limit-ok
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - /scripts/join-oneshot.sh
+      env:
+      - name: OIDC_URL
+        value: https://oidc.lab.example.com:8443
+      - name: NAMESPACE
+        value: default
+      - name: SERVICE_ACCOUNT
+        value: limit-ok-sa
+      volumeMounts:
+      - name: cm-tbot-ok-yaml-59c95498
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: tbot-ok.yaml
+      - name: cm-scripts-46f8e2fb
+        mountPath: /scripts
+        readOnly: true
+plan:
+  namespace: th-zz1
+  order:
+  - - zz1-bigdisco
+  - - zz1-bigjwks
+  - - zz1-oidc
+  - - zz1-auth
+  - - zz1-limit-bigdisco
+    - zz1-limit-bigjwks
+    - zz1-limit-ok
+  pods:
+    zz1-auth:
+      needs:
+      - pod: zz1-bigdisco
+        condition: started
+      - pod: zz1-bigjwks
+        condition: started
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        bigdisco.lab.example.com: zz1-bigdisco
+        bigjwks.lab.example.com: zz1-bigjwks
+        oidc.lab.example.com: zz1-oidc
+    zz1-bigdisco:
+      needs: []
+      host_aliases: {}
+    zz1-bigjwks:
+      needs:
+      - pod: zz1-bigdisco
+        condition: started
+      host_aliases:
+        bigdisco.lab.example.com: zz1-bigdisco
+    zz1-limit-bigdisco:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-bigdisco
+        condition: started
+      - pod: zz1-bigjwks
+        condition: started
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        bigdisco.lab.example.com: zz1-bigdisco
+        bigjwks.lab.example.com: zz1-bigjwks
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-limit-bigjwks:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-bigdisco
+        condition: started
+      - pod: zz1-bigjwks
+        condition: started
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        bigdisco.lab.example.com: zz1-bigdisco
+        bigjwks.lab.example.com: zz1-bigjwks
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-limit-ok:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      - pod: zz1-bigdisco
+        condition: started
+      - pod: zz1-bigjwks
+        condition: started
+      - pod: zz1-oidc
+        condition: started
+      host_aliases:
+        bigdisco.lab.example.com: zz1-bigdisco
+        bigjwks.lab.example.com: zz1-bigjwks
+        oidc.lab.example.com: zz1-oidc
+        zz1.lab.example.com: zz1-auth
+    zz1-oidc:
+      needs:
+      - pod: zz1-bigdisco
+        condition: started
+      - pod: zz1-bigjwks
+        condition: started
+      host_aliases:
+        bigdisco.lab.example.com: zz1-bigdisco
+        bigjwks.lab.example.com: zz1-bigjwks
+  services:
+    auth:
+      pod: zz1-auth
+      container: auth
+    bigdisco:
+      pod: zz1-bigdisco
+      container: bigdisco
+    bigjwks:
+      pod: zz1-bigjwks
+      container: bigjwks
+    limit-bigdisco:
+      pod: zz1-limit-bigdisco
+      container: limit-bigdisco
+    limit-bigjwks:
+      pod: zz1-limit-bigjwks
+      container: limit-bigjwks
+    limit-ok:
+      pod: zz1-limit-ok
+      container: limit-ok
+    oidc:
+      pod: zz1-oidc
+      container: oidc
+  secrets:
+  - name: wildcard-cert
+    from: harness-system
+  artifacts: []
+  pullbacks:
+  - source: apply-on-startup
+    pod: zz1-auth
+    container: auth
+    path: /apply-on-startup
+  local_images:
+  - teleport-harness-oidc:v2
+  - teleport-harness-oidc:v4
+  - teleport-harness:test

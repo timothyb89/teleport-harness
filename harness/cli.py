@@ -15,9 +15,10 @@ import json
 import sys
 from pathlib import Path
 
+import yaml
 from pydantic import ValidationError
 
-from .models import discover_modules, gate, load_module, repo_requirement
+from .models import backend_requirement, discover_modules, gate, load_module, repo_requirement
 
 EXIT_OK = 0
 EXIT_ERR = 1
@@ -42,7 +43,10 @@ def _gate(mod, mdir: Path, args: argparse.Namespace):
     """Gate one module: features/version, plus (with --no-repo) whether its composition
     needs a teleport clone this run doesn't have."""
     unit = repo_requirement(mdir, _root() / "components") if getattr(args, "no_repo", False) else ""
-    return gate(mod, _csv(args.features), args.version, repo_unit=unit)
+    backend = getattr(args, "backend", None) or "docker"
+    bunit = backend_requirement(mdir, _root() / "components", backend)
+    return gate(mod, _csv(args.features), args.version, repo_unit=unit,
+                backend_unit=bunit, backend=backend)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -249,6 +253,33 @@ def cmd_plan_resolve(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_kube_render(args: argparse.Namespace) -> int:
+    """Translate state/<id>/docker-compose.yml into k8s objects: writes kube/manifests.yaml
+    and kube/plan.json (harness/kube.py). Refuses a composition with a docker-only unit."""
+    from .cluster import read_meta
+    from .kube import translate
+
+    state_dir = Path(args.state_dir)
+    meta = read_meta(state_dir)
+    for key in ("CLUSTER_ID", "FQDN", "PORT", "MODULES"):
+        if not meta.get(key):
+            raise ValueError(f"{state_dir}/meta.env has no {key}")
+    for m in _csv(meta["MODULES"]) or []:
+        unit = backend_requirement(_modules_dir(args.modules_dir) / m, _root() / "components", "k8s")
+        if unit:
+            raise ValueError(f"{unit} cannot run on the k8s backend")
+    compose = yaml.safe_load((state_dir / "docker-compose.yml").read_text())
+    t = translate(compose, cluster_id=meta["CLUSTER_ID"], state_dir=state_dir,
+                  fqdn=meta["FQDN"], port=int(meta["PORT"]), expires_at=args.expires_at)
+    out = state_dir / "kube"
+    out.mkdir(exist_ok=True)
+    (out / "manifests.yaml").write_text(yaml.safe_dump_all(t.objects, sort_keys=False))
+    (out / "plan.json").write_text(json.dumps(t.plan, indent=2) + "\n")
+    print(f"{out}: {len(t.objects)} objects, {len(t.plan['order'])} waves, "
+          f"{len(t.plan['artifacts'])} artifacts, {len(t.plan['local_images'])} local images")
+    return EXIT_OK
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     mdir = _modules_dir(args.modules_dir) / args.module
     res = _gate(load_module(mdir), mdir, args)
@@ -318,11 +349,14 @@ def main(argv: list[str] | None = None) -> int:
 
     _no_repo_help = ("this run has no teleport clone (source is --package/--binary), so "
                      "modules whose composition builds from one gate out")
+    _backend_help = ("the backend clusters run on (lib/backend.sh); modules whose composition "
+                     "declares a different requires_backend gate out")
     sp = sub.add_parser("plan-resolve", help="gate a plan's modules; emit run/skip JSON")
     sp.add_argument("plan")
     sp.add_argument("--features")
     sp.add_argument("--version")
     sp.add_argument("--no-repo", action="store_true", help=_no_repo_help)
+    sp.add_argument("--backend", default="docker", help=_backend_help)
     sp.set_defaults(fn=cmd_plan_resolve)
 
     sg = sub.add_parser("gate", help="feature/version gate; exit 3 == skip")
@@ -330,7 +364,13 @@ def main(argv: list[str] | None = None) -> int:
     sg.add_argument("--features")
     sg.add_argument("--version")
     sg.add_argument("--no-repo", action="store_true", help=_no_repo_help)
+    sg.add_argument("--backend", default="docker", help=_backend_help)
     sg.set_defaults(fn=cmd_gate)
+
+    sk = sub.add_parser("kube-render", help="translate a rendered cluster for the k8s backend")
+    sk.add_argument("--state-dir", required=True, help="state/<id>/ (render output + meta.env)")
+    sk.add_argument("--expires-at", type=int, help="unix time the janitor may delete it after")
+    sk.set_defaults(fn=cmd_kube_render)
 
     args = p.parse_args(argv)
     try:

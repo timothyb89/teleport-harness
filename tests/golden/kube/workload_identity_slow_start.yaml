@@ -1,0 +1,768 @@
+objects:
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    name: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      pod-security.kubernetes.io/enforce: privileged
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-auth-entrypoint-sh-7301428d
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - auth-entrypoint.sh
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-auth-yaml-470aa137
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - auth.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-bootstrap-480b084b
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - bots.manifest
+  - workload_identity_slow_start__role-wi-issuer.yaml
+  - workload_identity_slow_start__tokens.yaml
+  - workload_identity_slow_start__workload-identity.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-tbot-yaml-ac909804
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - tbot.yaml
+  binaryData: []
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: cm-workload-identity-slow-start-a395986c
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - checks.py
+  - probe.sh
+  - shape.sh
+  binaryData: []
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: bind-apply-on-startup-fa025427
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-auth-data
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-sockets-fast
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: vol-sockets-slow
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-auth
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-auth
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: wi-probe-fast
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-probe-fast
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-wi-probe-fast
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-probe-fast
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: wi-probe-slow
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-probe-slow
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-wi-probe-slow
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-probe-slow
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: wi-shaper-fast
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-shaper-fast
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-wi-shaper-fast
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-shaper-fast
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: wi-shaper-slow
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-shaper-slow
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-wi-shaper-slow
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-shaper-slow
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: wi-tbot-fast
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-shaper-fast
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-wi-tbot-fast
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-shaper-fast
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: wi-tbot-slow
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-shaper-slow
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: zz1-wi-tbot-slow
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    clusterIP: None
+    publishNotReadyAddresses: true
+    selector:
+      harness.teleport/pod: zz1-wi-shaper-slow
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ingress
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    selector:
+      harness.teleport/pod: zz1-auth
+    ports:
+    - name: web
+      port: 8443
+      targetPort: 8443
+- apiVersion: traefik.io/v1alpha1
+  kind: IngressRouteTCP
+  metadata:
+    name: auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    entryPoints:
+    - harness
+    routes:
+    - match: HostSNI(`zz1.lab.example.com`) || HostSNIRegexp(`^.+\.zz1\.lab\.example\.com$`)
+      services:
+      - name: ingress
+        port: 8443
+    tls:
+      passthrough: true
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-auth
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-auth
+  spec:
+    restartPolicy: Always
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: cm-auth-yaml-470aa137
+      configMap:
+        name: cm-auth-yaml-470aa137
+        items:
+        - key: auth.yaml
+          path: auth.yaml
+    - name: cm-bootstrap-480b084b
+      configMap:
+        name: cm-bootstrap-480b084b
+        items:
+        - key: bots.manifest
+          path: bots.manifest
+        - key: workload_identity_slow_start__role-wi-issuer.yaml
+          path: workload_identity_slow_start__role-wi-issuer.yaml
+        - key: workload_identity_slow_start__tokens.yaml
+          path: workload_identity_slow_start__tokens.yaml
+        - key: workload_identity_slow_start__workload-identity.yaml
+          path: workload_identity_slow_start__workload-identity.yaml
+    - name: bind-apply-on-startup-fa025427
+      persistentVolumeClaim:
+        claimName: bind-apply-on-startup-fa025427
+    - name: cm-auth-entrypoint-sh-7301428d
+      configMap:
+        name: cm-auth-entrypoint-sh-7301428d
+        items:
+        - key: auth-entrypoint.sh
+          path: auth-entrypoint.sh
+          mode: 493
+    - name: vol-auth-data
+      persistentVolumeClaim:
+        claimName: vol-auth-data
+    containers:
+    - name: auth
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - /scripts/auth-entrypoint.sh
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: cm-auth-yaml-470aa137
+        mountPath: /etc/teleport/auth.yaml
+        readOnly: true
+        subPath: auth.yaml
+      - name: cm-bootstrap-480b084b
+        mountPath: /bootstrap
+        readOnly: true
+      - name: bind-apply-on-startup-fa025427
+        mountPath: /apply-on-startup
+      - name: cm-auth-entrypoint-sh-7301428d
+        mountPath: /scripts/auth-entrypoint.sh
+        readOnly: true
+        subPath: auth-entrypoint.sh
+      - name: vol-auth-data
+        mountPath: /var/lib/teleport
+        readOnly: false
+      readinessProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - curl -fsS http://localhost:3000/healthz && test -f /tmp/bootstrap-done
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 40
+    hostAliases:
+    - ip: 127.0.0.1
+      hostnames:
+      - zz1.lab.example.com
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-wi-shaper-fast
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-wi-shaper-fast
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-workload-identity-slow-start-a395986c
+      configMap:
+        name: cm-workload-identity-slow-start-a395986c
+        items:
+        - key: checks.py
+          path: checks.py
+          mode: 493
+        - key: probe.sh
+          path: probe.sh
+          mode: 493
+        - key: shape.sh
+          path: shape.sh
+          mode: 493
+    - name: cm-tbot-yaml-ac909804
+      configMap:
+        name: cm-tbot-yaml-ac909804
+        items:
+        - key: tbot.yaml
+          path: tbot.yaml
+    - name: vol-sockets-fast
+      persistentVolumeClaim:
+        claimName: vol-sockets-fast
+    initContainers:
+    - name: wi-shaper-fast
+      image: alpine:3.20
+      command:
+      - /bin/sh
+      - /scripts/shape.sh
+      env:
+      - name: NETEM
+        value: ''
+      volumeMounts:
+      - name: cm-workload-identity-slow-start-a395986c
+        mountPath: /scripts
+        readOnly: true
+      securityContext:
+        capabilities:
+          add:
+          - NET_ADMIN
+      restartPolicy: Always
+      startupProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - test -f /tmp/shaped
+        periodSeconds: 2
+        timeoutSeconds: 3
+        failureThreshold: 60
+    containers:
+    - name: wi-tbot-fast
+      image: registry.harness:5000/teleport-harness:test
+      args:
+      - tbot
+      - start
+      - -d
+      - -c
+      - /etc/tbot.yaml
+      - --token=harness-wi-fast
+      - --join-method=token
+      volumeMounts:
+      - name: cm-tbot-yaml-ac909804
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: tbot.yaml
+      - name: vol-sockets-fast
+        mountPath: /sockets
+        readOnly: false
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-wi-shaper-slow
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-wi-shaper-slow
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-workload-identity-slow-start-a395986c
+      configMap:
+        name: cm-workload-identity-slow-start-a395986c
+        items:
+        - key: checks.py
+          path: checks.py
+          mode: 493
+        - key: probe.sh
+          path: probe.sh
+          mode: 493
+        - key: shape.sh
+          path: shape.sh
+          mode: 493
+    - name: cm-tbot-yaml-ac909804
+      configMap:
+        name: cm-tbot-yaml-ac909804
+        items:
+        - key: tbot.yaml
+          path: tbot.yaml
+    - name: vol-sockets-slow
+      persistentVolumeClaim:
+        claimName: vol-sockets-slow
+    initContainers:
+    - name: wi-shaper-slow
+      image: alpine:3.20
+      command:
+      - /bin/sh
+      - /scripts/shape.sh
+      env:
+      - name: NETEM
+        value: delay 900ms rate 64kbit limit 40
+      volumeMounts:
+      - name: cm-workload-identity-slow-start-a395986c
+        mountPath: /scripts
+        readOnly: true
+      securityContext:
+        capabilities:
+          add:
+          - NET_ADMIN
+      restartPolicy: Always
+      startupProbe:
+        exec:
+          command:
+          - sh
+          - -c
+          - test -f /tmp/shaped
+        periodSeconds: 2
+        timeoutSeconds: 3
+        failureThreshold: 60
+    containers:
+    - name: wi-tbot-slow
+      image: registry.harness:5000/teleport-harness:test
+      args:
+      - tbot
+      - start
+      - -d
+      - -c
+      - /etc/tbot.yaml
+      - --token=harness-wi-slow
+      - --join-method=token
+      volumeMounts:
+      - name: cm-tbot-yaml-ac909804
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: tbot.yaml
+      - name: vol-sockets-slow
+        mountPath: /sockets
+        readOnly: false
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-wi-probe-fast
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-wi-probe-fast
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-workload-identity-slow-start-a395986c
+      configMap:
+        name: cm-workload-identity-slow-start-a395986c
+        items:
+        - key: checks.py
+          path: checks.py
+          mode: 493
+        - key: probe.sh
+          path: probe.sh
+          mode: 493
+        - key: shape.sh
+          path: shape.sh
+          mode: 493
+    - name: vol-sockets-fast
+      persistentVolumeClaim:
+        claimName: vol-sockets-fast
+    containers:
+    - name: wi-probe-fast
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - /bin/bash
+      - /scripts/probe.sh
+      env:
+      - name: CASE
+        value: fast
+      - name: SOCKET
+        value: unix:///sockets/workload.sock
+      - name: DEADLINE
+        value: '240'
+      volumeMounts:
+      - name: cm-workload-identity-slow-start-a395986c
+        mountPath: /scripts
+        readOnly: true
+      - name: vol-sockets-fast
+        mountPath: /sockets
+        readOnly: false
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-wi-probe-slow
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-wi-probe-slow
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-workload-identity-slow-start-a395986c
+      configMap:
+        name: cm-workload-identity-slow-start-a395986c
+        items:
+        - key: checks.py
+          path: checks.py
+          mode: 493
+        - key: probe.sh
+          path: probe.sh
+          mode: 493
+        - key: shape.sh
+          path: shape.sh
+          mode: 493
+    - name: vol-sockets-slow
+      persistentVolumeClaim:
+        claimName: vol-sockets-slow
+    containers:
+    - name: wi-probe-slow
+      image: registry.harness:5000/teleport-harness:test
+      command:
+      - /bin/bash
+      - /scripts/probe.sh
+      env:
+      - name: CASE
+        value: slow
+      - name: SOCKET
+        value: unix:///sockets/workload.sock
+      - name: DEADLINE
+        value: '240'
+      volumeMounts:
+      - name: cm-workload-identity-slow-start-a395986c
+        mountPath: /scripts
+        readOnly: true
+      - name: vol-sockets-slow
+        mountPath: /sockets
+        readOnly: false
+plan:
+  namespace: th-zz1
+  order:
+  - - zz1-auth
+  - - zz1-wi-shaper-fast
+    - zz1-wi-shaper-slow
+  - - zz1-wi-probe-fast
+    - zz1-wi-probe-slow
+  pods:
+    zz1-auth:
+      needs: []
+      host_aliases: {}
+    zz1-wi-probe-fast:
+      needs:
+      - pod: zz1-auth
+        condition: started
+      - pod: zz1-wi-shaper-fast
+        condition: started
+      host_aliases:
+        zz1.lab.example.com: zz1-auth
+    zz1-wi-probe-slow:
+      needs:
+      - pod: zz1-auth
+        condition: started
+      - pod: zz1-wi-shaper-slow
+        condition: started
+      host_aliases:
+        zz1.lab.example.com: zz1-auth
+    zz1-wi-shaper-fast:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      host_aliases:
+        zz1.lab.example.com: zz1-auth
+    zz1-wi-shaper-slow:
+      needs:
+      - pod: zz1-auth
+        condition: ready
+      host_aliases:
+        zz1.lab.example.com: zz1-auth
+  services:
+    auth:
+      pod: zz1-auth
+      container: auth
+    wi-probe-fast:
+      pod: zz1-wi-probe-fast
+      container: wi-probe-fast
+    wi-probe-slow:
+      pod: zz1-wi-probe-slow
+      container: wi-probe-slow
+    wi-shaper-fast:
+      pod: zz1-wi-shaper-fast
+      container: wi-shaper-fast
+    wi-shaper-slow:
+      pod: zz1-wi-shaper-slow
+      container: wi-shaper-slow
+    wi-tbot-fast:
+      pod: zz1-wi-shaper-fast
+      container: wi-tbot-fast
+    wi-tbot-slow:
+      pod: zz1-wi-shaper-slow
+      container: wi-tbot-slow
+  secrets:
+  - name: wildcard-cert
+    from: harness-system
+  artifacts: []
+  pullbacks:
+  - source: apply-on-startup
+    pod: zz1-auth
+    container: auth
+    path: /apply-on-startup
+  local_images:
+  - teleport-harness:test

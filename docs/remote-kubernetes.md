@@ -149,6 +149,34 @@ agent still cannot pick a target.
 
 ## 3. The translator: `harness kube-render --state-dir state/<id>`
 
+**Status: built (Phase 2)** — `harness/kube.py`, with a focused test per rule and a golden
+snapshot of every shipped module (`tests/test_kube.py`, `tests/golden/kube/`). 17 modules
+translate; `tpm` and `operator_generic_oidc` are refused by `requires_backend: docker`.
+What implementation changed from the sketch below:
+- **Names resolve through two portless headless Services per compose service** (`<svc>`
+  and `<id>-<svc>`, `publishNotReadyAddresses`) — compose services declare no ports, and a
+  ClusterIP Service needs them. Verified on k3s: both names resolve to a NOT-ready pod, as
+  docker DNS does. The ingress gets its own ClusterIP Service on the proxy port.
+- **Aliases are all dotted `*.lab.<domain>` names** (seven owners across the modules).
+  The owner resolves its own via `127.0.0.1` (inline); every other pod gets the owner's pod
+  IP, so it also waits for the owner to have STARTED — unless the owner (transitively)
+  waits on it, in which case that pod goes without the alias. Waits can therefore reorder
+  waves (generic_oidc: the IdP starts before auth) but never deadlock.
+- **No NetworkPolicy needed:** the only networks are `internal` and the external
+  `teleport-harness`, with no isolation topology. A network with any other key is refused.
+- **`platform` is dropped**, not refused: modules pin `linux/arm64` on public multi-arch
+  images to run natively on the docker host, which a node does anyway.
+- **A `$` anywhere is refused** (compose and k8s interpolate differently; there are none).
+- **Object names derive from the mount path RELATIVE to the state dir**, so a cluster's
+  manifests don't change with where its state dir lives.
+- **ConfigMap volumes:** a single-file mount uses `subPath` = the item's path (not its
+  sanitized key); seeding copies from `<cm>/..data/`, since the volume root also holds the
+  kubelet's `..data`/`..<timestamp>` bookkeeping.
+- **The auth pod is always `restartPolicy: Always`**, so `restart_auth` can kill its process
+  and have the kubelet restart the container in place.
+- **Artifact images need `sh` + `cp`** (the init container runs `cp -R /artifact/. /dst/`),
+  so Phase 3 builds them on busybox.
+
 Input: the rendered `docker-compose.yml` plus the render metadata already in the state
 dir. Output: `state/<id>/kube/manifests.yaml` and `kube/plan.json` (apply waves + mount
 map). **Unknown compose keys are a hard error naming the key and service.** This is the
@@ -311,6 +339,9 @@ the laptop:
    project network, which leaked too), and `cluster tctl/tsh` pass `--platform linux/amd64`.
 2. **Translator.** `harness/kube.py` + `kube-render` + golden tests over every module.
    *Exit:* every module translates or is refused with its named reason.
+   **Done (2026-10-16):** 17 modules translate with stable golden snapshots; `tpm` and
+   `operator_generic_oidc` are refused by `requires_backend: docker`, with the unit named.
+   The test suite is 296. Not yet exercised against a cluster — that is Phase 4.
 3. **Image publishing.** crane base/teleport/artifact images, buildkitd side images, a
    registry-backed cache. *Exit:* the same `--package` key published from the laptop is a
    cache hit from Beams.
