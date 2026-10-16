@@ -1,0 +1,31 @@
+# Local stand-in for the remote k3s host (docs/remote-kubernetes.md) while real hardware
+# is provisioned. A rootful k3s on a real kernel — NOT the per-cluster k3s-in-rootless-docker
+# of components/k8s-runner — so privileged pods, NET_ADMIN, hostPorts and a node-level
+# registries.yaml all behave as they will on the real box.
+#
+#   limactl start --name harness-k3s infra/lima/k3s.yaml
+#   infra/lima/sync.sh          # the host's k3s config + harness-system manifests
+#   export KUBECONFIG=~/.lima/harness-k3s/copied-from-guest/kubeconfig.yaml
+#   infra/k8s/import-cert.sh
+#
+# lima forwards the node's listening ports AND NodePort/LoadBalancer services to the
+# mac's 127.0.0.1, so Traefik's :9443 and the registry's :30500 are reachable directly.
+#
+# vz + Rosetta: the harness's images are linux/amd64 and this mac is arm64. Rosetta is
+# registered as a binfmt handler in the guest kernel, so amd64 containers run under
+# containerd as long as the node will PULL them (see the arch note in
+# docs/remote-kubernetes.md).
+base: template://k3s
+
+vmType: vz
+vmOpts:
+  vz:
+    rosetta:
+      enabled: true
+      binfmt: true
+
+cpus: 4
+memory: 8GiB
+disk: 60GiB
+# Everything else (k3s config, registry mirror, harness-system) comes from the files the
+# real host uses, via sync.sh — so this VM can't drift from it.

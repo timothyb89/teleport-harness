@@ -1,0 +1,92 @@
+# The long-lived harness k3s host: Fedora CoreOS + k3s, self-updating.
+# Compile with infra/host/build-ignition.sh (needs --files-dir = infra/), which also
+# writes the host/out/* inputs referenced below. See infra/README.md.
+#
+#   OS updates:  Zincati, Sundays 09:00 UTC (below), atomic, `rpm-ostree rollback` to undo
+#   k3s updates: system-upgrade-controller, patch releases of one minor channel
+#                (k8s/host/harness-92-upgrade-plans.yaml), Saturdays 09:00 UTC
+#   harness-system: k8s/manifests, auto-applied by k3s and re-applied on every k3s start
+variant: fcos
+version: 1.6.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys_local:
+        - host/out/ssh.pub
+
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        local: host/out/hostname
+    - path: /etc/harness/k3s.env
+      mode: 0644
+      contents:
+        local: host/out/k3s.env
+    - path: /usr/local/bin/harness-k3s-bootstrap
+      mode: 0755
+      contents:
+        local: host/bootstrap.sh
+    - path: /etc/yum.repos.d/rancher-k3s-common.repo
+      mode: 0644
+      contents:
+        inline: |
+          [rancher-k3s-common-stable]
+          name=Rancher K3s Common (stable)
+          baseurl=https://rpm.rancher.io/k3s/stable/common/coreos/noarch
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=0
+          gpgkey=https://rpm.rancher.io/public.key
+    - path: /etc/rancher/k3s/config.yaml
+      mode: 0644
+      contents:
+        local: k3s/config.yaml
+    - path: /etc/rancher/k3s/config.yaml.d/10-selinux.yaml
+      mode: 0644
+      contents:
+        inline: |
+          # CoreOS only (the lima stand-in is Ubuntu, no SELinux); policy from k3s-selinux.
+          selinux: true
+    - path: /etc/rancher/k3s/registries.yaml
+      mode: 0644
+      contents:
+        local: k3s/registries.yaml
+    - path: /etc/zincati/config.d/55-updates-strategy.toml
+      mode: 0644
+      contents:
+        inline: |
+          # Reboot into OS updates only inside this window.
+          [updates]
+          strategy = "periodic"
+          [[updates.periodic.window]]
+          days = [ "Sun" ]
+          start_time = "09:00"
+          length_minutes = 120
+  trees:
+    # Written before k3s ever starts, so its first boot already brings up harness-system.
+    - local: k8s/manifests
+      path: /var/lib/rancher/k3s/server/manifests
+    - local: k8s/host
+      path: /var/lib/rancher/k3s/server/manifests
+
+systemd:
+  units:
+    - name: harness-k3s-install.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install k3s (first boot; reboots once to layer k3s-selinux)
+        Wants=network-online.target
+        After=network-online.target
+        ConditionPathExists=!/usr/local/bin/k3s
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/local/bin/harness-k3s-bootstrap
+
+        [Install]
+        WantedBy=multi-user.target

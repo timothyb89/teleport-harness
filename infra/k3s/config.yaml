@@ -1,0 +1,10 @@
+# k3s server config, shared by the real host (infra/host/fcos.bu) and the lima stand-in
+# (infra/lima/sync.sh). Host-specific settings go in config.yaml.d/ drop-ins instead —
+# e.g. SELinux, which only the CoreOS host has.
+write-kubeconfig-mode: "0644"
+
+# The harness runs its own Traefik in harness-system (k8s/manifests/harness-20-traefik.yaml):
+# CRD provider only, one TCP entrypoint on :9443. The bundled one would also watch every
+# namespace's IngressRouteTCPs and log errors for the entrypoint it doesn't have.
+disable:
+  - traefik

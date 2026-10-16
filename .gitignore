@@ -33,3 +33,6 @@ state/
 
 # Per-cluster ingress SNI routes (ephemeral live state).
 ingress/dynamic/*.map
+
+# Generated host-provisioning output (ssh key copy, rendered Ignition).
+infra/host/out/

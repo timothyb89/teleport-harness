@@ -1,0 +1,8 @@
+# The canonical pull name every harness pod references (docs/remote-kubernetes.md §4):
+# containerd resolves registry.harness:5000 to the in-cluster registry's NodePort.
+# Pushers reach the same registry by whatever address they have (port-forward, the
+# ingress); a registry stores content by repository path, not host name.
+mirrors:
+  "registry.harness:5000":
+    endpoint:
+      - "http://localhost:30500"

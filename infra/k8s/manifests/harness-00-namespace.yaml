@@ -1,0 +1,10 @@
+# Shared, long-lived harness infra (the k8s counterpart of ingress/). Everything in
+# infra/k8s/manifests is auto-applied by k3s from /var/lib/rancher/k3s/server/manifests
+# on the real host, and copied there by infra/lima/sync.sh on the lima stand-in.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: harness-system
+  labels:
+    # buildkitd runs privileged.
+    pod-security.kubernetes.io/enforce: privileged

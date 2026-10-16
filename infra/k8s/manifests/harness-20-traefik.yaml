@@ -1,0 +1,47 @@
+# The harness ingress: L4 SNI routing on :9443 (the k8s counterpart of ingress/'s nginx).
+# Each test cluster's namespace carries its own IngressRouteTCP with tls.passthrough, so
+# Teleport still terminates its own TLS, and deleting the namespace deletes the route.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: harness-traefik
+  namespace: kube-system
+spec:
+  repo: https://traefik.github.io/charts
+  chart: traefik
+  version: 42.0.0
+  targetNamespace: harness-system
+  # Its CRDs come from the vendored harness-18-traefik-crds.yaml (applied by k3s's
+  # "deploy" field manager). A server-side install would re-apply the chart's crds/ dir
+  # and fail on that field ownership ("conflict with deploy@<node> … .spec.versions");
+  # client-side, helm skips crds/ entries that already exist, as intended.
+  serverSide: "false"
+  valuesContent: |-
+    ingressClass:
+      enabled: false
+    ingressRoute:
+      dashboard:
+        enabled: false
+    providers:
+      kubernetesCRD:
+        enabled: true
+        # A route may only point at Services in its own namespace: a test cluster can
+        # never route traffic into another one.
+        allowCrossNamespace: false
+      kubernetesIngress:
+        enabled: false
+    ports:
+      web:
+        expose:
+          default: false
+      websecure:
+        expose:
+          default: false
+      harness:
+        port: 9443
+        exposedPort: 9443
+        protocol: TCP
+        expose:
+          default: true
+    service:
+      type: LoadBalancer

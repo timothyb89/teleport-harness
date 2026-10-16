@@ -768,6 +768,16 @@ if the cluster enforces it, an MFA device).
   needs the derived hash address to resolve — see the scoped-app-address invariant).
 
 ### Build / deploy
+- **Remote Kubernetes backend — DESIGNED, host infra BUILT, backend NOT started**: run test
+  clusters in namespaces on a remote k3s reached through Teleport, so the harness works
+  from docker-less Teleport Beams microVMs and test clusters stay reachable from both Beams
+  and the laptop. Design + phases: `docs/remote-kubernetes.md` (compose stays the authoring
+  format; a translator renders k8s; images via crane/buildkitd into an in-cluster
+  registry; one `127.0.0.1:9443` forwarder per client → Traefik SNI). Host: Fedora CoreOS +
+  self-updating k3s from `infra/` (`infra/README.md`: bring-up, verified checks, gotchas);
+  the dev stand-in is the lima VM `harness-k3s` (`infra/lima/`). amd64 images run on an
+  arm64 node under Rosetta ONLY as single-platform manifests, never an index (§4). NEXT:
+  phases 1–2 (backend seam, translator), which need no cluster.
 - **Run from a prebuilt artifact (`--package` / `--binary`) — DONE**: a release tarball or a
   directory of binaries is a first-class source alongside `--repo` (see Build). Verified live:
   `run-plan oidc-caching --package teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz --features

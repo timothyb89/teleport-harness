@@ -1,0 +1,69 @@
+# Image registry for harness-built images: teleport (crane append), side images
+# (buildkitd), artifact images. Content-keyed tags make it the cross-client build cache.
+#
+# Three ways in, one store:
+#   - pods/containerd: registry.harness:5000 → NodePort 30500 (k3s/registries.yaml)
+#   - buildkitd pushes: registry.harness:5000 → the FIXED ClusterIP below (hostAliases)
+#   - remote pushers: registry.lab.<domain>:9443 through the ingress (TLS terminated by
+#     Traefik with wildcard-cert), or a port-forward / lima's forwarded NodePort.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry
+  namespace: harness-system
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 40Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: harness-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # RWO volume
+  selector:
+    matchLabels: {app: registry}
+  template:
+    metadata:
+      labels: {app: registry}
+    spec:
+      containers:
+        - name: registry
+          image: registry:2
+          env:
+            # Allows pruning old content-keyed tags later (registry garbage-collect).
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+          ports:
+            - containerPort: 5000
+          readinessProbe:
+            httpGet: {path: /v2/, port: 5000}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: registry
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: harness-system
+spec:
+  type: NodePort
+  # Fixed, so buildkitd can pin registry.harness to it with hostAliases (a pod can't
+  # use the node's registries.yaml, and cluster DNS can't serve a made-up name).
+  # Inside k3s's default service CIDR, 10.43.0.0/16.
+  clusterIP: 10.43.250.250
+  selector: {app: registry}
+  ports:
+    - port: 5000
+      targetPort: 5000
+      nodePort: 30500

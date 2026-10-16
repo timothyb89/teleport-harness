@@ -1,0 +1,54 @@
+# Builds side images from their Dockerfiles (components/oidc-server today) for clients
+# with no docker daemon: `buildctl --addr kube-pod://<pod>?namespace=harness-system …`
+# tunnels through `kubectl exec`, so it works over `tsh kube`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd
+  namespace: harness-system
+data:
+  buildkitd.toml: |
+    [registry."registry.harness:5000"]
+      http = true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkitd
+  namespace: harness-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: buildkitd}
+  template:
+    metadata:
+      labels: {app: buildkitd}
+    spec:
+      # Push to the canonical name; see the fixed ClusterIP in harness-10-registry.yaml.
+      hostAliases:
+        - ip: 10.43.250.250
+          hostnames: [registry.harness]
+      containers:
+        - name: buildkitd
+          image: moby/buildkit:v0.34.0
+          args:
+            - --addr
+            - unix:///run/buildkit/buildkitd.sock
+            - --config
+            - /etc/buildkit/buildkitd.toml
+          securityContext:
+            privileged: true
+          readinessProbe:
+            exec:
+              command: [buildctl, debug, workers]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/buildkit
+            - name: state
+              mountPath: /var/lib/buildkit
+      volumes:
+        - name: config
+          configMap:
+            name: buildkitd
+        - name: state
+          emptyDir: {}

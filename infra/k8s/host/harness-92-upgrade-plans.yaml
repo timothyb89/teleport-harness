@@ -1,0 +1,28 @@
+# k3s upgrades itself: system-upgrade-controller (harness-90/91, vendored from its
+# release; refresh with infra/k8s/fetch-vendored.sh) follows a release channel and replaces
+# the k3s binary in place. Real host only — the lima stand-in is upgraded by recreating it.
+#
+# Pinned to a MINOR channel: patch releases land unattended, a minor bump (which can
+# remove APIs) is a deliberate edit here. The window is the day before Zincati's OS
+# window (host/fcos.bu, Sunday 09:00 UTC), so a bad night has one cause, not two. Both
+# are UTC; 09:00 UTC is the small hours across the Americas.
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: k3s-server
+  namespace: system-upgrade
+spec:
+  concurrency: 1
+  cordon: true
+  nodeSelector:
+    matchExpressions:
+      - {key: node-role.kubernetes.io/control-plane, operator: In, values: ["true"]}
+  serviceAccountName: system-upgrade
+  upgrade:
+    image: rancher/k3s-upgrade
+  channel: https://update.k3s.io/v1-release/channels/v1.36
+  window:
+    days: [saturday]
+    startTime: "09:00"
+    endTime: "11:00"
+    timeZone: UTC

@@ -170,8 +170,10 @@ There is no registry. `components/k8s-runner/prebuild.sh`:
 
 1. cross-builds `integrations/operator` with `CGO_ENABLED=0` for the **docker daemon's
    native architecture** (the rest of the harness is amd64; the k8s side is not, because
-   emulating a control plane is slow and a cross-arch image would not resolve on the node
-   — and the operator only speaks gRPC, so its architecture is irrelevant to the test);
+   emulating a control plane is slow, and a cross-arch image packaged as an index would not
+   resolve on the node — a bare single-platform manifest would, see the arch table in
+   `docs/remote-kubernetes.md` §4 — and the operator only speaks gRPC, so its
+   architecture is irrelevant to the test);
 2. packages it into `teleport-harness-operator:<id>` on an alpine base;
 3. `docker save`s it into `state/<id>/k8s/images/`, which is bind-mounted at
    `/var/lib/rancher/k3s/agent/images` — k3s imports every tarball it finds there at agent

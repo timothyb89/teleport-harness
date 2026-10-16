@@ -1,0 +1,69 @@
+# Deletes test-cluster namespaces past their TTL. Clients stamp
+# `harness.teleport/expires-at=<unix seconds>` on every `th-<id>` namespace; a Beams VM
+# that dies mid-run never tears down, so something on the box has to.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: janitor
+  namespace: harness-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: harness-janitor
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: harness-janitor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: harness-janitor
+subjects:
+  - kind: ServiceAccount
+    name: janitor
+    namespace: harness-system
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: janitor
+  namespace: harness-system
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: janitor
+          restartPolicy: Never
+          containers:
+            - name: janitor
+              # kubectl + a busybox shell, as components/k8s-runner already relies on.
+              image: rancher/k3s:v1.36.5-k3s1
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  now=$(date +%s)
+                  kubectl get ns -l harness.teleport/expires-at \
+                    -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.labels.harness\.teleport/expires-at}{"\n"}{end}' |
+                  while read -r ns exp; do
+                    # Only ever th-<id>, whatever else carries the label.
+                    case "$ns" in th-*) ;; *) continue ;; esac
+                    case "$exp" in ''|*[!0-9]*) echo "skip $ns: bad expires-at '$exp'"; continue ;; esac
+                    if [ "$exp" -lt "$now" ]; then
+                      echo "expired: $ns (expires-at $exp < $now)"
+                      kubectl delete ns "$ns" --wait=false
+                    fi
+                  done
