@@ -22,7 +22,7 @@ session needs to resume.
 | 3 image publishing | done (second client = a second checkout on the mac, not Beams) | 4e88fe8 |
 | 4 end to end | done: `bots` 10/10, `oidc-caching` 52/52 identical to docker | c906dc2 |
 | 5 access + visibility | done between two mac clients | 44d5271 |
-| 6 breadth | **in progress** (below) | (this commit) |
+| 6 breadth | **in progress** (below) | e2862d5 |
 | 7 operator modules | not started (`requires_backend: docker`) | |
 | 8 TPM via KubeVirt | not started; spike on the real host | |
 
