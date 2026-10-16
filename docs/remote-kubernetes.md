@@ -26,7 +26,7 @@ Goals
 
 Non-goals
 - Replacing the docker backend. It stays the default and the fast local loop.
-- `tpm` (needs a host VM with swtpm) — permanently docker-only.
+- `tpm` before Phase 8 (it needs a VM with a TPM; see Phase 8 for the KubeVirt route).
 - Operator modules in phase 1 (CRDs are cluster-scoped; see Phase 7).
 - Exposing test clusters to the internet.
 
@@ -278,7 +278,7 @@ the laptop:
 | `terraform_native_join_lb` | the above + network isolation (NetworkPolicy) for the tarpit/LB topology | 6 |
 | `docs_*` (+ `agent-runner`) | artifact image for `{{ repo }}/docs`, pull-back of `agent/out`, agent_mcp exec prefix | 6 |
 | `operator_generic_oidc` (+ `k8s-runner`) | `requires_backend: docker` until Phase 7 | 7 |
-| `tpm` | `requires_backend: docker`, permanently | — |
+| `tpm` | `requires_backend: docker` until Phase 8; then a KubeVirt VM with a vTPM | 8 |
 
 ## 8. Phases and exit criteria
 
@@ -308,6 +308,43 @@ the laptop:
 7. **Operator modules (optional).** A privileged k3s-in-pod (the existing k3s entrypoint,
    minus most rootless workarounds) or vcluster per run, so CRDs don't collide across
    concurrent runs or branches.
+8. **TPM via KubeVirt (spike first, on the real host).** The `tpm` module's client is a
+   VM because a TPM is handed to a guest kernel by its hypervisor. KubeVirt makes that VM
+   a namespaced resource — a `VirtualMachineInstance` running in a `virt-launcher` pod with
+   `spec.domain.devices.tpm: {}` (swtpm, via libvirt) — so the module can lose
+   `requires_backend: docker`, and teardown is the namespace delete like everything else.
+   On the amd64 host the guest is amd64 too, so it reuses the harness's own `tbot`, and the
+   lima/qemu/swtpm/gnutls host requirements disappear.
+
+   **The question the spike answers: who manufactures the EK certificate?** Today's module
+   exists because lima starts swtpm against empty state and never runs `swtpm_setup`, so it
+   mints its own CAs and pre-seeds manufactured state. libvirt, as far as we know, runs
+   `swtpm_setup --create-ek-cert` itself, signing with `swtpm_localca` inside the
+   `virt-launcher` pod — and that CA is a root plus a SEPARATE issuer, which is exactly the
+   module's root-not-issuer trap. So, in order of preference:
+   1. **Discover the CA:** let libvirt manufacture the EKCert, read the issuer and root
+      out of `virt-launcher` (`kubectl exec`), and build `ekcert_allowed_cas` from them;
+      "unrelated CA denied" needs only some other CA. The claims and checks barely change —
+      the device facts already come from `tbot tpm identify`.
+   2. **Pre-seed state:** `tpm: {persistent: true}` (KubeVirt ≥ 1.0) keeps state on a
+      backend PVC; write the manufactured state into it before first boot. Works, but it
+      couples the module to KubeVirt's internal PVC layout, which an upgrade can change
+      silently.
+
+   Design notes for the build: drive the guest from an in-namespace runner pod that SSHes
+   to the VMI's pod IP, not with `virtctl ssh` (that uses KubeVirt API subresources that
+   Teleport's kube proxy may not pass through); `checks.py act()` then `kubectl exec`s the
+   runner, which works from Beams. cloud-init writes the auth FQDN into the guest's
+   `/etc/hosts` (pod `hostAliases` don't reach a guest). KubeVirt goes in `infra/k8s/host/`
+   as a vendored operator + CR (containerDisk only, no CDI); expect SELinux friction on
+   CoreOS, as with system-upgrade-controller. Where it can run: the real host (KVM); the
+   lima stand-in only after `nestedVirtualization: true` in `infra/lima/k3s.yaml` (vz
+   nested virt needs M3+ and macOS 15+ — the dev mac qualifies); a libvirt guest only with
+   nested virt enabled.
+   *Spike exit:* a VMI with `tpm: {}` boots; `tbot tpm identify` in the guest reports an
+   EKCert; its issuer is found in `virt-launcher` and verifies the guest's certificate.
+   *Phase exit:* the `tpm` module's claims hold on the k8s backend with the same verdicts
+   as its last docker run.
 
 ## Risks to settle in the Phase 0 spike
 
