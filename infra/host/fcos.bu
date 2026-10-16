@@ -126,14 +126,22 @@ systemd:
       contents: |
         [Unit]
         Description=Install teleport-update + stage the host-level Teleport agent
-        Wants=network-online.target
-        After=network-online.target
+        # network-online.target alone only means the NIC is up, not that the clock has
+        # synced — on hardware with a stale/default RTC, curl's TLS handshake against
+        # the proxy fails (CURLE_SSL_CONNECT_ERROR, exit 35) until chronyd catches up.
+        # chronyd-wait.service is FCOS's documented way to block on that.
+        Wants=network-online.target chronyd-wait.service
+        After=network-online.target chronyd-wait.service
         ConditionPathExists=!/opt/teleport
 
         [Service]
         Type=oneshot
         RemainAfterExit=yes
         ExecStart=/usr/local/bin/harness-teleport-bootstrap
+        # Defense in depth beyond chronyd-wait (e.g. a transient network blip): retry
+        # rather than requiring a manual `systemctl restart` or a second reboot.
+        Restart=on-failure
+        RestartSec=15
 
         [Install]
         WantedBy=multi-user.target
