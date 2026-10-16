@@ -1,0 +1,27 @@
+# Host-level Teleport agent: direct `tsh ssh` to the box itself, plus Cockpit reached
+# through Teleport instead of opened on the LAN. Separate from the teleport-agent helm
+# chart planned for the k3s side (docs/remote-kubernetes.md Phase 0 "from Beams"), which
+# only gives kube access to this box's k3s API.
+#
+# Rendered by build-ignition.sh (placeholder substitution) into host/out/teleport.yaml,
+# included by fcos.bu as /etc/teleport.yaml. The binary + systemd unit come from
+# teleport-update (teleport-bootstrap.sh), not an rpm-ostree layer.
+version: v3
+teleport:
+  data_dir: /var/lib/teleport
+  proxy_server: __PROXY_ADDR__
+join_params:
+  method: tpm
+  token_name: __TOKEN_NAME__
+ssh_service:
+  enabled: yes
+app_service:
+  enabled: yes
+  apps:
+    - name: cockpit
+      uri: https://localhost:9090
+      insecure_skip_verify: true   # cockpit's self-signed cert
+auth_service:
+  enabled: no
+proxy_service:
+  enabled: no

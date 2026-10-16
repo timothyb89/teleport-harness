@@ -1,17 +1,26 @@
-# The long-lived harness k3s host: Fedora CoreOS + k3s, self-updating.
+# The long-lived harness k3s host: Fedora CoreOS + k3s, self-updating. Also optionally a
+# general-purpose libvirt/Cockpit box and a host-level Teleport agent (TPM join) — see
+# infra/README.md for the manual step that remains after first boot.
 # Compile with infra/host/build-ignition.sh (needs --files-dir = infra/), which also
 # writes the host/out/* inputs referenced below. See infra/README.md.
 #
-#   OS updates:  Zincati, Sundays 09:00 UTC (below), atomic, `rpm-ostree rollback` to undo
-#   k3s updates: system-upgrade-controller, patch releases of one minor channel
-#                (k8s/host/harness-92-upgrade-plans.yaml), Saturdays 09:00 UTC
+#   OS updates:       Zincati, Sundays 09:00 UTC (below), atomic, `rpm-ostree rollback` to undo
+#   k3s updates:      system-upgrade-controller, patch releases of one minor channel
+#                      (k8s/host/harness-92-upgrade-plans.yaml), Saturdays 09:00 UTC
+#   Teleport updates: teleport-update's own timer, independent of the above two — it
+#                      manages a static binary under /opt/teleport, no rpm-ostree layer
 #   harness-system: k8s/manifests, auto-applied by k3s and re-applied on every k3s start
+#   Cockpit + libvirt: rpm-ostree layer (bootstrap.sh), for general VM management
+#                      unrelated to the harness's own k3s usage; nested virt (Intel
+#                      kvm_intel nested=1, below) for guests that run their own hypervisor
 variant: fcos
 version: 1.6.0
 
 passwd:
   users:
     - name: core
+      groups:
+        - libvirt
       ssh_authorized_keys_local:
         - host/out/ssh.pub
 
@@ -29,6 +38,30 @@ storage:
       mode: 0755
       contents:
         local: host/bootstrap.sh
+    - path: /etc/harness/teleport.env
+      mode: 0644
+      contents:
+        local: host/out/teleport.env
+    - path: /etc/teleport.yaml
+      mode: 0644
+      contents:
+        local: host/out/teleport.yaml
+    - path: /usr/local/bin/harness-teleport-bootstrap
+      mode: 0755
+      contents:
+        local: host/teleport-bootstrap.sh
+    - path: /etc/modprobe.d/kvm-nested.conf
+      mode: 0644
+      contents:
+        inline: |
+          # Nested virtualization for guests that themselves run a hypervisor. Intel
+          # only (this box's CPU) — nested=1 is NOT the kernel default on Intel, unlike
+          # AMD's kvm_amd in recent kernels. Takes effect next time kvm_intel loads,
+          # which on a fresh box is the first VM start, so no reboot/reload needed here.
+          # Also needs VT-x enabled in firmware (can't be set from Ignition) and, per
+          # guest, CPU mode host-passthrough (or host-model) in its domain XML so the
+          # vmx flag is actually exposed — see infra/README.md.
+          options kvm_intel nested=1
     - path: /etc/yum.repos.d/rancher-k3s-common.repo
       mode: 0644
       contents:
@@ -78,7 +111,7 @@ systemd:
       enabled: true
       contents: |
         [Unit]
-        Description=Install k3s (first boot; reboots once to layer k3s-selinux)
+        Description=Install k3s (first boot; reboots once to layer k3s-selinux + cockpit/libvirt)
         Wants=network-online.target
         After=network-online.target
         ConditionPathExists=!/usr/local/bin/k3s
@@ -90,3 +123,23 @@ systemd:
 
         [Install]
         WantedBy=multi-user.target
+    - name: harness-teleport-install.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install teleport-update + stage the host-level Teleport agent
+        Wants=network-online.target
+        After=network-online.target
+        ConditionPathExists=!/opt/teleport
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/local/bin/harness-teleport-bootstrap
+
+        [Install]
+        WantedBy=multi-user.target
+    - name: cockpit.socket
+      enabled: true
+    - name: libvirtd.socket
+      enabled: true

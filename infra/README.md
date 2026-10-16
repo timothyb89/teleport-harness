@@ -21,19 +21,68 @@ lima/k3s.yaml, sync.sh             the lima stand-in (vz + Rosetta) and its sync
 ## Real host (Fedora CoreOS, amd64)
 
 ```sh
-infra/host/build-ignition.sh [--ssh-key ~/.ssh/id_ed25519.pub] [--hostname harness-k3s]
+infra/host/build-ignition.sh [--ssh-key ~/.ssh/id_ed25519.pub] [--hostname harness-k3s] \
+  [--teleport-proxy proxy.example.com:443] [--teleport-token-name harness-k3s-host]
 # boot the CoreOS live ISO on the box, then:
 sudo coreos-installer install /dev/nvme0n1 --ignition-file harness-k3s.ign
 ```
 
-First boot layers `k3s-selinux` and reboots once. The second boot installs k3s, which
-applies everything in `k8s/manifests` and `k8s/host`. After that, nothing needs a person:
+First boot layers `k3s-selinux` plus Cockpit/libvirt (`cockpit-machines`,
+`libvirt-daemon-kvm`, `qemu-kvm`, `virt-install`, `edk2-ovmf`) in one transaction and
+reboots once. The second boot installs k3s, which applies everything in `k8s/manifests`
+and `k8s/host`; it also stages `teleport-update` if `--teleport-proxy` was given (no
+reboot needed for that part — it's a self-managed static binary, not an rpm-ostree
+layer). After that, nothing needs a person except the one manual step below:
 
 | What | How | When (UTC) |
 |---|---|---|
 | OS | Zincati, atomic; `rpm-ostree rollback` to undo | Sun 09:00–11:00 |
 | k3s | system-upgrade-controller, patch releases of the `v1.36` channel | Sat 09:00–11:00 |
+| Teleport (host agent) | teleport-update's own timer | independent of the above two |
 | test clusters | janitor deletes `th-*` namespaces past `harness.teleport/expires-at` | every 15 min |
+
+### VM management (Cockpit + libvirt)
+
+`https://<host>:9090` (Cockpit, with the `cockpit-machines` libvirt plugin) is for
+general-purpose VMs on the box — unrelated to the harness's own k3s/test-cluster usage.
+`core` is in the `libvirt` group, so `virsh`/`virt-install` also work directly over SSH
+with no `sudo`.
+
+**Nested virtualization** (for a guest that itself runs a hypervisor) needs three
+things, only two of which Ignition can set up:
+1. VT-x enabled in **firmware** — not settable from Ignition; check in the BIOS/UEFI
+   setup before/during the bare-metal install.
+2. `/etc/modprobe.d/kvm-nested.conf` sets `options kvm_intel nested=1` (this box is
+   Intel; nested is off by default on Intel, unlike AMD's `kvm_amd` in recent kernels).
+   Takes effect the first time `kvm_intel` loads, which on a fresh box is whenever the
+   first VM starts — no reboot needed. Confirm after any VM has started with
+   `cat /sys/module/kvm_intel/parameters/nested` (`Y`).
+3. **Per guest**, its libvirt domain XML needs `<cpu mode='host-passthrough'/>` (or
+   `host-model`) so the `vmx` flag is actually exposed inside the guest — the default
+   CPU model in a VM created through Cockpit/`virt-install` may not expose it. Check
+   inside the guest with `grep vmx /proc/cpuinfo` (Intel) once it's running.
+
+### Host-level Teleport agent (TPM join)
+
+If `--teleport-proxy` was given, the box also stages a *host-level* Teleport agent
+(`ssh_service` + `app_service` for Cockpit — `/etc/teleport.yaml`), separate from the
+`teleport-agent` helm chart planned for kube access to this box's k3s API (see
+`docs/remote-kubernetes.md` Phase 0). It joins via TPM, which needs one manual step
+after first boot, because the provisioning token on the proxy side can only be created
+once the box's TPM identity is known:
+
+1. SSH in and run `sudo teleport tpm identify` to get the EKCert hash/serial.
+2. On the outer cluster, create a `join_method: tpm` provision token named
+   `<hostname>-host` (or whatever `--teleport-token-name` was set to) with an allow rule
+   for that EKCert hash/serial.
+3. `teleport.service` is already retrying in the background (`systemctl status
+   teleport`) and picks up the token on its next attempt — no further host-side action.
+
+Until step 2, `teleport.service` fails and retries indefinitely; that's expected steady
+state, not a bug (see the `StartLimitIntervalSec=0` drop-in in `teleport-bootstrap.sh`).
+TPM join is enterprise-gated — the outer cluster needs to be licensed for it.
+
+Once joined, Cockpit is reachable with no LAN exposure needed: `tsh app login cockpit`.
 
 A minor k3s bump is deliberate: change the channel in `k8s/host/harness-92-upgrade-plans.yaml`
 and `--k3s-version` in `build-ignition.sh`. A running host picks up manifest edits when
