@@ -228,20 +228,52 @@ pods always reference `registry.harness:5000/…`, which the node's `registries.
 buildkitd's config both map to the real endpoint. That keeps the image name in a
 rendered manifest the same no matter where it was pushed from.
 
-- **Base image** (`debian:bookworm-slim` + ca-certificates/curl/openssl/bash/jq): built
-  once via buildkitd, pinned by digest in `lib/backend/k8s.sh`.
-- **Teleport image**: `crane append -b <base@digest> -f bins.tar -t
-  $REGISTRY_PUSH/teleport-harness:<key>-<variant>`. `bins.tar` holds `/usr/local/bin/{teleport,tctl,tbot,tsh[,fdpass-teleport]}`.
-  `crane manifest` first: **a hit skips the upload**, so the registry becomes the
-  cross-client build cache. A key built from the laptop is reused from Beams and the
-  other way round. The Dockerfile's `RUN teleport version` smoke test becomes a version
-  probe (run locally when the client is linux/amd64, otherwise the first pod's log).
-- **Side images** (`oidc-server`): `backend_build_side_image` → `buildctl --addr
-  kube-pod://<buildkitd-pod>?namespace=harness-system build … --output
-  type=image,name=registry.harness:5000/<tag>,push=true`, also content-keyed.
-- **Artifact images**: §3.
+**Status: built (Phase 3), in `lib/backend/k8s.sh`.** What was built, and where it
+differs from the sketch:
+
+- **Tools.** `crane` and `buildctl` are fetched on first use into `.cache/tools/` at a
+  pinned version, checked against sha256 sums recorded in `lib/tools.sh` (Beams has no
+  package manager to rely on). A copy on PATH is used only if it is the pinned version.
+- **Base image** (`debian:bookworm-slim` + ca-certificates/curl/openssl/bash/jq): built by
+  buildkitd from `lib/backend/k8s/base.Dockerfile` and tagged with that file's hash, rather
+  than hand-pinned by digest. Any client builds it on first use; editing the file rebuilds it.
+- **Teleport image**: `crane append` of **one layer per binary** onto the base. The
+  layers come from `harness layer-tar` (`harness/images.py`), which writes them
+  deterministically (sorted entries, mtime 0, root:root, fixed modes). That determinism is
+  what makes the registry a cache shared by every client: the same binary staged on two
+  machines is the same blob, so it is uploaded once. Verified: a forced republish from a
+  second client with an empty `.cache` produced the identical manifest digest and uploaded
+  nothing, and `--binary` on the unpacked files of a `--package` deduplicated to the same
+  image.
+- **Smoke test kept.** The docker backend's `RUN teleport version && …` survives as a pod
+  run against a `<tag>-unverified` push, and only a passing image gets the real tag, so a
+  broken image can never become a cache hit. The output is cached as the image's version
+  (`.cache/k8s/probe/`).
+- **Version of a `--binary` from a non-linux/amd64 client** (the mac): it can't run the
+  binary locally, so it pushes base + the teleport layer as `teleport-harness-probe:<sha>`
+  and runs `teleport version` in a pod. That layer is byte-identical to the real image's, so
+  the later push skips it. A linux/amd64 client (Beams) just runs the binary.
+- **Side images**: a new backend op, `build_side_image <context> <tag>`, which component
+  prebuilds reach through `cluster side-image` (on docker: the old `docker build`).
+  **Gotcha:** buildkitd on an arm64 node runs amd64 `RUN` steps under its OWN bundled
+  qemu-user, not the node's Rosetta, and the Go toolchain crashes there (`fatal error:
+  lfstack.push`) while `apt-get` survives. So a Dockerfile that compiles must
+  cross-compile instead (`FROM --platform=$BUILDPLATFORM`, `GOARCH=$TARGETARCH`, as
+  `components/oidc-server/build/Dockerfile` now does). Two traps: an `ARG BUILDPLATFORM`
+  with a DEFAULT overrides BuildKit's own value, and the docker backend's legacy builder
+  doesn't set these args at all, so `be_docker_build_side_image` passes them.
+- **Artifact images**: `k8s_publish_artifacts <state-dir>` (called by the Phase 4
+  executor) layers each source under `/artifact` onto an amd64 busybox mirrored into the
+  registry. It pushes once under a content tag `harness-artifact:c<sha12>`, then
+  `crane tag`s the per-cluster name the manifests use. Verified with the 140 MB teleport
+  `docs/` tree: 3.2s the first time, then 0.6s and no upload. The image's own
+  `cp -R /artifact/. /dst/` copies all 1561 files on the node.
 - Public images (`curlimages/curl`, httpbin, terraform, nginx, envoy, k3s) are pulled by
   the node straight from upstream, unchanged.
+
+Timings on the lima stand-in (local registry, so they measure work, not bandwidth): the
+first `cluster build --package` took 65s, 44s of which was the one-time base image build;
+a cache hit from a fresh client took 3.6s.
 
 **Every harness-published image is a single-platform MANIFEST, never an index.** This is
 what lets an arm64 node (the lima stand-in, `infra/lima/k3s.yaml`, or arm hardware) run
@@ -345,6 +377,11 @@ the laptop:
 3. **Image publishing.** crane base/teleport/artifact images, buildkitd side images, a
    registry-backed cache. *Exit:* the same `--package` key published from the laptop is a
    cache hit from Beams.
+   **Done (2026-10-16), except the "from Beams" half**, which waits on the Phase 0
+   onboarding. The second client was a fresh copy of the harness on the mac with an empty
+   `.cache`: `cluster build --package` was a cache hit, and a forced republish uploaded
+   nothing (same manifest digest). See §4 for what was built and the buildkitd/qemu gotcha.
+   The other cluster ops on `BACKEND=k8s` refuse with the phase they land in.
 4. **End to end.** `KubeCluster`, waves, teardown, log collection into the bundle.
    *Exit:* `bots` and `oidc-caching` plans run from Beams with the **same verdicts** as
    the docker backend on the same source, and `share` works on the bundle.

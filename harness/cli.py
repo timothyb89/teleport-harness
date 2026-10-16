@@ -280,6 +280,26 @@ def cmd_kube_render(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_layer_tar(args: argparse.Namespace) -> int:
+    """Write a deterministic image layer (harness/images.py) and print its sha256. The k8s
+    backend `crane append`s these, so equal inputs are equal blobs in the shared registry."""
+    from .images import dir_entries, file_entry, write_layer
+
+    def pair(spec: str, flag: str) -> tuple[str, str]:
+        src, sep, dst = spec.partition("=")
+        if not sep or not src or not dst:
+            raise ValueError(f"{flag} wants SRC=DEST, got {spec!r}")
+        return src, dst
+
+    entries = [file_entry(*pair(f, "--file")) for f in args.file]
+    for d in args.dir:
+        entries += dir_entries(*pair(d, "--dir"))
+    if not entries:
+        raise ValueError("nothing to put in the layer (give --file and/or --dir)")
+    print(write_layer(entries, args.out))
+    return EXIT_OK
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     mdir = _modules_dir(args.modules_dir) / args.module
     res = _gate(load_module(mdir), mdir, args)
@@ -371,6 +391,14 @@ def main(argv: list[str] | None = None) -> int:
     sk.add_argument("--state-dir", required=True, help="state/<id>/ (render output + meta.env)")
     sk.add_argument("--expires-at", type=int, help="unix time the janitor may delete it after")
     sk.set_defaults(fn=cmd_kube_render)
+
+    sl = sub.add_parser("layer-tar", help="write a deterministic image layer; print its sha256")
+    sl.add_argument("--out", required=True)
+    sl.add_argument("--file", action="append", default=[], metavar="SRC=DEST",
+                    help="a file at DEST in the layer (mode 0755 if executable, else 0644)")
+    sl.add_argument("--dir", action="append", default=[], metavar="SRC=PREFIX",
+                    help="every file under SRC, placed under PREFIX")
+    sl.set_defaults(fn=cmd_layer_tar)
 
     args = p.parse_args(argv)
     try:

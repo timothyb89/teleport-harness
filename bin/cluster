@@ -38,6 +38,7 @@ while [ -L "$SELF" ]; do
 done
 LIB="$(cd "$(dirname "$SELF")/../lib" && pwd)"
 . "$LIB/common.sh"
+. "$LIB/tools.sh"
 . "$LIB/backend.sh"
 . "$LIB/ingress.sh"
 . "$LIB/build.sh"
@@ -89,6 +90,14 @@ case "$cmd" in
   report)   command -v cluster_report >/dev/null 2>&1 || die "reporter not installed yet"; cluster_report "$@" ;;
   share)    command -v cluster_share >/dev/null 2>&1 || die "sharer not installed yet"; cluster_share "$@" ;;
   teardown) cluster_teardown "$@" ;;
+  # Internal: a component prebuild.sh asks for a side image this way, so it builds on the
+  # backend the render belongs to. That backend arrives as the inherited HARNESS_BACKEND,
+  # which load_target would otherwise reset to the target's default.
+  side-image)
+    [ $# = 2 ] || die "usage: cluster side-image <context-dir> <tag>"
+    _inherited="${HARNESS_BACKEND:-}"; load_target
+    [ -z "$_inherited" ] || backend_use "$_inherited"
+    be build_side_image "$1" "$2" ;;
   ""|help)  sed -n '2,27p' "$0" ;;
   *) die "unknown command: $cmd (try: doctor validate build up run-plan ls logs web report share teardown)" ;;
 esac

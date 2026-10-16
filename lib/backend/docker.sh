@@ -73,6 +73,17 @@ be_docker_binary_version() {
       debian:bookworm-slim version 2>/dev/null || true; } | head -1
 }
 
+be_docker_build_side_image() {
+  local ctx="$1" tag="$2"
+  be_docker_image_exists "$tag" && return 0
+  hlog "building $tag"
+  # The legacy builder never sets BuildKit's automatic platform args, so a Dockerfile that
+  # cross-compiles (FROM --platform=$BUILDPLATFORM, GOARCH=$TARGETARCH) gets them here.
+  DOCKER_BUILDKIT=0 docker build --platform linux/amd64 \
+    --build-arg BUILDPLATFORM=linux/amd64 --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 \
+    -t "$tag" "$ctx" >/dev/null
+}
+
 be_docker_up() {
   local id="$1" out="$2"
   compose "$(_docker_project "$id")" "$out/docker-compose.yml" up -d

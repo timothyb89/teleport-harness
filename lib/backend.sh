@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # Backend dispatch. A backend is WHERE a cluster's containers run: "docker" (compose on the
-# local daemon) today; "k8s" (a namespace on a remote k3s, docs/remote-kubernetes.md) next.
+# local daemon), or "k8s" (a namespace on a remote k3s, docs/remote-kubernetes.md; images
+# only so far, the rest refuses with the phase it lands in).
 # Callers say `be <op> …` and never name docker; each lib/backend/<name>.sh implements every
 # op as be_<name>_<op>.
 #
@@ -17,6 +18,9 @@
 #   publish_image <bindir> <tag>   publish the binaries in <bindir> as image <tag>
 #   image_version <tag>            print the image's raw `teleport version` line
 #   binary_version <dir>           print the raw `teleport version` line of <dir>/teleport
+#   build_side_image <context> <tag>  build <context>/Dockerfile as linux/amd64 image <tag>
+#                                  unless it already exists (component prebuilds, via
+#                                  `cluster side-image`)
 #   up <id> <state-dir>            start every service of a rendered cluster, route ingress
 #   auth_healthy <id>              exit 0 once auth is healthy (bootstrap included)
 #   status <id>                    print the auth service's state, or "-"
@@ -34,6 +38,7 @@
 #   admin_run <id> <tty:0|1> <cmd…>  run a command in the cluster's image, on its network,
 #                                  with the admin identity at /id/identity
 BACKEND_OPS="preflight doctor infra_up image_exists publish_image image_version binary_version
+build_side_image
 up auth_healthy status logs collect_logs exec exec_i running teardown
 admin_up admin_ready admin_identity_present admin_copy_identity admin_run"
 

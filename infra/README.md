@@ -51,6 +51,10 @@ export KUBECONFIG=~/.lima/harness-k3s/copied-from-guest/kubeconfig.yaml
 infra/k8s/import-cert.sh
 ```
 
+To point the harness at it, add a target (see the k8s block in
+`targets/default.env.example`) with `BACKEND=k8s`, this `KUBECONFIG` and `INGRESS_PORT=9443`,
+then run `bin/cluster --target <it> doctor`.
+
 lima forwards NodePort/LoadBalancer services to the mac, so `https://<x>.lab.<domain>:9443`
 and the registry (`registry.lab.<domain>:9443`, or `localhost:30500`) work with no
 forwarder. amd64 harness images run under Rosetta **as long as each is a single-platform
