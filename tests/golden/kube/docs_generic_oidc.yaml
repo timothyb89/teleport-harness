@@ -261,47 +261,66 @@ objects:
     tls:
       passthrough: true
 - apiVersion: v1
-  kind: Pod
+  kind: ConfigMap
   metadata:
-    name: zz1-oidc
+    name: harness-dns
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
       harness.teleport/cluster-id: zz1
-      harness.teleport/pod: zz1-oidc
+  data:
+  - Corefile
+  binaryData: []
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: harness-dns
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
   spec:
-    restartPolicy: Never
+    selector:
+      harness.teleport/pod: harness-dns
+    ports:
+    - name: dns
+      port: 53
+      protocol: UDP
+    - name: dns-tcp
+      port: 53
+      protocol: TCP
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: harness-dns
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: harness-dns
+  spec:
+    restartPolicy: Always
     enableServiceLinks: false
     automountServiceAccountToken: false
-    terminationGracePeriodSeconds: 10
-    volumes:
-    - name: secret-wildcard-cert
-      secret:
-        secretName: wildcard-cert
-    - name: vol-oidc-data
-      persistentVolumeClaim:
-        claimName: vol-oidc-data
+    terminationGracePeriodSeconds: 5
     containers:
-    - name: oidc
-      image: registry.harness:5000/teleport-harness-oidc:v4
+    - name: coredns
+      image: coredns/coredns:1.12.1
       args:
-      - -issuer=https://oidc.lab.example.com:8443
-      - -addr=:8443
-      - -audience=zz1.lab.example.com/generic-oidc
-      - -cluster-name=zz1.lab.example.com
-      - -tls-cert=/certs/wildcard.crt
-      - -tls-key=/certs/wildcard.key
+      - -conf
+      - /etc/coredns/Corefile
+      readinessProbe:
+        httpGet:
+          path: /ready
+          port: 8181
+        periodSeconds: 2
       volumeMounts:
-      - name: secret-wildcard-cert
-        mountPath: /certs
-        readOnly: true
-      - name: vol-oidc-data
-        mountPath: /data
-        readOnly: false
-    hostAliases:
-    - ip: 127.0.0.1
-      hostnames:
-      - oidc.lab.example.com
+      - name: corefile
+        mountPath: /etc/coredns
+    volumes:
+    - name: corefile
+      configMap:
+        name: harness-dns
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -381,10 +400,64 @@ objects:
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 40
-    hostAliases:
-    - ip: 127.0.0.1
-      hostnames:
-      - zz1.lab.example.com
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-oidc
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: vol-oidc-data
+      persistentVolumeClaim:
+        claimName: vol-oidc-data
+    containers:
+    - name: oidc
+      image: registry.harness:5000/teleport-harness-oidc:v4
+      args:
+      - -issuer=https://oidc.lab.example.com:8443
+      - -addr=:8443
+      - -audience=zz1.lab.example.com/generic-oidc
+      - -cluster-name=zz1.lab.example.com
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: vol-oidc-data
+        mountPath: /data
+        readOnly: false
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -436,6 +509,16 @@ objects:
         periodSeconds: 3
         timeoutSeconds: 3
         failureThreshold: 40
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -490,11 +573,21 @@ objects:
         readOnly: true
       - name: bind-out-0dc26b6f
         mountPath: /out
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 plan:
   namespace: th-zz1
   order:
-  - - zz1-oidc
   - - zz1-auth
+    - zz1-oidc
   - - zz1-agent-idbot
   - - zz1-workbench
   pods:
@@ -502,31 +595,24 @@ plan:
       needs:
       - pod: zz1-auth
         condition: ready
-      - pod: zz1-oidc
-        condition: started
-      host_aliases:
-        oidc.lab.example.com: zz1-oidc
-        zz1.lab.example.com: zz1-auth
+      unhealthy_after: 128
     zz1-auth:
-      needs:
-      - pod: zz1-oidc
-        condition: started
-      host_aliases:
-        oidc.lab.example.com: zz1-oidc
+      needs: []
+      unhealthy_after: 213
     zz1-oidc:
       needs: []
-      host_aliases: {}
     zz1-workbench:
       needs:
       - pod: zz1-agent-idbot
         condition: ready
-      - pod: zz1-auth
-        condition: started
       - pod: zz1-oidc
         condition: started
-      host_aliases:
-        oidc.lab.example.com: zz1-oidc
-        zz1.lab.example.com: zz1-auth
+  dns:
+    pod: harness-dns
+    service: harness-dns
+    aliases:
+      oidc.lab.example.com: zz1-oidc.th-zz1.svc.cluster.local
+      zz1.lab.example.com: zz1-auth.th-zz1.svc.cluster.local
   services:
     agent-idbot:
       pod: zz1-agent-idbot

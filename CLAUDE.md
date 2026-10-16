@@ -811,7 +811,7 @@ if the cluster enforces it, an MFA device).
   needs the derived hash address to resolve — see the scoped-app-address invariant).
 
 ### Build / deploy
-- **Remote Kubernetes backend — DESIGNED, host infra BUILT, phases 1–5 DONE**: run test
+- **Remote Kubernetes backend — DESIGNED, host infra BUILT, phases 1–5 DONE, 6 IN PROGRESS**: run test
   clusters in namespaces on a remote k3s reached through Teleport, so the harness works
   from docker-less Teleport Beams microVMs and test clusters stay reachable from both Beams
   and the laptop. Design + phases: `docs/remote-kubernetes.md` (compose stays the authoring
@@ -822,8 +822,10 @@ if the cluster enforces it, an MFA device).
   arm64 node under Rosetta ONLY as single-platform manifests, never an index (§4).
   Phases 1–5 DONE (backend seam, translator, image publishing, end-to-end: `bots` and
   `oidc-caching` give docker's verdicts check for check, and cross-client access:
-  attach/admin/tsh/web/extend/teardown from a second client). NEXT: Phase 0's "from
-  Beams" half (outer-Teleport onboarding), then Phase 6 breadth.
+  attach/admin/tsh/web/extend/teardown from a second client). Phase 6 (breadth) IN
+  PROGRESS. **Resume from "Current state and handoff" at the top of
+  `docs/remote-kubernetes.md`**: the phase table, the parity matrix, findings needing a
+  decision, next steps, and how to rebuild the dev setup on a new machine.
 - **Run from a prebuilt artifact (`--package` / `--binary`) — DONE**: a release tarball or a
   directory of binaries is a first-class source alongside `--repo` (see Build). Verified live:
   `run-plan oidc-caching --package teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz --features

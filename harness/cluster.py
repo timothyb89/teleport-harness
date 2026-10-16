@@ -57,6 +57,11 @@ class Cluster:
         mount. Overridden in tests."""
         raise NotImplementedError
 
+    def clear_state_file(self, relpath: str) -> None:  # pragma: no cover
+        """Remove a state-dir file a service writes (absent is fine) — e.g. a stale agent
+        result, which would otherwise mask a run that silently wrote nothing."""
+        raise NotImplementedError
+
     def kube_get(self, kind: str, name: str,
                  namespace: str = KUBE_NAMESPACE) -> dict | None:  # pragma: no cover
         """A single object from the in-cluster k8s API (the k8s-runner component's k3s),
@@ -191,6 +196,10 @@ class DockerCluster(Cluster):
         except (FileNotFoundError, OSError):
             return None
 
+    def clear_state_file(self, relpath: str) -> None:
+        if self.state_dir:
+            (Path(self.state_dir) / relpath).unlink(missing_ok=True)
+
     def kube_get(self, kind: str, name: str, namespace: str = KUBE_NAMESPACE) -> dict | None:
         # kubectl ships inside the k3s image, and the k3s container already holds the
         # admin kubeconfig at its default path — so no kubeconfig plumbing is needed to
@@ -273,7 +282,9 @@ class DockerCluster(Cluster):
         cp = self._run(["docker", "restart", self.container("auth")])
         if cp.returncode != 0:
             return False
-        deadline = time.monotonic() + timeout
+        return self._wait_auth_healthz(time.monotonic() + timeout)
+
+    def _wait_auth_healthz(self, deadline: float) -> bool:
         while time.monotonic() < deadline:
             rc, _ = self.exec_out("auth", ["sh", "-c",
                                            "curl -fsS http://localhost:3000/healthz >/dev/null 2>&1"])
@@ -339,17 +350,28 @@ class KubeCluster(DockerCluster):
         return ((prev.stdout if prev.returncode == 0 else "")
                 + (cur.stdout or "") + (cur.stderr if cur.returncode != 0 else ""))
 
-    def state_file(self, relpath: str) -> str | None:
-        # A file under a read-write state-dir mount was written inside a pod volume
-        # (kube.py's pullbacks); read it there. Anything else is a host-side file.
+    def _in_pod(self, relpath: str) -> tuple[str, str] | None:
+        """(service, path inside it) for a state-dir path under a read-write mount, which on
+        this backend lives in a pod volume (kube.py's pullbacks); None for a host-side file."""
         rel = relpath.strip("/")
         for pb in self.plan.get("pullbacks", []):
             src = pb["source"].strip("/")
             if rel == src or rel.startswith(src + "/"):
-                inner = pb["path"].rstrip("/") + rel[len(src):]
-                rc, out = self.exec_out(pb["container"], ["cat", inner])
-                return out if rc == 0 else None
-        return super().state_file(relpath)
+                return pb["container"], pb["path"].rstrip("/") + rel[len(src):]
+        return None
+
+    def state_file(self, relpath: str) -> str | None:
+        where = self._in_pod(relpath)
+        if where is None:
+            return super().state_file(relpath)
+        rc, out = self.exec_out(where[0], ["cat", where[1]])
+        return out if rc == 0 else None
+
+    def clear_state_file(self, relpath: str) -> None:
+        where = self._in_pod(relpath)
+        if where is None:
+            return super().clear_state_file(relpath)
+        self.exec_out(where[0], ["rm", "-f", where[1]])
 
     def kube_get(self, kind: str, name: str, namespace: str = KUBE_NAMESPACE) -> dict | None:
         return None   # the k8s-runner component is docker-only (requires_backend)
@@ -357,8 +379,42 @@ class KubeCluster(DockerCluster):
     def tsh_ssh(self, host_suffix: str, login: str) -> bool:
         return False  # needs admin access on this backend (Phase 5); no module uses it yet
 
+    def _restart_count(self, pod: str, container: str) -> int | None:
+        cp = self._run(self._kubectl("get", "pod", "-n", self.plan["namespace"], pod, "-o", "json"))
+        if cp.returncode != 0:
+            return None
+        try:
+            statuses = json.loads(cp.stdout).get("status", {}).get("containerStatuses") or []
+        except json.JSONDecodeError:
+            return None
+        return next((c.get("restartCount", 0) for c in statuses if c.get("name") == container), None)
+
     def restart_auth(self, timeout: float = 150.0) -> bool:
-        return False  # Phase 6 (bound_keypair_apply_on_startup), docs/remote-kubernetes.md §7
+        # The pod's restartPolicy is Always (kube.py), so ending the container makes the
+        # kubelet start it again in place: same pod, same IP, and the PVCs behind auth's data
+        # dir and the apply-on-startup files survive, the way a `docker restart` keeps its
+        # volumes. Unlike docker, the container's own filesystem is NOT kept; the entrypoint
+        # re-runs bootstrap on every start anyway, so that only resets /tmp.
+        #
+        # Kill teleport rather than PID 1: the entrypoint shell is PID 1, and the kernel drops
+        # signals to a namespace's init that it has no handler for. With teleport gone, the
+        # entrypoint's `wait` fails and the container exits.
+        pod, container = self._where("auth")
+        before = self._restart_count(pod, container)
+        if before is None:
+            return False
+        self.exec_out("auth", ["sh", "-c",
+                               'for p in /proc/[0-9]*; do [ "$(cat "$p/comm" 2>/dev/null)" = teleport ] '
+                               '&& kill "${p#/proc/}"; done'])
+        deadline = time.monotonic() + timeout
+        while True:
+            now = self._restart_count(pod, container)
+            if now is not None and now > before:
+                break
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(2)
+        return self._wait_auth_healthz(deadline)
 
 
 def read_meta(state_dir: Path | None) -> dict[str, str]:

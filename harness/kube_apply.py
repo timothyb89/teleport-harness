@@ -3,10 +3,10 @@
 harness/kube.py is pure: it turns the rendered compose into objects plus a plan. This is
 the other half, and the only part that talks to the API server: create the namespace and
 everything that isn't a pod, fill the Secrets the plan names (from the host, never from
-the manifests), then create the pods wave by wave. Before each pod is created it waits for
-what compose's depends_on asked for and pins every dotted alias it needs (the auth FQDN,
-oidc.<lab>) to the owning pod's IP with hostAliases. That IP only exists once the owner has
-started, which is why the translator made every alias user wait for it.
+the manifests), start the namespace's resolver (which answers the dotted aliases — the
+auth FQDN, oidc.<lab> — the way docker's network aliases do), then create the pods wave by
+wave, each pointed at that resolver and created only once what compose's depends_on asked
+for holds.
 
 All kubectl calls go through `Kubectl`, so tests drive this with a fake.
 """
@@ -153,16 +153,39 @@ def condition_met(pod: dict, condition: str) -> bool:
     raise ApplyError(f"unknown condition {condition!r}")
 
 
+def _all_running(pod: dict) -> bool:
+    st = pod.get("status") or {}
+    cs = st.get("containerStatuses") or []
+    return st.get("phase") == "Running" and bool(cs) and all(
+        "running" in (c.get("state") or {}) for c in cs)
+
+
 def wait_for(kc: Kubectl, ns: str, name: str, condition: str, timeout: float,
              sleep: Callable[[float], None] = time.sleep,
-             clock: Callable[[], float] = time.monotonic) -> dict:
+             clock: Callable[[], float] = time.monotonic,
+             unhealthy_after: float | None = None) -> dict:
+    """Wait until pod `name` meets `condition`. For "ready", `unhealthy_after` is compose's
+    healthcheck budget: once every container has been running that long (counted from when
+    THIS client first saw them running, so no clock skew with the node) without passing,
+    the pod is unhealthy and waiting longer is pointless — compose's `up` fails there too."""
     deadline = clock() + timeout
     pod: dict | None = None
+    running_since: float | None = None
     while True:
         pod = kc.get_json("pod", name, "-n", ns)
         if pod and condition_met(pod, condition):
             return pod
-        if clock() >= deadline:
+        now = clock()
+        if pod and _all_running(pod):
+            running_since = running_since if running_since is not None else now
+        else:
+            running_since = None
+        if (condition == "ready" and unhealthy_after is not None and running_since is not None
+                and now - running_since > unhealthy_after + 5):
+            raise ApplyError(f"pod {name} is unhealthy: running for {int(now - running_since)}s "
+                             f"without passing its healthcheck (compose gives up after "
+                             f"{int(unhealthy_after)}s) — see `cluster logs`")
+        if now >= deadline:
             why = "; ".join(_waiting_reasons(pod)) if pod else "pod not found"
             phase = (pod or {}).get("status", {}).get("phase", "?")
             raise ApplyError(f"timed out after {int(timeout)}s waiting for pod {name} to be "
@@ -170,23 +193,12 @@ def wait_for(kc: Kubectl, ns: str, name: str, condition: str, timeout: float,
         sleep(2)
 
 
-def with_host_aliases(pod: dict, aliases: dict[str, str], ips: dict[str, str]) -> dict:
-    """pod with every `alias -> owner pod` pinned to the owner's IP (merged with the
-    127.0.0.1 entries the translator wrote for aliases the pod owns itself)."""
-    if not aliases:
+def with_nameserver(pod: dict, ip: str) -> dict:
+    """pod with its dnsConfig pointed at the namespace's resolver (kube.py leaves it empty)."""
+    spec = pod["spec"]
+    if spec.get("dnsPolicy") != "None":
         return pod
-    by_ip: dict[str, set[str]] = {}
-    for entry in pod["spec"].get("hostAliases", []):
-        by_ip.setdefault(entry["ip"], set()).update(entry["hostnames"])
-    for alias, owner in aliases.items():
-        ip = ips.get(owner)
-        if not ip:
-            raise ApplyError(f"pod {pod['metadata']['name']}: alias {alias} needs {owner}'s IP, "
-                             f"which it does not have yet")
-        by_ip.setdefault(ip, set()).add(alias)
-    spec = {**pod["spec"], "hostAliases": [{"ip": ip, "hostnames": sorted(h)}
-                                           for ip, h in sorted(by_ip.items())]}
-    return {**pod, "spec": spec}
+    return {**pod, "spec": {**spec, "dnsConfig": {**spec.get("dnsConfig", {}), "nameservers": [ip]}}}
 
 
 # ---- the whole thing ----------------------------------------------------------------------
@@ -214,17 +226,21 @@ def apply_cluster(state_dir: Path, kc: Kubectl, *, timeout: float = DEFAULT_TIME
         kc.apply(secrets)
     kc.apply([o for o in rest if o["kind"] != "Namespace"])
 
-    ips: dict[str, str] = {}
+    dns = plan.get("dns")
+    ip = ""
+    if dns:
+        svc = kc.get_json("service", dns["service"], "-n", ns)
+        ip = ((svc or {}).get("spec") or {}).get("clusterIP", "")
+        if not ip or ip == "None":
+            raise ApplyError(f"resolver Service {ns}/{dns['service']} has no ClusterIP")
+        kc.apply([pods.pop(dns["pod"])])
+        wait_for(kc, ns, dns["pod"], "ready", timeout, sleep, clock)
+        log(f"resolver ready at {ip} ({len(dns.get('aliases', {}))} aliases)")
+
     for i, wave in enumerate(plan["order"], 1):
         for name in wave:
-            spec = plan["pods"].get(name, {})
-            for need in spec.get("needs", []):
-                if need["pod"] in ips and need["condition"] == "started":
-                    continue
-                got = wait_for(kc, ns, need["pod"], need["condition"], timeout, sleep, clock)
-                ip = (got.get("status") or {}).get("podIP")
-                if ip:
-                    ips[need["pod"]] = ip
+            for need in plan["pods"].get(name, {}).get("needs", []):
+                wait_for(kc, ns, need["pod"], need["condition"], timeout, sleep, clock,
+                         unhealthy_after=plan["pods"].get(need["pod"], {}).get("unhealthy_after"))
         log(f"wave {i}/{len(plan['order'])}: {', '.join(wave)}")
-        kc.apply([with_host_aliases(pods[n], plan["pods"].get(n, {}).get("host_aliases", {}), ips)
-                  for n in wave])
+        kc.apply([with_nameserver(pods[n], ip) if ip else pods[n] for n in wave])

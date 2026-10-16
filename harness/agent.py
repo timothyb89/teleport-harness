@@ -219,14 +219,16 @@ def run_agent(module_dir: Path, cluster_id: str, state_dir: Path) -> tuple[bool,
 
     meta = _read_meta(state_dir)
     fqdn, port = meta.get("FQDN", ""), meta.get("PORT", "")
-    workbench_exec = make_cluster(cluster_id, state_dir).exec_argv("workbench", [], workdir="/work")
+    cluster = make_cluster(cluster_id, state_dir)
+    workbench_exec = cluster.exec_argv("workbench", [], workdir="/work")
 
     agent_dir = state_dir / "agent"
     run_cwd, out_dir = agent_dir / "run", agent_dir / "out"
     run_cwd.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
-    # stale result from a previous run would mask a silent failure — clear it.
-    (out_dir / "agent-result.json").unlink(missing_ok=True)
+    # stale result from a previous run would mask a silent failure — clear it (where the
+    # workbench wrote it: the host bind on docker, the pod's volume on k8s).
+    cluster.clear_state_file(RESULT_RELPATH)
 
     prompt_text = _render_prompt(module_dir, cfg, {
         "cluster_id": cluster_id, "fqdn": fqdn, "port": port,
@@ -251,6 +253,6 @@ def run_agent(module_dir: Path, cluster_id: str, state_dir: Path) -> tuple[bool,
     (agent_dir / "transcript.json").write_text(stdout or stderr or "")
     if rc != 0:
         return False, f"agent-run: claude exited {rc} (see {TRANSCRIPT_RELPATH}); stderr: {stderr[:200]}"
-    produced = (out_dir / "agent-result.json").is_file()
+    produced = cluster.state_file(RESULT_RELPATH) is not None
     return True, (f"agent-run: {module_dir.name} completed"
                   + ("" if produced else " (WARNING: no agent-result.json written)"))

@@ -164,3 +164,55 @@ def test_kube_state_file_reads_pullbacks_in_the_pod_and_the_rest_locally(tmp_pat
     assert c.seen[-1][6:] == ["c1-workbench", "-c", "workbench", "--", "cat", "/out/agent-result.json"]
     assert c.state_file("observations.json") == "{}"
     assert c.state_file("agent/outside.json") is None     # not under the pullback, not local
+
+
+def test_kube_restart_auth_kills_teleport_then_waits_for_a_new_container_and_healthz(tmp_path, monkeypatch):
+    monkeypatch.setattr("harness.cluster.time.sleep", lambda s: None)
+    counts = iter([0, 0, 0, 1])
+    execs = []
+
+    class Restarting(RecordingKube):
+        def _restart_count(self, pod, container):
+            assert (pod, container) == ("c1-auth", "auth")
+            return next(counts)
+
+        def exec_out(self, suffix, argv):
+            execs.append(argv[-1])
+            # healthz fails once while the new teleport boots
+            return (1 if argv[-1].startswith("curl") and execs.count(argv[-1]) == 1 else 0), ""
+
+    assert Restarting(tmp_path).restart_auth(timeout=60)
+    assert "kill" in execs[0] and "/comm" in execs[0]      # teleport, not PID 1
+    assert [e for e in execs if e.startswith("curl")] and len(execs) == 3
+
+
+def test_kube_restart_auth_gives_up_if_the_container_never_restarts(tmp_path, monkeypatch):
+    monkeypatch.setattr("harness.cluster.time.sleep", lambda s: None)
+    clock = iter(range(0, 10_000, 50))
+    monkeypatch.setattr("harness.cluster.time.monotonic", lambda: next(clock))
+
+    class Stuck(RecordingKube):
+        def _restart_count(self, pod, container):
+            return 0
+
+        def exec_out(self, suffix, argv):
+            return 0, ""
+
+    assert not Stuck(tmp_path).restart_auth(timeout=150)
+
+
+def test_kube_clear_state_file_removes_it_where_it_lives(tmp_path):
+    (tmp_path / "local.json").write_text("{}")
+    c = RecordingKube(tmp_path)
+    c.clear_state_file("agent/out/agent-result.json")
+    assert c.seen[-1][-4:] == ["--", "rm", "-f", "/out/agent-result.json"]
+    c.clear_state_file("local.json")
+    assert not (tmp_path / "local.json").exists()
+    c.clear_state_file("local.json")          # absent is fine
+
+
+def test_docker_clear_state_file_is_local(tmp_path):
+    (tmp_path / "agent" / "out").mkdir(parents=True)
+    (tmp_path / "agent" / "out" / "agent-result.json").write_text("{}")
+    DockerCluster("c1", state_dir=tmp_path).clear_state_file("agent/out/agent-result.json")
+    assert not (tmp_path / "agent" / "out" / "agent-result.json").exists()

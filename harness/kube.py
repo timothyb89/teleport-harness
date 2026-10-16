@@ -4,8 +4,8 @@ Input is what the docker backend runs: state/<id>/docker-compose.yml, rendered b
 harness/render.py, plus the files it bind-mounts. Compose stays the module authoring
 format; this is the only place that knows how compose maps onto Kubernetes
 (docs/remote-kubernetes.md §3). It is PURE — it reads files and returns objects and a plan;
-it never talks to a cluster. Applying them in order (and filling in the pod IPs that
-`hostAliases` need) is the executor's job.
+it never talks to a cluster. Applying them in order (and pointing every pod at the
+namespace's resolver) is the executor's job (harness/kube_apply.py).
 
 Translation is deliberately strict. A compose key, mount form or network shape without a
 rule below is an error naming the service and the key — a module using something new fails
@@ -18,8 +18,8 @@ Mapping in brief:
                                 named container", and a Deployment would rename it
   name resolution            -> two portless headless Services per service (<svc> and
                                 <id>-<svc>), resolving even before the pod is Ready, as docker
-                                DNS does; dotted network aliases (<x>.lab.<domain>) -> hostAliases
-                                to the owning pod's IP, filled in by the executor
+                                DNS does; dotted network aliases (<x>.lab.<domain>) -> a CoreDNS
+                                pod in the namespace that rewrites each to its owner's Service
   depends_on                 -> plan["order"] (apply waves) + per-pod `needs`
   healthcheck                -> readinessProbe
   network_mode: service:X    -> the dependent joins X's pod; X becomes a native sidecar whose
@@ -49,6 +49,9 @@ REGISTRY = "registry.harness:5000"
 LOCAL_IMAGE_PREFIX = "teleport-harness"
 # Copies seeds and artifacts into volumes; multi-arch, so it runs natively on any node.
 HELPER_IMAGE = "busybox:1.37"
+# The per-namespace resolver that gives pods docker's network-alias semantics (multi-arch).
+DNS_IMAGE = "coredns/coredns:1.12.1"
+DNS_NAME = "harness-dns"
 # Stay well under the 1 MiB object limit (the ConfigMap's own metadata counts too).
 CONFIGMAP_BUDGET = 900 * 1024
 
@@ -197,6 +200,7 @@ class _Translator:
         self.artifacts: dict[str, dict] = {}        # image -> plan entry
         self.pullbacks: list[dict] = []
         self.local_images: set[str] = set()
+        self.unhealthy_after: dict[str, int] = {}   # pod -> seconds (compose's healthcheck budget)
 
     # -- validation ----------------------------------------------------------------------
 
@@ -459,6 +463,15 @@ class _Translator:
             c["volumeMounts"] = mounts
         if s.get("healthcheck"):
             c["readinessProbe"] = self._probe(svc, s["healthcheck"])
+            # compose declares a container unhealthy after `retries` consecutive failures
+            # once start_period is over — and a service_healthy dependent then fails `up`.
+            # A readiness probe never gives up, so the executor enforces this budget instead.
+            hc = s["healthcheck"]
+            budget = (_duration_s(hc.get("start_period"), 0)
+                      + _duration_s(hc.get("interval"), 30) * int(hc.get("retries", 3))
+                      + _duration_s(hc.get("timeout"), 30))
+            pname = pod["metadata"]["name"]
+            self.unhealthy_after[pname] = max(self.unhealthy_after.get(pname, 0), budget)
         sc: dict = {}
         if s.get("privileged"):
             sc["privileged"] = True
@@ -549,11 +562,15 @@ class _Translator:
                 if prev is None or rank.index(new) > rank.index(prev):
                     needs[me][them] = new
 
-        # Dotted network aliases resolve publicly to 127.0.0.1 (the *.lab wildcard), so every
-        # other pod needs a hostAlias to the owner's IP. The owner has to have an IP first,
-        # so each pod also waits for every alias owner to have STARTED — except owners that
-        # (transitively) wait on this pod themselves, which would be a cycle; such a pod is
-        # one of the owner's own dependencies and does not get the alias.
+        # Dotted network aliases (the auth FQDN, oidc.<lab>) resolve publicly to 127.0.0.1 (the
+        # *.lab wildcard), so pods need what docker's network aliases give: a resolver that
+        # answers them with the owning pod's address, at LOOKUP time. That is a CoreDNS pod in
+        # the namespace rewriting each alias to the owner's headless Service (which resolves
+        # even before the pod is ready); everything else is forwarded to the cluster DNS. It
+        # can't be the cluster's own DNS: every test cluster has its own oidc.<lab>.
+        # Resolving at lookup time is the point. hostAliases would need the owner's pod IP
+        # before a pod is created, which orders startup by alias and cannot express a cycle
+        # (terraform_native_join_lb: auth needs oidc's alias while oidc, via lb, waits on auth).
         owners: dict[str, str] = {}
         for name, s in self.services.items():
             for net, cfg in (s.get("networks") or {}).items() if isinstance(s.get("networks"), dict) else []:
@@ -564,31 +581,13 @@ class _Translator:
                     prev = owners.setdefault(a, svc_pod[name])
                     if prev != svc_pod[name]:
                         raise TranslateError(f"alias {a} is claimed by both {prev} and {svc_pod[name]}")
-
-        def waits_on(a: str, b: str) -> bool:      # does pod a (transitively) wait on pod b?
-            seen, stack = set(), [a]
-            while stack:
-                x = stack.pop()
-                for y in needs[x]:
-                    if y == b:
-                        return True
-                    if y not in seen:
-                        seen.add(y)
-                        stack.append(y)
-            return False
-
-        host_aliases: dict[str, dict[str, str]] = {p: {} for p in pods}
-        for alias, owner_pod in sorted(owners.items()):
-            for p in pods:
-                if p == owner_pod:
-                    host_aliases[p][alias] = "127.0.0.1"
-                elif not waits_on(owner_pod, p):
-                    host_aliases[p][alias] = owner_pod
-                    needs[p].setdefault(owner_pod, "started")
-        for p, aliases in host_aliases.items():
-            local = sorted(a for a, t in aliases.items() if t == "127.0.0.1")
-            if local:
-                pods[p]["spec"]["hostAliases"] = [{"ip": "127.0.0.1", "hostnames": local}]
+        for pod in pods.values():
+            pod["spec"]["dnsPolicy"] = "None"
+            pod["spec"]["dnsConfig"] = {
+                # filled with the resolver Service's ClusterIP by the executor (kube_apply)
+                "nameservers": [],
+                "searches": [f"{self.ns}.svc.cluster.local", "svc.cluster.local", "cluster.local"],
+                "options": [{"name": "ndots", "value": "5"}]}
 
         order = self._layers(needs)
 
@@ -605,6 +604,9 @@ class _Translator:
                     "spec": {"clusterIP": "None", "publishNotReadyAddresses": True,
                              "selector": {"harness.teleport/pod": svc_pod[name]}},
                 })
+        if DNS_NAME in seen:
+            raise TranslateError(f"a compose service named {DNS_NAME!r} collides with the resolver")
+        dns_objects = self._resolver(owners)
         if "auth" not in self.services:
             raise TranslateError("no auth service (the base scaffold always renders one)")
         ingress_svc = {
@@ -640,15 +642,19 @@ class _Translator:
         objects = ([namespace]
                    + [self.configmaps[k] for k in sorted(self.configmaps)]
                    + [self.pvcs[k] for k in sorted(self.pvcs)]
-                   + services + [ingress_svc, route]
+                   + services + [ingress_svc, route] + dns_objects
                    + [pods[p] for layer in order for p in layer])
         plan = {
             "namespace": self.ns,
             "order": order,
             "pods": {p: {"needs": [{"pod": d, "condition": c} for d, c in sorted(needs[p].items())],
-                         "host_aliases": {a: t for a, t in sorted(host_aliases[p].items())
-                                          if t != "127.0.0.1"}}
+                         **({"unhealthy_after": self.unhealthy_after[p]}
+                            if p in self.unhealthy_after else {})}
                      for p in sorted(pods)},
+            # The namespace's resolver: started before the first wave; every pod's
+            # dnsConfig.nameservers gets the Service's ClusterIP.
+            "dns": {"pod": DNS_NAME, "service": DNS_NAME,
+                    "aliases": {a: f"{o}.{self.ns}.svc.cluster.local" for a, o in sorted(owners.items())}},
             # Cluster seam: a service suffix -> where its process runs.
             "services": {s: {"pod": svc_pod[s], "container": s} for s in sorted(self.services)},
             "secrets": [self.secrets[k] for k in sorted(self.secrets)],
@@ -657,6 +663,36 @@ class _Translator:
             "local_images": sorted(self.local_images),
         }
         return Translation(objects=objects, plan=plan, configmap_sources=dict(self.cm_sources))
+
+    def _resolver(self, owners: dict[str, str]) -> list[dict]:
+        """ConfigMap + Pod + Service for the namespace's alias-aware resolver."""
+        rewrites = "".join(
+            f"        rewrite stop name exact {a} {o}.{self.ns}.svc.cluster.local answer auto\n"
+            for a, o in sorted(owners.items()))
+        corefile = (".:53 {\n        errors\n        ready\n" + rewrites +
+                    "        forward . /etc/resolv.conf\n        cache 5\n}\n")
+        labels = self._labels(**{"harness.teleport/pod": DNS_NAME})
+        return [
+            {"apiVersion": "v1", "kind": "ConfigMap",
+             "metadata": {"name": DNS_NAME, "namespace": self.ns, "labels": self._labels()},
+             "data": {"Corefile": corefile}},
+            {"apiVersion": "v1", "kind": "Service",
+             "metadata": {"name": DNS_NAME, "namespace": self.ns, "labels": self._labels()},
+             "spec": {"selector": {"harness.teleport/pod": DNS_NAME},
+                      "ports": [{"name": "dns", "port": 53, "protocol": "UDP"},
+                                {"name": "dns-tcp", "port": 53, "protocol": "TCP"}]}},
+            {"apiVersion": "v1", "kind": "Pod",
+             "metadata": {"name": DNS_NAME, "namespace": self.ns, "labels": labels},
+             "spec": {"restartPolicy": "Always", "enableServiceLinks": False,
+                      "automountServiceAccountToken": False, "terminationGracePeriodSeconds": 5,
+                      "containers": [{
+                          "name": "coredns", "image": DNS_IMAGE,
+                          "args": ["-conf", "/etc/coredns/Corefile"],
+                          "readinessProbe": {"httpGet": {"path": "/ready", "port": 8181},
+                                             "periodSeconds": 2},
+                          "volumeMounts": [{"name": "corefile", "mountPath": "/etc/coredns"}]}],
+                      "volumes": [{"name": "corefile", "configMap": {"name": DNS_NAME}}]}},
+        ]
 
     @staticmethod
     def _layers(needs: dict[str, dict[str, str]]) -> list[list[str]]:

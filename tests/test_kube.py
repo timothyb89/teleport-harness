@@ -120,23 +120,35 @@ def test_depends_on_becomes_waves_and_needs_keeping_the_strongest_wait(tmp_path)
                      "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 40}
 
 
-def test_dotted_aliases_resolve_via_host_aliases_without_creating_cycles(tmp_path):
-    # oidc owns oidc.<lab>, and waits on `ca` — so `ca` must NOT wait on oidc for the alias
-    # (a cycle); it is one of oidc's own dependencies and does without it.
+def test_dotted_aliases_resolve_through_the_namespace_resolver_with_no_start_order(tmp_path):
+    # terraform_native_join_lb's shape: oidc waits (through lb) on auth, while auth needs
+    # oidc's alias. hostAliases could not express that; a resolver answering at lookup
+    # time, as docker's aliases do, needs no ordering at all.
     t = _t({"auth": _auth(networks={"internal": {"aliases": [FQDN]}}),
-            "ca": {"image": "x", "container_name": "zz1-ca"},
-            "oidc": {"image": "x", "container_name": "zz1-oidc", "depends_on": ["ca"],
+            "lb": {"image": "x", "container_name": "zz1-lb", "depends_on": ["auth"]},
+            "oidc": {"image": "x", "container_name": "zz1-oidc", "depends_on": ["lb"],
                      "networks": {"internal": {"aliases": ["oidc.lab.example.com"]}}},
             "agent": {"image": "x", "container_name": "zz1-agent"}}, tmp_path)
-    pods = t.plan["pods"]
-    # the owner reaches its own alias over loopback, set inline
-    assert _obj(t, "Pod", "zz1-auth")["spec"]["hostAliases"] == [{"ip": "127.0.0.1", "hostnames": [FQDN]}]
-    assert pods["zz1-agent"]["host_aliases"] == {FQDN: "zz1-auth", "oidc.lab.example.com": "zz1-oidc"}
-    assert {"pod": "zz1-oidc", "condition": "started"} in pods["zz1-agent"]["needs"]
-    assert pods["zz1-ca"]["host_aliases"] == {}
-    # Aliases add waits: auth gets oidc's alias (oidc doesn't wait on auth), so auth starts
-    # after oidc. That only ever delays — the cycle rule drops an alias rather than deadlock.
-    assert t.plan["order"] == [["zz1-ca"], ["zz1-oidc"], ["zz1-auth"], ["zz1-agent"]]
+    # waves are depends_on alone: aliases add none
+    assert t.plan["order"] == [["zz1-agent", "zz1-auth"], ["zz1-lb"], ["zz1-oidc"]]
+    assert t.plan["pods"]["zz1-agent"]["needs"] == []
+    assert t.plan["dns"]["aliases"] == {FQDN: "zz1-auth.th-zz1.svc.cluster.local",
+                                        "oidc.lab.example.com": "zz1-oidc.th-zz1.svc.cluster.local"}
+    corefile = _obj(t, "ConfigMap", "harness-dns")["data"]["Corefile"]
+    assert ("rewrite stop name exact oidc.lab.example.com zz1-oidc.th-zz1.svc.cluster.local "
+            "answer auto") in corefile
+    assert "forward . /etc/resolv.conf" in corefile
+    for name in ("zz1-auth", "zz1-oidc", "zz1-agent"):
+        spec = _obj(t, "Pod", name)["spec"]
+        assert "hostAliases" not in spec
+        assert spec["dnsPolicy"] == "None"
+        assert spec["dnsConfig"]["searches"][0] == "th-zz1.svc.cluster.local"
+    assert _obj(t, "Service", "harness-dns")["spec"]["ports"][0] == {"name": "dns", "port": 53, "protocol": "UDP"}
+
+
+def test_a_service_named_like_the_resolver_is_refused(tmp_path):
+    with pytest.raises(TranslateError, match="collides with the resolver"):
+        _t({"auth": _auth(), "harness-dns": {"image": "x", "container_name": "zz1-harness-dns"}}, tmp_path)
 
 
 def test_network_mode_service_becomes_a_native_sidecar_gating_the_dependent(tmp_path):

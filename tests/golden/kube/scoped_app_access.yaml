@@ -617,6 +617,67 @@ objects:
     tls:
       passthrough: true
 - apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: harness-dns
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  data:
+  - Corefile
+  binaryData: []
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: harness-dns
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+  spec:
+    selector:
+      harness.teleport/pod: harness-dns
+    ports:
+    - name: dns
+      port: 53
+      protocol: UDP
+    - name: dns-tcp
+      port: 53
+      protocol: TCP
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: harness-dns
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: harness-dns
+  spec:
+    restartPolicy: Always
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 5
+    containers:
+    - name: coredns
+      image: coredns/coredns:1.12.1
+      args:
+      - -conf
+      - /etc/coredns/Corefile
+      readinessProbe:
+        httpGet:
+          path: /ready
+          port: 8181
+        periodSeconds: 2
+      volumeMounts:
+      - name: corefile
+        mountPath: /etc/coredns
+    volumes:
+    - name: corefile
+      configMap:
+        name: harness-dns
+- apiVersion: v1
   kind: Pod
   metadata:
     name: zz1-auth
@@ -708,121 +769,16 @@ objects:
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 40
-    hostAliases:
-    - ip: 127.0.0.1
-      hostnames:
-      - zz1.lab.example.com
-- apiVersion: v1
-  kind: Pod
-  metadata:
-    name: zz1-cfg-scoped-bare
-    namespace: th-zz1
-    labels:
-      app.kubernetes.io/part-of: teleport-harness
-      harness.teleport/cluster-id: zz1
-      harness.teleport/pod: zz1-cfg-scoped-bare
-  spec:
-    restartPolicy: Never
-    enableServiceLinks: false
-    automountServiceAccountToken: false
-    terminationGracePeriodSeconds: 10
-    volumes:
-    - name: cm-tbot-cfg-scoped-bare-yaml-82bcfa52
-      configMap:
-        name: cm-tbot-cfg-scoped-bare-yaml-82bcfa52
-        items:
-        - key: tbot-cfg-scoped-bare.yaml
-          path: tbot-cfg-scoped-bare.yaml
-    containers:
-    - name: cfg-scoped-bare
-      image: registry.harness:5000/teleport-harness:test
-      args:
-      - tbot
-      - start
-      - -c
-      - /etc/tbot.yaml
-      env:
-      - name: TELEPORT_UNSTABLE_SCOPES
-        value: 'yes'
-      volumeMounts:
-      - name: cm-tbot-cfg-scoped-bare-yaml-82bcfa52
-        mountPath: /etc/tbot.yaml
-        readOnly: true
-        subPath: tbot-cfg-scoped-bare.yaml
-- apiVersion: v1
-  kind: Pod
-  metadata:
-    name: zz1-cfg-scoped-proxy
-    namespace: th-zz1
-    labels:
-      app.kubernetes.io/part-of: teleport-harness
-      harness.teleport/cluster-id: zz1
-      harness.teleport/pod: zz1-cfg-scoped-proxy
-  spec:
-    restartPolicy: Never
-    enableServiceLinks: false
-    automountServiceAccountToken: false
-    terminationGracePeriodSeconds: 10
-    volumes:
-    - name: cm-tbot-cfg-scoped-proxy-yaml-d8ca3294
-      configMap:
-        name: cm-tbot-cfg-scoped-proxy-yaml-d8ca3294
-        items:
-        - key: tbot-cfg-scoped-proxy.yaml
-          path: tbot-cfg-scoped-proxy.yaml
-    containers:
-    - name: cfg-scoped-proxy
-      image: registry.harness:5000/teleport-harness:test
-      args:
-      - tbot
-      - start
-      - -c
-      - /etc/tbot.yaml
-      env:
-      - name: TELEPORT_UNSTABLE_SCOPES
-        value: 'yes'
-      volumeMounts:
-      - name: cm-tbot-cfg-scoped-proxy-yaml-d8ca3294
-        mountPath: /etc/tbot.yaml
-        readOnly: true
-        subPath: tbot-cfg-scoped-proxy.yaml
-- apiVersion: v1
-  kind: Pod
-  metadata:
-    name: zz1-cfg-unscoped-sqn
-    namespace: th-zz1
-    labels:
-      app.kubernetes.io/part-of: teleport-harness
-      harness.teleport/cluster-id: zz1
-      harness.teleport/pod: zz1-cfg-unscoped-sqn
-  spec:
-    restartPolicy: Never
-    enableServiceLinks: false
-    automountServiceAccountToken: false
-    terminationGracePeriodSeconds: 10
-    volumes:
-    - name: cm-tbot-cfg-unscoped-sqn-yaml-26f909ba
-      configMap:
-        name: cm-tbot-cfg-unscoped-sqn-yaml-26f909ba
-        items:
-        - key: tbot-cfg-unscoped-sqn.yaml
-          path: tbot-cfg-unscoped-sqn.yaml
-    containers:
-    - name: cfg-unscoped-sqn
-      image: registry.harness:5000/teleport-harness:test
-      args:
-      - tbot
-      - start
-      - -c
-      - /etc/tbot.yaml
-      env:
-      - name: TELEPORT_UNSTABLE_SCOPES
-        value: 'yes'
-      volumeMounts:
-      - name: cm-tbot-cfg-unscoped-sqn-yaml-26f909ba
-        mountPath: /etc/tbot.yaml
-        readOnly: true
-        subPath: tbot-cfg-unscoped-sqn.yaml
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -844,6 +800,16 @@ objects:
       args:
       - -use-real-hostname
       - -port=8080
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -865,6 +831,16 @@ objects:
       args:
       - -use-real-hostname
       - -port=8080
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -919,6 +895,16 @@ objects:
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 40
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -968,6 +954,157 @@ objects:
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 40
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-cfg-scoped-bare
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-cfg-scoped-bare
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-tbot-cfg-scoped-bare-yaml-82bcfa52
+      configMap:
+        name: cm-tbot-cfg-scoped-bare-yaml-82bcfa52
+        items:
+        - key: tbot-cfg-scoped-bare.yaml
+          path: tbot-cfg-scoped-bare.yaml
+    containers:
+    - name: cfg-scoped-bare
+      image: registry.harness:5000/teleport-harness:test
+      args:
+      - tbot
+      - start
+      - -c
+      - /etc/tbot.yaml
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      volumeMounts:
+      - name: cm-tbot-cfg-scoped-bare-yaml-82bcfa52
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: tbot-cfg-scoped-bare.yaml
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-cfg-scoped-proxy
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-cfg-scoped-proxy
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-tbot-cfg-scoped-proxy-yaml-d8ca3294
+      configMap:
+        name: cm-tbot-cfg-scoped-proxy-yaml-d8ca3294
+        items:
+        - key: tbot-cfg-scoped-proxy.yaml
+          path: tbot-cfg-scoped-proxy.yaml
+    containers:
+    - name: cfg-scoped-proxy
+      image: registry.harness:5000/teleport-harness:test
+      args:
+      - tbot
+      - start
+      - -c
+      - /etc/tbot.yaml
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      volumeMounts:
+      - name: cm-tbot-cfg-scoped-proxy-yaml-d8ca3294
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: tbot-cfg-scoped-proxy.yaml
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-cfg-unscoped-sqn
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-cfg-unscoped-sqn
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: cm-tbot-cfg-unscoped-sqn-yaml-26f909ba
+      configMap:
+        name: cm-tbot-cfg-unscoped-sqn-yaml-26f909ba
+        items:
+        - key: tbot-cfg-unscoped-sqn.yaml
+          path: tbot-cfg-unscoped-sqn.yaml
+    containers:
+    - name: cfg-unscoped-sqn
+      image: registry.harness:5000/teleport-harness:test
+      args:
+      - tbot
+      - start
+      - -c
+      - /etc/tbot.yaml
+      env:
+      - name: TELEPORT_UNSTABLE_SCOPES
+        value: 'yes'
+      volumeMounts:
+      - name: cm-tbot-cfg-unscoped-sqn-yaml-26f909ba
+        mountPath: /etc/tbot.yaml
+        readOnly: true
+        subPath: tbot-cfg-unscoped-sqn.yaml
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -1017,6 +1154,16 @@ objects:
       - name: vol-app-creds
         mountPath: /out/app
         readOnly: false
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -1060,6 +1207,16 @@ objects:
       - name: vol-appbot-notfound-data
         mountPath: /var/lib/tbot
         readOnly: false
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -1100,6 +1257,16 @@ objects:
       - name: vol-appbot-unscoped-data
         mountPath: /var/lib/tbot
         readOnly: false
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -1162,17 +1329,27 @@ objects:
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 60
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 plan:
   namespace: th-zz1
   order:
   - - zz1-auth
-  - - zz1-cfg-scoped-bare
-    - zz1-cfg-scoped-proxy
-    - zz1-cfg-unscoped-sqn
     - zz1-httpbin
     - zz1-httpbin-decoy
   - - zz1-app-agent
     - zz1-app-agent-unscoped
+    - zz1-cfg-scoped-bare
+    - zz1-cfg-scoped-proxy
+    - zz1-cfg-unscoped-sqn
   - - zz1-appbot
     - zz1-appbot-notfound
     - zz1-appbot-unscoped
@@ -1184,83 +1361,63 @@ plan:
         condition: ready
       - pod: zz1-httpbin
         condition: started
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
+      unhealthy_after: 213
     zz1-app-agent-unscoped:
       needs:
       - pod: zz1-auth
         condition: ready
       - pod: zz1-httpbin-decoy
         condition: started
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
+      unhealthy_after: 213
     zz1-appbot:
       needs:
       - pod: zz1-app-agent
         condition: ready
       - pod: zz1-auth
         condition: ready
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
     zz1-appbot-notfound:
       needs:
       - pod: zz1-app-agent-unscoped
         condition: ready
       - pod: zz1-auth
         condition: ready
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
     zz1-appbot-unscoped:
       needs:
       - pod: zz1-app-agent-unscoped
         condition: ready
       - pod: zz1-auth
         condition: ready
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
     zz1-auth:
       needs: []
-      host_aliases: {}
+      unhealthy_after: 213
     zz1-cfg-scoped-bare:
       needs:
       - pod: zz1-auth
         condition: ready
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
     zz1-cfg-scoped-proxy:
       needs:
       - pod: zz1-auth
         condition: ready
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
     zz1-cfg-unscoped-sqn:
       needs:
       - pod: zz1-auth
         condition: ready
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
     zz1-httpbin:
-      needs:
-      - pod: zz1-auth
-        condition: started
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
+      needs: []
     zz1-httpbin-decoy:
-      needs:
-      - pod: zz1-auth
-        condition: started
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
+      needs: []
     zz1-probe:
       needs:
       - pod: zz1-appbot
         condition: started
       - pod: zz1-appbot-unscoped
         condition: started
-      - pod: zz1-auth
-        condition: started
-      host_aliases:
-        zz1.lab.example.com: zz1-auth
+      unhealthy_after: 303
+  dns:
+    pod: harness-dns
+    service: harness-dns
+    aliases:
+      zz1.lab.example.com: zz1-auth.th-zz1.svc.cluster.local
   services:
     app-agent:
       pod: zz1-app-agent

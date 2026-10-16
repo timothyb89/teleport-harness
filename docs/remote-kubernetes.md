@@ -1,8 +1,143 @@
 # Design: a remote Kubernetes backend
 
-Status: **proposed** (not built). Companion to `docs/kubernetes.md`, which covers the
-*in-cluster k3s for operator tests*; this document is about running **the whole harness
-cluster** in a remote Kubernetes cluster instead of local docker compose.
+Status: **phases 1–5 built; Phase 6 in progress; Phase 0's "from Beams" half waiting on
+outer-Teleport onboarding.** See **Current state and handoff** right below. Companion to
+`docs/kubernetes.md`, which covers the *in-cluster k3s for operator tests*; this document
+is about running **the whole harness cluster** in a remote Kubernetes cluster instead of
+local docker compose.
+
+## Current state and handoff (2026-10-16)
+
+Everything below the line "Motivation" is the design, annotated with what was built
+(**Status:** paragraphs in §1–§6, **Done** notes in §8). This section is the summary a new
+session needs to resume.
+
+### Where each phase stands
+
+| Phase | State | Commit |
+|---|---|---|
+| 0 host infra + spike | infra built and VM-tested (lima + CoreOS); **"from Beams" half NOT done** | eadefc7 |
+| 1 backend seam | done | 2f5b335 |
+| 2 translator | done | 23eff88 |
+| 3 image publishing | done (second client = a second checkout on the mac, not Beams) | 4e88fe8 |
+| 4 end to end | done: `bots` 10/10, `oidc-caching` 52/52 identical to docker | c906dc2 |
+| 5 access + visibility | done between two mac clients | 44d5271 |
+| 6 breadth | **in progress** (below) | (this commit) |
+| 7 operator modules | not started (`requires_backend: docker`) | |
+| 8 TPM via KubeVirt | not started; spike on the real host | |
+
+### Phase 6 so far
+
+Built:
+- `KubeCluster.restart_auth`: kill the `teleport` child, not PID 1 (the kernel shields a
+  namespace's init from signals it doesn't handle). The kubelet restarts the container
+  in place, and the PVCs keep auth's data and the apply-on-startup files.
+- **Per-namespace resolver replacing hostAliases** (§3): it fixed a real k8s/docker
+  divergence in `terraform_native_join_lb`.
+- **Unhealthy budget:** a dependency that never passes its healthcheck fails the apply
+  after compose's own budget (`start_period + interval × retries + timeout`), counted from
+  when the containers start running. It no longer waits the full 600s.
+- **Agent result through the seam:** `Cluster.clear_state_file`, and `run_agent` checks
+  the agent's result through `state_file`, so a k8s workbench's result, which stays in
+  the pod's volume, is found. Before this, the agent always "wrote nothing" on k8s.
+
+Verdict parity, check by check, same source on both backends (lima k3s vs local docker):
+
+| Module | Source | Docker | k8s | Same? |
+|---|---|---|---|---|
+| bound_keypair_status | package v18.11.0-rc.2 | 11 P / 6 F | 11 / 6 | yes |
+| scoped_usage_mode | package | 45 / 23 | 45 / 23 | yes |
+| workload_identity_sds_override | package | 6 / 2 | 6 / 2 | yes |
+| workload_identity_slow_start | package | 7 / 6 | 7 / 6 | yes (netem sidecar shapes: `shaped yes`) |
+| terraform_bot | repo `~/projects/teleport` @ 0e4aa11cf8c2 (v19 master) | 0 / 3 | 0 / 3 | yes |
+| terraform_generic_oidc | repo | 1 / 3 | 1 / 3 | yes |
+| terraform_native_join_lb | repo | 18 / 16 | 18 / 16 | yes, after the resolver fix (was 14 / 20) |
+| bound_keypair_apply_on_startup | repo | 5 / 8 | 5 / 8 | yes (`restart_auth` exercised) |
+| docs_bound_keypair (AI agent) | repo | 4 / 0 | 4 / 0 | yes, rerun after the agent-result change |
+| scoped_app_access | repo | never comes up | never comes up | same failure; k8s now fails fast (244s, was 620s) |
+
+With the resolver in place, the Phase 4 plans were rerun on k8s: `oidc-caching` passes
+(75s, down from 90s now that aliases add no waits) and `bots` passes. The admin pod
+(`admin`, in-cluster `tsh`/`tctl`, native `tsh` through the ingress) was checked again
+too.
+
+The failures are not backend problems. On the RC they are the fixes these modules guard;
+on master, three modules have drifted (the next section). Parity of FAILING verdicts is
+still evidence: the same assertions fail for the same reasons.
+
+### Findings about the modules/Teleport, not the backend (need a human decision)
+
+- `terraform_bot`/`terraform_*` on master: the provider's `teleport_bot` resource changed
+  shape (top-level `name`/`roles`; `version`/`metadata`/`spec` rejected), so the module's
+  `main.tf` no longer applies. Module drift; update the HCL.
+- `bound_keypair_apply_on_startup` on master: the pre-seeded bot is refused with `either
+  an initial public key or registration secret is required`, so the registration secret
+  seeded through `.status` doesn't take effect. Could be a regression or an intended
+  change.
+- `scoped_app_access` on master: the scoped App agent's inline join string
+  `/harness-apps::app-agent-token:<secret>` is treated as a FILE PATH because it starts with
+  `/` (`open /harness-apps::…: no such file or directory`), so the agent never joins.
+  Probably a real bug in how the agent reads `token_name`.
+
+### Next steps, in order
+
+1. `docs_generic_oidc` on both backends (same machinery as docs_bound_keypair). Then
+   Phase 6 is complete apart from the master-drift findings above.
+2. Phase 0 "from Beams": onboard the host to the outer Teleport (kube agent + a TCP app
+   `harness-ingress` → the node's :9443), set `FORWARD=tsh-app:harness-ingress`, repeat
+   the bots run from Beams, and measure `kubectl exec` latency through `tsh kube` (risk
+   list at the end of this doc). `tsh-app` forward mode is the only untested mode.
+3. Real hardware: `infra/host/` (CoreOS) on the box; `test-libvirt.sh` is untested.
+4. Phase 7 (operator: vcluster or privileged k3s-in-pod) and Phase 8 (KubeVirt TPM spike).
+5. Smaller open items: registry GC (per-cluster artifact tags pile up); in-cluster ACME
+   CronJob (today `infra/k8s/import-cert.sh` copies the cert from the docker backend's
+   `harness-certs` volume); five leaked docker admin tbots and volumes from before Phase 1
+   plus three exited docker clusters (`c303c4a`, `c96337b`, `ce54506`) await the user's
+   cleanup.
+
+### Resuming on another machine
+
+Not in git, so recreate them:
+- **The k3s stand-in:** `limactl start --name harness-k3s infra/lima/k3s.yaml`, then
+  `infra/lima/sync.sh`, then `infra/k8s/import-cert.sh` (needs a wildcard cert in the
+  docker `harness-certs` volume: run any docker-backend `cluster up` once, or adapt
+  the script to read a cert file). Details: `infra/README.md`.
+- **A target, e.g. `targets/lima-k3s.env`:** your `default.env` (domain, DNS token,
+  ACME email), plus:
+  ```
+  BACKEND=k8s
+  KUBECONFIG=$HOME/.lima/harness-k3s/copied-from-guest/kubeconfig.yaml   # write it out literally
+  KUBE_CONTEXT=default          # REQUIRED; the harness never uses an ambient context
+  INGRESS_PORT=9443
+  # FORWARD=none                # lima forwards 9443 itself; tsh-app:<app> from Beams
+  ```
+- **Tools:** `uv`, `kubectl`, `jq`, `python3`; `crane`/`buildctl` download themselves
+  (pinned, checksummed: `lib/tools.sh`). `--repo` builds also need the cross toolchain.
+- **Throwaway or rebuildable:** `.cache/` (binaries and the tool downloads), the
+  registry's contents (the cache rebuilds on first push), and `state/`. A live k8s cluster
+  made elsewhere can be picked up with `cluster attach <id>`.
+
+Smoke test after setup: `bin/cluster --target lima-k3s doctor`, then
+`bin/cluster --target lima-k3s run-plan bots --package <teleport-*-linux-amd64-bin.tar.gz>`
+(expect 10/10), and `teardown`.
+
+How the parity table was made: run the same module with the same source on both targets
+(`run-plan <m> <source> --id <id>`), then diff
+`jq -r '.results[] | "\(.status) \(.verb) \(.args|join(" "))"' state/<id>/results-<m>.json`
+between the two, after replacing each cluster id with a placeholder (`sed s/<id>/ID/g`).
+
+### Rules that must not be relearned
+
+- Every k8s kubectl call is pinned to the cluster's recorded KUBECONFIG + KUBE_CONTEXT
+  (`use_cluster`). An unpinned call once reached a WORK cluster through the default
+  kubeconfig. Never add a k8s code path that falls back to the ambient context.
+- Harness images are single-platform amd64 MANIFESTS, never an index (§4).
+- A Dockerfile that compiles must cross-compile (`--platform=$BUILDPLATFORM`): buildkitd
+  on an arm64 node runs amd64 `RUN` under qemu-user, where Go crashes.
+- Both ingresses route the FQDN AND `<hex(fqdn)>.teleport.cluster.local` (native tsh);
+  nginx needs `map_hash_bucket_size 256`.
+- Aliases resolve through the namespace resolver at lookup time; don't reintroduce
+  hostAliases.
 
 ## Motivation
 
@@ -157,11 +292,20 @@ What implementation changed from the sketch below:
   and `<id>-<svc>`, `publishNotReadyAddresses`) — compose services declare no ports, and a
   ClusterIP Service needs them. Verified on k3s: both names resolve to a NOT-ready pod, as
   docker DNS does. The ingress gets its own ClusterIP Service on the proxy port.
-- **Aliases are all dotted `*.lab.<domain>` names** (seven owners across the modules).
-  The owner resolves its own via `127.0.0.1` (inline); every other pod gets the owner's pod
-  IP, so it also waits for the owner to have STARTED — unless the owner (transitively)
-  waits on it, in which case that pod goes without the alias. Waits can therefore reorder
-  waves (generic_oidc: the IdP starts before auth) but never deadlock.
+- **Aliases are all dotted `*.lab.<domain>` names** (seven owners across the modules), and
+  each namespace has its own resolver for them (Phase 6; the first design used
+  `hostAliases`, see below): a CoreDNS pod `harness-dns` rewrites each alias to its owner's
+  headless Service and forwards everything else to the cluster DNS, and every pod gets it
+  through `dnsPolicy: None` + `dnsConfig`, with the namespace's search path, so short
+  names still work. That is docker's semantics: resolved at LOOKUP time, so aliases impose
+  no start order. It can't live in the cluster's own DNS, because every test cluster has its
+  own `oidc.lab.<domain>`.
+  **Why not hostAliases (the Phase 2 design):** a hostAlias needs the owner's pod IP
+  before a pod is created, so every alias user had to wait for the owner, and a cycle
+  could only be broken by dropping the alias. `terraform_native_join_lb` has exactly that
+  cycle (auth needs `oidc.lab`, oidc waits on lb, lb waits on auth), so auth could not
+  reach its IdP on k8s while docker passed. `oidc-caching` only worked because its IdPs
+  happened to start before auth.
 - **No NetworkPolicy needed:** the only networks are `internal` and the external
   `teleport-harness`, with no isolation topology. A network with any other key is refused.
 - **`platform` is dropped**, not refused: modules pin `linux/arm64` on public multi-arch
@@ -193,7 +337,7 @@ render time instead of halfway through a run.
 | `restart` (absent / `no`) | `restartPolicy: Never`; `always`/`unless-stopped` → `Always`; the auth pod is always `Always` (restart_auth) |
 | `healthcheck` | `readinessProbe` exec (`CMD-SHELL` → `sh -c`); interval/timeout/retries map directly, `start_period` → `initialDelaySeconds`. Readiness never kills a pod, the same as a compose healthcheck. |
 | `depends_on` | **host-side apply waves**: topologically sort, apply a wave, `kubectl wait` on the conditions the next wave needs (`service_healthy` → Ready, `service_started` → Running/Initialized, `service_completed_successfully` → `jsonpath={.status.phase}=Succeeded`). No in-cluster RBAC or waiter image, and it matches how compose orders startup. |
-| network aliases (the auth FQDN, `oidc.<lab>`) | phase 1 applies all Services; their ClusterIPs then go into **`hostAliases`** on every pod. Pods would otherwise resolve `*.lab` publicly to 127.0.0.1, so this is the k8s equivalent of the docker alias, and TLS still matches the wildcard. |
+| network aliases (the auth FQDN, `oidc.<lab>`) | *(as built: a per-namespace CoreDNS rewriting each alias to its owner's Service, see above)* phase 1 applies all Services; their ClusterIPs then go into **`hostAliases`** on every pod. Pods would otherwise resolve `*.lab` publicly to 127.0.0.1, so this is the k8s equivalent of the docker alias, and TLS still matches the wildcard. |
 | `networks:` beyond aliasing | phase 1: one flat namespace network. A module that relies on *isolation* between networks declares it and gets NetworkPolicies (k3s ships a netpol controller) in Phase 6. |
 | `hostname` | Pod `hostname` (nodename defaults to it — `scoped_usage_mode` depends on this) |
 | `cap_add` / `privileged` / `user` / `tmpfs` | `securityContext` / `runAsUser` / `emptyDir{medium: Memory}` |
@@ -426,8 +570,8 @@ the laptop:
      dirs are per-client, so another client may own the id), applies the namespace, the
      Secrets (license read from the host, wildcard cert copied from `harness-system`; the
      values travel on stdin and are never written to disk), then the other objects, then
-     pods wave by wave. Before each pod it waits on its `needs` and pins its aliases to the
-     owners' pod IPs. Server-side apply, because a ConfigMap can exceed client-side
+     pods wave by wave, each waiting on its `needs` (Phase 6 replaced the alias pinning
+     with the namespace resolver, §3). Server-side apply, because a ConfigMap can exceed client-side
      apply's 256 KiB annotation limit. A pod stuck on an unrecoverable reason
      (`InvalidImageName`, …) or `Failed` stops the apply with that pod named.
    - `be_k8s_up` also checks that every harness image the pods name is in the registry
@@ -463,6 +607,10 @@ the laptop:
    showed the cluster as gone. See §5 and §6 for what was built. Browser login itself
    (password + MFA on the invite page) was not driven.
 6. **Breadth.** Rows marked 6 above, including NetworkPolicy for isolated networks.
+   **In progress (2026-10-16):** `restart_auth`, the per-namespace resolver, compose's
+   unhealthy budget, and the agent result read through the seam are built. Ten modules
+   have per-check verdict parity with docker. NetworkPolicy turned out to be unneeded (§3).
+   The table and what remains: "Current state and handoff" at the top.
 7. **Operator modules (optional).** A privileged k3s-in-pod (the existing k3s entrypoint,
    minus most rootless workarounds) or vcluster per run, so CRDs don't collide across
    concurrent runs or branches.

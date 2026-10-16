@@ -375,132 +375,66 @@ objects:
     tls:
       passthrough: true
 - apiVersion: v1
-  kind: Pod
+  kind: ConfigMap
   metadata:
-    name: zz1-bigdisco
+    name: harness-dns
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
       harness.teleport/cluster-id: zz1
-      harness.teleport/pod: zz1-bigdisco
+  data:
+  - Corefile
+  binaryData: []
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: harness-dns
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
   spec:
-    restartPolicy: Never
-    enableServiceLinks: false
-    automountServiceAccountToken: false
-    terminationGracePeriodSeconds: 10
-    volumes:
-    - name: secret-wildcard-cert
-      secret:
-        secretName: wildcard-cert
-    - name: vol-bigdisco-data
-      persistentVolumeClaim:
-        claimName: vol-bigdisco-data
-    containers:
-    - name: bigdisco
-      image: registry.harness:5000/teleport-harness-oidc:v4
-      args:
-      - -issuer=https://bigdisco.lab.example.com:8443
-      - -addr=:8443
-      - -cluster-name=zz1.lab.example.com
-      - -tls-cert=/certs/wildcard.crt
-      - -tls-key=/certs/wildcard.key
-      - -oversize-endpoints=discovery
-      - -hang-after-oversize
-      volumeMounts:
-      - name: secret-wildcard-cert
-        mountPath: /certs
-        readOnly: true
-      - name: vol-bigdisco-data
-        mountPath: /data
-        readOnly: false
-    hostAliases:
-    - ip: 127.0.0.1
-      hostnames:
-      - bigdisco.lab.example.com
+    selector:
+      harness.teleport/pod: harness-dns
+    ports:
+    - name: dns
+      port: 53
+      protocol: UDP
+    - name: dns-tcp
+      port: 53
+      protocol: TCP
 - apiVersion: v1
   kind: Pod
   metadata:
-    name: zz1-bigjwks
+    name: harness-dns
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
       harness.teleport/cluster-id: zz1
-      harness.teleport/pod: zz1-bigjwks
+      harness.teleport/pod: harness-dns
   spec:
-    restartPolicy: Never
+    restartPolicy: Always
     enableServiceLinks: false
     automountServiceAccountToken: false
-    terminationGracePeriodSeconds: 10
-    volumes:
-    - name: secret-wildcard-cert
-      secret:
-        secretName: wildcard-cert
-    - name: vol-bigjwks-data
-      persistentVolumeClaim:
-        claimName: vol-bigjwks-data
+    terminationGracePeriodSeconds: 5
     containers:
-    - name: bigjwks
-      image: registry.harness:5000/teleport-harness-oidc:v4
+    - name: coredns
+      image: coredns/coredns:1.12.1
       args:
-      - -issuer=https://bigjwks.lab.example.com:8443
-      - -addr=:8443
-      - -cluster-name=zz1.lab.example.com
-      - -tls-cert=/certs/wildcard.crt
-      - -tls-key=/certs/wildcard.key
-      - -oversize-endpoints=jwks
+      - -conf
+      - /etc/coredns/Corefile
+      readinessProbe:
+        httpGet:
+          path: /ready
+          port: 8181
+        periodSeconds: 2
       volumeMounts:
-      - name: secret-wildcard-cert
-        mountPath: /certs
-        readOnly: true
-      - name: vol-bigjwks-data
-        mountPath: /data
-        readOnly: false
-    hostAliases:
-    - ip: 127.0.0.1
-      hostnames:
-      - bigjwks.lab.example.com
-- apiVersion: v1
-  kind: Pod
-  metadata:
-    name: zz1-oidc
-    namespace: th-zz1
-    labels:
-      app.kubernetes.io/part-of: teleport-harness
-      harness.teleport/cluster-id: zz1
-      harness.teleport/pod: zz1-oidc
-  spec:
-    restartPolicy: Never
-    enableServiceLinks: false
-    automountServiceAccountToken: false
-    terminationGracePeriodSeconds: 10
+      - name: corefile
+        mountPath: /etc/coredns
     volumes:
-    - name: secret-wildcard-cert
-      secret:
-        secretName: wildcard-cert
-    - name: vol-oidc-data
-      persistentVolumeClaim:
-        claimName: vol-oidc-data
-    containers:
-    - name: oidc
-      image: registry.harness:5000/teleport-harness-oidc:v4
-      args:
-      - -issuer=https://oidc.lab.example.com:8443
-      - -addr=:8443
-      - -audience=zz1.lab.example.com/generic-oidc
-      - -cluster-name=zz1.lab.example.com
-      - -tls-cert=/certs/wildcard.crt
-      - -tls-key=/certs/wildcard.key
-      volumeMounts:
-      - name: secret-wildcard-cert
-        mountPath: /certs
-        readOnly: true
-      - name: vol-oidc-data
-        mountPath: /data
-        readOnly: false
-    hostAliases:
-    - ip: 127.0.0.1
-      hostnames:
-      - oidc.lab.example.com
+    - name: corefile
+      configMap:
+        name: harness-dns
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -586,10 +520,161 @@ objects:
         periodSeconds: 5
         timeoutSeconds: 3
         failureThreshold: 40
-    hostAliases:
-    - ip: 127.0.0.1
-      hostnames:
-      - zz1.lab.example.com
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-bigdisco
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-bigdisco
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: vol-bigdisco-data
+      persistentVolumeClaim:
+        claimName: vol-bigdisco-data
+    containers:
+    - name: bigdisco
+      image: registry.harness:5000/teleport-harness-oidc:v4
+      args:
+      - -issuer=https://bigdisco.lab.example.com:8443
+      - -addr=:8443
+      - -cluster-name=zz1.lab.example.com
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      - -oversize-endpoints=discovery
+      - -hang-after-oversize
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: vol-bigdisco-data
+        mountPath: /data
+        readOnly: false
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-bigjwks
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-bigjwks
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: vol-bigjwks-data
+      persistentVolumeClaim:
+        claimName: vol-bigjwks-data
+    containers:
+    - name: bigjwks
+      image: registry.harness:5000/teleport-harness-oidc:v4
+      args:
+      - -issuer=https://bigjwks.lab.example.com:8443
+      - -addr=:8443
+      - -cluster-name=zz1.lab.example.com
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      - -oversize-endpoints=jwks
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: vol-bigjwks-data
+        mountPath: /data
+        readOnly: false
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: zz1-oidc
+    namespace: th-zz1
+    labels:
+      app.kubernetes.io/part-of: teleport-harness
+      harness.teleport/cluster-id: zz1
+      harness.teleport/pod: zz1-oidc
+  spec:
+    restartPolicy: Never
+    enableServiceLinks: false
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 10
+    volumes:
+    - name: secret-wildcard-cert
+      secret:
+        secretName: wildcard-cert
+    - name: vol-oidc-data
+      persistentVolumeClaim:
+        claimName: vol-oidc-data
+    containers:
+    - name: oidc
+      image: registry.harness:5000/teleport-harness-oidc:v4
+      args:
+      - -issuer=https://oidc.lab.example.com:8443
+      - -addr=:8443
+      - -audience=zz1.lab.example.com/generic-oidc
+      - -cluster-name=zz1.lab.example.com
+      - -tls-cert=/certs/wildcard.crt
+      - -tls-key=/certs/wildcard.key
+      volumeMounts:
+      - name: secret-wildcard-cert
+        mountPath: /certs
+        readOnly: true
+      - name: vol-oidc-data
+        mountPath: /data
+        readOnly: false
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -638,6 +723,16 @@ objects:
       - name: cm-scripts-46f8e2fb
         mountPath: /scripts
         readOnly: true
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -686,6 +781,16 @@ objects:
       - name: cm-scripts-46f8e2fb
         mountPath: /scripts
         readOnly: true
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 - apiVersion: v1
   kind: Pod
   metadata:
@@ -734,92 +839,56 @@ objects:
       - name: cm-scripts-46f8e2fb
         mountPath: /scripts
         readOnly: true
+    dnsPolicy: None
+    dnsConfig:
+      nameservers: []
+      searches:
+      - th-zz1.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+      options:
+      - name: ndots
+        value: '5'
 plan:
   namespace: th-zz1
   order:
-  - - zz1-bigdisco
-  - - zz1-bigjwks
-  - - zz1-oidc
   - - zz1-auth
+    - zz1-bigdisco
+    - zz1-bigjwks
+    - zz1-oidc
   - - zz1-limit-bigdisco
     - zz1-limit-bigjwks
     - zz1-limit-ok
   pods:
     zz1-auth:
-      needs:
-      - pod: zz1-bigdisco
-        condition: started
-      - pod: zz1-bigjwks
-        condition: started
-      - pod: zz1-oidc
-        condition: started
-      host_aliases:
-        bigdisco.lab.example.com: zz1-bigdisco
-        bigjwks.lab.example.com: zz1-bigjwks
-        oidc.lab.example.com: zz1-oidc
+      needs: []
+      unhealthy_after: 213
     zz1-bigdisco:
       needs: []
-      host_aliases: {}
     zz1-bigjwks:
-      needs:
-      - pod: zz1-bigdisco
-        condition: started
-      host_aliases:
-        bigdisco.lab.example.com: zz1-bigdisco
+      needs: []
     zz1-limit-bigdisco:
       needs:
       - pod: zz1-auth
         condition: ready
-      - pod: zz1-bigdisco
-        condition: started
-      - pod: zz1-bigjwks
-        condition: started
-      - pod: zz1-oidc
-        condition: started
-      host_aliases:
-        bigdisco.lab.example.com: zz1-bigdisco
-        bigjwks.lab.example.com: zz1-bigjwks
-        oidc.lab.example.com: zz1-oidc
-        zz1.lab.example.com: zz1-auth
     zz1-limit-bigjwks:
       needs:
       - pod: zz1-auth
         condition: ready
-      - pod: zz1-bigdisco
-        condition: started
-      - pod: zz1-bigjwks
-        condition: started
-      - pod: zz1-oidc
-        condition: started
-      host_aliases:
-        bigdisco.lab.example.com: zz1-bigdisco
-        bigjwks.lab.example.com: zz1-bigjwks
-        oidc.lab.example.com: zz1-oidc
-        zz1.lab.example.com: zz1-auth
     zz1-limit-ok:
       needs:
       - pod: zz1-auth
         condition: ready
-      - pod: zz1-bigdisco
-        condition: started
-      - pod: zz1-bigjwks
-        condition: started
-      - pod: zz1-oidc
-        condition: started
-      host_aliases:
-        bigdisco.lab.example.com: zz1-bigdisco
-        bigjwks.lab.example.com: zz1-bigjwks
-        oidc.lab.example.com: zz1-oidc
-        zz1.lab.example.com: zz1-auth
     zz1-oidc:
-      needs:
-      - pod: zz1-bigdisco
-        condition: started
-      - pod: zz1-bigjwks
-        condition: started
-      host_aliases:
-        bigdisco.lab.example.com: zz1-bigdisco
-        bigjwks.lab.example.com: zz1-bigjwks
+      needs: []
+  dns:
+    pod: harness-dns
+    service: harness-dns
+    aliases:
+      bigdisco.lab.example.com: zz1-bigdisco.th-zz1.svc.cluster.local
+      bigjwks.lab.example.com: zz1-bigjwks.th-zz1.svc.cluster.local
+      oidc.lab.example.com: zz1-oidc.th-zz1.svc.cluster.local
+      zz1.lab.example.com: zz1-auth.th-zz1.svc.cluster.local
   services:
     auth:
       pod: zz1-auth

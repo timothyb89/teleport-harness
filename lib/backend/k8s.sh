@@ -447,17 +447,17 @@ be_k8s_teardown() {
 _k8s_admin_pod() { echo "$1-admin-tbot"; }
 
 be_k8s_admin_up() {
-  local id="$1" out="$2" img="$3" cfg="$4" token="$5" ns pod fqdn ip
-  ns="$(_k8s_ns "$id")"; pod="$(_k8s_admin_pod "$id")"; fqdn="$(cluster_meta "$id" FQDN)"
+  local id="$1" out="$2" img="$3" cfg="$4" token="$5" ns pod ip
+  ns="$(_k8s_ns "$id")"; pod="$(_k8s_admin_pod "$id")"
   kc -n "$ns" get pod "$pod" >/dev/null 2>&1 && return 0
-  # tbot dials the proxy by its FQDN, which resolves publicly to 127.0.0.1; pin it to the
-  # auth pod, as every other pod's alias is (harness/kube_apply.py).
-  ip="$(kc -n "$ns" get pod "$id-auth" -o jsonpath='{.status.podIP}')"
-  [ -n "$ip" ] || die "auth pod $id-auth has no IP"
+  # tbot dials the proxy by its FQDN, which resolves publicly to 127.0.0.1; the namespace's
+  # resolver answers it with the auth pod, as it does for every other pod (harness/kube.py).
+  ip="$(kc -n "$ns" get service harness-dns -o jsonpath='{.spec.clusterIP}')"
+  [ -n "$ip" ] || die "no resolver Service harness-dns in $ns"
   hlog "starting admin tbot pod (renewable identity output)"
   kc -n "$ns" create configmap admin-tbot --from-file=tbot.yaml="$cfg" --dry-run=client -o yaml \
     | kc apply --server-side --field-manager=teleport-harness -f - >/dev/null
-  jq -n --arg ns "$ns" --arg pod "$pod" --arg ip "$ip" --arg fqdn "$fqdn" \
+  jq -n --arg ns "$ns" --arg pod "$pod" --arg ip "$ip" \
         --arg img "$K8S_REGISTRY_PULL/$img" --arg token "$token" '{
     apiVersion: "v1", kind: "Pod",
     metadata: {name: $pod, namespace: $ns,
@@ -465,7 +465,9 @@ be_k8s_admin_up() {
     spec: {
       restartPolicy: "Never", enableServiceLinks: false, automountServiceAccountToken: false,
       terminationGracePeriodSeconds: 5,
-      hostAliases: [{ip: $ip, hostnames: [$fqdn]}],
+      dnsPolicy: "None",
+      dnsConfig: {nameservers: [$ip], options: [{name: "ndots", value: "5"}],
+                  searches: [($ns + ".svc.cluster.local"), "svc.cluster.local", "cluster.local"]},
       containers: [{name: "tbot", image: $img,
         command: ["tbot", "start", "-c", "/etc/tbot/tbot.yaml", ("--token=" + $token), "--join-method=token"],
         volumeMounts: [{name: "cfg", mountPath: "/etc/tbot"},
