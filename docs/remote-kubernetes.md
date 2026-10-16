@@ -99,8 +99,18 @@ docker clusters and remote ones from colliding on the laptop.
 
 ## 2. The backend seam
 
-Today `lib/cluster.sh`, `lib/report.sh`, `lib/admin.sh`, `lib/agent.sh`, `lib/ingress.sh`
-and `harness/cluster.py` call docker directly. Introduce one seam per side:
+**Status: built (Phase 1).** The authoritative op list and contract is the header of
+`lib/backend.sh`; the table below was the sketch it grew from. Differences: `exec` and
+`exec_i` are separate (stdin attached only when asked, so an exec inside a `while read`
+loop can't eat the loop's input); the admin plumbing is five ops (`admin_up`,
+`admin_ready`, `admin_identity_present`, `admin_copy_identity`, `admin_run`); the
+image ops gained `image_version`/`binary_version` for the version probes; and
+`backend_use` refuses a backend that is missing any op, so `k8s.sh` can't ship half-done.
+On the Python side: `make_cluster` + `Cluster.exec_argv`, and the agent's MCP tool gets
+`WORKBENCH_EXEC` (a JSON argv prefix) instead of a container name.
+
+Before Phase 1, `lib/cluster.sh`, `lib/report.sh`, `lib/admin.sh`, `lib/agent.sh`, `lib/ingress.sh`
+and `harness/cluster.py` called docker directly. The seam, one per side:
 
 **Shell** — `lib/backend/docker.sh` (today's code, moved unchanged) and
 `lib/backend/k8s.sh`, selected by `BACKEND`:
@@ -273,7 +283,7 @@ the laptop:
 | `generic_oidc`, `kubernetes`, `oidc_caching`, `oidc_response_limit`, `scoped_usage_mode`, `scoped_app_access`, `bound_keypair_status` | `oidc-server` side image, aliases, `module_dir` ConfigMaps, `service_completed_successfully` waves | 4 |
 | `bound_keypair_apply_on_startup` | `restart_auth` + seeded-writable apply-on-startup | 6 |
 | `workload_identity_sds_override` | checks.py (uses the Cluster seam) — verify it never shells docker | 6 |
-| `workload_identity_slow_start` | netns-share → sidecar, `NET_ADMIN`; its checks.py parses `docker-compose.yml` → read `setup.json`/render ctx instead | 6 |
+| `workload_identity_slow_start` | netns-share → sidecar, `NET_ADMIN` (its checks.py reads the rendered `docker-compose.yml`, which stays the render output on both backends, so that's fine) | 6 |
 | `terraform_*` (+ `terraform-runner`, privileged) | artifact image for `tf-plugins`, privileged PSA | 6 |
 | `terraform_native_join_lb` | the above + network isolation (NetworkPolicy) for the tarpit/LB topology | 6 |
 | `docs_*` (+ `agent-runner`) | artifact image for `{{ repo }}/docs`, pull-back of `agent/out`, agent_mcp exec prefix | 6 |
@@ -293,6 +303,12 @@ the laptop:
    latency number. None of that blocks phases 1–3.
 1. **Backend seam, docker-only.** Move docker calls behind `lib/backend/docker.sh` and the
    `Cluster` factory with no behavior change. *Exit:* pytest green, `bots` plan green live.
+   **Done (2026-10-16):** 253 tests pass; `bots` is 10/10 live on the
+   v18.11.0-rc.2 package; `ls`/`logs`/`admin`/`tctl`/`tsh`/`web`/`doctor`/`teardown` checked
+   by hand, and the agent MCP tool exec'd into a live container through a
+   `make_cluster`-built prefix. Two intended behaviour changes: `teardown` now also removes
+   the admin tbot + its volume (`compose down` never knew about them, and the tbot held the
+   project network, which leaked too), and `cluster tctl/tsh` pass `--platform linux/amd64`.
 2. **Translator.** `harness/kube.py` + `kube-render` + golden tests over every module.
    *Exit:* every module translates or is refused with its named reason.
 3. **Image publishing.** crane base/teleport/artifact images, buildkitd side images, a

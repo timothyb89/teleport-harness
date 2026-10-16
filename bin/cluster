@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# teleport-harness CLI: spin up disposable dockerized Teleport clusters from any
+# teleport-harness CLI: spin up disposable Teleport clusters (docker today; see lib/backend.sh) from any
 # clone/branch (or a released package/binary), run gated test plans, and produce
 # inspectable reports.
 #
@@ -38,6 +38,7 @@ while [ -L "$SELF" ]; do
 done
 LIB="$(cd "$(dirname "$SELF")/../lib" && pwd)"
 . "$LIB/common.sh"
+. "$LIB/backend.sh"
 . "$LIB/ingress.sh"
 . "$LIB/build.sh"
 . "$LIB/doctor.sh"

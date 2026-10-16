@@ -5,6 +5,7 @@ without invoking `claude` or docker."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from harness.agent import (
@@ -42,11 +43,12 @@ def test_lockdown_flags_allow_exactly_one_tool_and_deny_host_builtins():
     assert "dontAsk" in argv and "--strict-mcp-config" in argv
 
 
-def test_mcp_config_binds_container_via_env_not_model_argument():
-    srv = mcp_config("c1-workbench")["mcpServers"]["workbench"]
-    assert srv["env"]["WORKBENCH_CONTAINER"] == "c1-workbench"
-    # the container name is delivered via env — NOT anywhere the model could set it
-    assert "c1-workbench" not in srv["args"]
+def test_mcp_config_binds_exec_target_via_env_not_model_argument():
+    prefix = ["docker", "exec", "-w", "/work", "c1-workbench"]
+    srv = mcp_config(prefix)["mcpServers"]["workbench"]
+    assert json.loads(srv["env"]["WORKBENCH_EXEC"]) == prefix
+    # where commands run is delivered via env — NOT anywhere the model could set it
+    assert "c1-workbench" not in " ".join(srv["args"])
     assert srv["command"] == "uv"  # launches our stdio server in the harness project
 
 

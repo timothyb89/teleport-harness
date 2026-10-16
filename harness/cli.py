@@ -117,7 +117,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     """Run a module's checks against a live cluster; print the same
     `PASS/FAIL/SKIP` + `RESULT:` text lib/verify.sh used, optionally write JSON.
     Exit 1 on any FAIL (so plan.sh's retry loop keeps working)."""
-    from .cluster import DockerCluster
+    from .cluster import make_cluster
     from .verify import (artifact_link, claim_verdicts, collect_proofs, node_summary,
                          render, verify)
 
@@ -130,7 +130,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return EXIT_ERR
 
     state_dir = Path(args.state_dir) if args.state_dir else None
-    cluster = DockerCluster(args.cluster_id, state_dir=state_dir, module=m.name)
+    cluster = make_cluster(args.cluster_id, state_dir=state_dir, module=m.name)
     nodes = cluster.get_nodes()  # captured once for both verification + the report inventory
     results = verify(cluster, m.all_checks(), module_dir=mdir, nodes=nodes)
     # An observation proof records its actor MODULE-relatively (the actor knows its own

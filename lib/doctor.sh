@@ -8,15 +8,6 @@ doctor() {
   chk_warn() { hwarn "$*"; }
   chk_fail() { herr "$*"; fail=1; }
 
-  # docker + lima
-  if docker info >/dev/null 2>&1; then pass "docker reachable (context: $(docker context show 2>/dev/null))"
-  else chk_fail "docker not reachable — is the lima VM running? (limactl start docker)"; fi
-
-  # amd64 emulation (binaries are amd64)
-  if [ "$(docker run --rm --platform linux/amd64 alpine:3 uname -m 2>/dev/null)" = "x86_64" ]; then
-    pass "linux/amd64 emulation works"
-  else chk_fail "cannot run linux/amd64 containers (need Rosetta/qemu emulation in the docker VM)"; fi
-
   # cross toolchain — only --repo (source-build) runs need it; --package/--binary don't
   if command -v "${HARNESS_CC:-x86_64-unknown-linux-gnu-gcc}" >/dev/null 2>&1; then pass "cross toolchain present (${HARNESS_CC:-x86_64-unknown-linux-gnu-gcc})"
   else chk_warn "cross toolchain missing (needed only for --repo builds; --package/--binary runs are fine): brew install messense/macos-cross-toolchains/x86_64-unknown-linux-gnu"; fi
@@ -65,18 +56,10 @@ doctor() {
     else chk_fail "module validation failed — run: $(basename "$0") validate"; fi
   else chk_fail "uv missing (harness brain) — install: https://docs.astral.sh/uv/"; fi
 
-  # ingress + cert
-  if docker ps --format '{{.Names}}' | grep -q '^harness-ingress$'; then
-    pass "ingress running"
-    if docker run --rm -v harness-certs:/certs alpine:3 sh -c '[ -s /certs/wildcard.crt ]' 2>/dev/null; then
-      pass "wildcard cert issued"
-    else chk_warn "ingress up but cert not issued yet (docker logs harness-certs)"; fi
-  else chk_warn "ingress not running yet (will be started on first 'cluster up')"; fi
-
-  # ingress host port
-  if lsof -nP -iTCP:"${INGRESS_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-    docker ps --format '{{.Ports}}' | grep -q ":${INGRESS_PORT}->" && pass "ingress port ${INGRESS_PORT} in use by ingress" || chk_warn "port ${INGRESS_PORT} in use by something else"
-  else pass "ingress port ${INGRESS_PORT} free"; fi
+  # where clusters run: the selected backend's own checks (docker reachable, amd64
+  # emulation, its ingress + cert, …)
+  hlog "backend: $HARNESS_BACKEND"
+  be doctor
 
   echo
   [ "$fail" = 0 ] && hok "doctor: all required checks passed" || die "doctor: some required checks failed (see above)"

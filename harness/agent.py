@@ -35,6 +35,8 @@ import yaml
 from jinja2 import Environment, StrictUndefined
 from pydantic import BaseModel, ConfigDict, Field
 
+from .cluster import make_cluster
+
 # --- where the workbench drops its verdict / where we stash the transcript (state-dir-relative)
 RESULT_RELPATH = "agent/out/agent-result.json"
 TRANSCRIPT_RELPATH = "agent/transcript.json"
@@ -113,9 +115,11 @@ def _harness_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def mcp_config(workbench_container: str, timeout_s: int = 120) -> dict:
-    """The --mcp-config payload: launch our stdio workbench server, binding the target
-    container via env (NOT via any model-controlled argument)."""
+def mcp_config(exec_prefix: list[str], timeout_s: int = 120) -> dict:
+    """The --mcp-config payload: launch our stdio workbench server, binding WHERE its commands
+    run via env (NOT via any model-controlled argument). `exec_prefix` is the backend's
+    "exec into the workbench" command line (Cluster.exec_argv), e.g. `docker exec -w /work
+    <id>-workbench`; the server appends `sh -lc <cmd>`."""
     return {
         "mcpServers": {
             "workbench": {
@@ -123,7 +127,7 @@ def mcp_config(workbench_container: str, timeout_s: int = 120) -> dict:
                 "args": ["run", "--quiet", "--project", str(_harness_root()),
                          "python", "-m", "harness.agent_mcp"],
                 "env": {
-                    "WORKBENCH_CONTAINER": workbench_container,
+                    "WORKBENCH_EXEC": json.dumps(exec_prefix),
                     "WORKBENCH_TIMEOUT": str(timeout_s),
                 },
             }
@@ -215,7 +219,7 @@ def run_agent(module_dir: Path, cluster_id: str, state_dir: Path) -> tuple[bool,
 
     meta = _read_meta(state_dir)
     fqdn, port = meta.get("FQDN", ""), meta.get("PORT", "")
-    workbench = f"{cluster_id}-workbench"
+    workbench_exec = make_cluster(cluster_id, state_dir).exec_argv("workbench", [], workdir="/work")
 
     agent_dir = state_dir / "agent"
     run_cwd, out_dir = agent_dir / "run", agent_dir / "out"
@@ -232,7 +236,7 @@ def run_agent(module_dir: Path, cluster_id: str, state_dir: Path) -> tuple[bool,
     mcp_path = agent_dir / "mcp.json"
     settings_path = agent_dir / "settings.json"
     sysprompt_path = agent_dir / "system-prompt.txt"
-    mcp_path.write_text(json.dumps(mcp_config(workbench), indent=2) + "\n")
+    mcp_path.write_text(json.dumps(mcp_config(workbench_exec), indent=2) + "\n")
     settings_path.write_text(json.dumps(settings_json(), indent=2) + "\n")
     sysprompt_path.write_text(SYSTEM_PROMPT + "\n")
 

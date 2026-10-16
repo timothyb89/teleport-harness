@@ -144,10 +144,7 @@ _pkg_version() {
 }
 
 # _probe_version <dir>  — first line of `teleport version`, run under linux/amd64.
-_probe_version() {
-  { docker run --rm --platform linux/amd64 -v "$1:/src:ro" --entrypoint /src/teleport \
-      debian:bookworm-slim version 2>/dev/null || true; } | head -1
-}
+_probe_version() { be binary_version "$1"; }
 
 # _version_from <version-line>  ->  vX.Y.Z[-suffix]
 _version_from() {
@@ -156,12 +153,12 @@ _version_from() {
 
 # ---- image build -------------------------------------------------------------
 # build_image  -> prints the resulting image tag on stdout. Reads the resolved source
-# (call resolve_source first, or let this do it). Repeat builds are a docker inspect.
+# (call resolve_source first, or let this do it). Repeat builds are one `be image_exists`.
 build_image() {
   resolve_source
   local image="$IMAGE_TAG" bincache="$BIN_CACHE" b need=0
 
-  if [ "${REBUILD_IMAGE:-0}" != 1 ] && docker image inspect "$image" >/dev/null 2>&1; then
+  if [ "${REBUILD_IMAGE:-0}" != 1 ] && be image_exists "$image"; then
     hlog "image cached: $image ($SOURCE_LABEL)"
     echo "$image"; return 0
   fi
@@ -185,24 +182,8 @@ build_image() {
   for b in $HARNESS_BINS; do _assert_amd64 "$bincache/$b"; done
   if [ -n "${SOURCE_VERSION:-}" ]; then printf '%s\n' "$SOURCE_VERSION" > "$bincache/VERSION"; fi
 
-  # Base image: tiny glibc runtime + the binaries + the CLI tools the scripts need.
-  cat > "$bincache/Dockerfile" <<'EOF'
-FROM --platform=linux/amd64 debian:bookworm-slim
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl openssl bash jq \
- && rm -rf /var/lib/apt/lists/*
-EOF
-  for b in $HARNESS_BINS; do echo "COPY $b /usr/local/bin/$b" >> "$bincache/Dockerfile"; done
-  # fdpass-teleport ships in releases (teleport execs it for the SSH multiplexer) and is
-  # absent from our source builds; take it when the source has it, so a package run is as
-  # close to a real install as the harness can make it.
-  if [ -f "$bincache/fdpass-teleport" ]; then
-    echo "COPY fdpass-teleport /usr/local/bin/fdpass-teleport" >> "$bincache/Dockerfile"
-  fi
-  echo 'RUN teleport version && tctl version && tbot version && tsh version --client' >> "$bincache/Dockerfile"
-
-  hlog "building base image $image ($SOURCE_LABEL)"
-  DOCKER_BUILDKIT=0 docker build --platform linux/amd64 -t "$image" "$bincache" >/dev/null
+  hlog "publishing base image $image ($SOURCE_LABEL, $HARNESS_BACKEND)"
+  be publish_image "$bincache" "$image"
   hok "image $image"
   _record_version "$bincache" "$image"
   echo "$image"
@@ -277,7 +258,7 @@ sys.exit(0 if d[:4] == b"\x7fELF" and d[4] == 2 and d[18:20] == b"\x3e\x00" else
 _record_version() {
   local bincache="$1" image="$2" ver
   [ -s "$bincache/VERSION" ] && return 0
-  ver="$(_version_from "$( { docker run --rm --platform linux/amd64 "$image" teleport version 2>/dev/null || true; } | head -1 )")"
+  ver="$(_version_from "$(be image_version "$image")")"
   if [ -n "$ver" ]; then
     printf '%s\n' "$ver" > "$bincache/VERSION"
     export SOURCE_VERSION="$ver"

@@ -471,6 +471,17 @@ gates out where generic_oidc isn't provided while terraform_bot still runs),
 `operator` (in-Kubernetes operator tests sharing one k3s + operator rollout — by far the most
 expensive part of the setup; today just `operator_generic_oidc`).
 
+### Backends (`lib/backend.sh`, `lib/backend/<name>.sh`, `harness/cluster.py::make_cluster`)
+WHERE a cluster's containers run. Shell code never names docker: it calls `be <op> …`, which
+dispatches to `be_<backend>_<op>`; the op contract is the header of `lib/backend.sh`, and
+`backend_use` refuses a backend missing any op. A NEW cluster takes the target's `BACKEND=`
+(default `docker`) and records it in `meta.env`; anything acting on an EXISTING cluster calls
+`backend_for_cluster <id>` first, so a cluster is always managed by the backend that made it
+(no `BACKEND` in meta.env = docker). Python mirrors it: `make_cluster` picks the `Cluster` by
+the same meta field, and `Cluster.exec_argv` is the one place an exec is spelled (the agent's
+MCP tool is handed it as `WORKBENCH_EXEC`). Today: `docker` only; `k8s` is
+`docs/remote-kubernetes.md`. `lib/ingress.sh` is the docker backend's own infra.
+
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build <source>` · `up <module> <source> [--id]` · `run-plan <plan|module> <source> [--features a,b] [--version vNN] [--id]`
 · `ls` · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` ·

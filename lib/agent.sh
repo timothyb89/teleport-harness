@@ -23,9 +23,10 @@ run_agents() {
   fi
 
   wb="${id}-workbench"
+  backend_for_cluster "$id"
   hlog "agent '$module': waiting for workbench '$wb' to start"
   for _ in $(seq 1 60); do
-    [ "$(docker inspect -f '{{.State.Running}}' "$wb" 2>/dev/null)" = "true" ] && { up=1; break; }
+    be running "$id" workbench && { up=1; break; }
     sleep 2
   done
   [ -n "$up" ] || { hwarn "workbench '$wb' never started — skipping agent run for '$module'"; return 0; }

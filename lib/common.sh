@@ -35,16 +35,13 @@ load_target() {
   export INGRESS_PORT="${INGRESS_PORT:-8443}"
   export LAB_DOMAIN="lab.${HARNESS_DOMAIN}"    # clusters live at <id>.$LAB_DOMAIN
   export TLS_PROVIDER="${TLS_PROVIDER:-le-dns01}"
+  # Where NEW clusters run (lib/backend.sh). Existing clusters keep the backend recorded in
+  # their meta.env; commands acting on one call backend_for_cluster after this.
+  backend_use "${BACKEND:-docker}"
 }
 
 # fqdn <id>  ->  <id>.lab.<domain>
 fqdn() { echo "${1}.${LAB_DOMAIN}"; }
-
-# compose <project> <compose-file> [args...]  — docker compose wrapper
-compose() {
-  local project="$1" file="$2"; shift 2
-  docker compose -p "$project" -f "$file" "$@"
-}
 
 # gen_id — short cluster id (6 hex). Deterministic ids should be passed via --id.
 gen_id() { echo "c$(openssl rand -hex 3)"; }

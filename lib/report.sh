@@ -36,10 +36,8 @@ cluster_report() {
   [ -n "$results" ] && [ -f "$results" ] && cp "$results" "$bundle/console.txt" 2>/dev/null || true
 
   # per-service logs
-  local svc
-  for svc in $(compose "teleport-harness-$id" "$out/docker-compose.yml" ps -a --format '{{.Service}}' 2>/dev/null); do
-    compose "teleport-harness-$id" "$out/docker-compose.yml" logs --no-color "$svc" > "$bundle/logs/${svc}.log" 2>&1 || true
-  done
+  backend_for_cluster "$id"
+  be collect_logs "$id" "$bundle/logs"
 
   # results.md — rich markdown built by the brain from the structured run data
   # (cluster setup + node inventory + per-check evidence). Falls back to a stub.

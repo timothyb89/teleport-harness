@@ -1,9 +1,11 @@
-"""The docker seam the verifier talks to.
+"""The cluster seam the verifier talks to.
 
 Every way an assert touches a live cluster goes through a `Cluster` method, so
-tests inject a `FakeCluster` (see tests/) instead of running docker. `DockerCluster`
-is the real impl — thin shell-outs that mirror the exact commands the old
-lib/assert.sh used (so behavior is unchanged), keeping the untestable surface tiny.
+tests inject a `FakeCluster` (see tests/) instead of running anything. Which real
+implementation a cluster gets is its BACKEND (recorded in meta.env by lib/cluster.sh, see
+lib/backend.sh); `make_cluster` picks it. `DockerCluster` is the docker one — thin
+shell-outs that mirror the exact commands the old lib/assert.sh used, keeping the
+untestable surface tiny.
 """
 
 from __future__ import annotations
@@ -72,6 +74,13 @@ class Cluster:
         Default empty so checks/fakes that don't provide events degrade gracefully
         (e.g. bot_joined falls back to scraping the text log)."""
         return []
+
+    def exec_argv(self, suffix: str, argv: list[str], workdir: str | None = None) -> list[str]:  # pragma: no cover
+        """The host command line that runs `argv` inside service `<id>-<suffix>`, without
+        running it. The one place a backend spells out "exec into a service": exec_out runs
+        it, and the agent's workbench tool (harness/agent_mcp.py) is handed it as a fixed
+        prefix, so the model never chooses where its commands run."""
+        raise NotImplementedError
 
     def exec_out(self, suffix: str, argv: list[str]) -> tuple[int, str]:  # pragma: no cover
         raise NotImplementedError
@@ -229,8 +238,11 @@ class DockerCluster(Cluster):
                 events.append(ev)
         return events
 
+    def exec_argv(self, suffix: str, argv: list[str], workdir: str | None = None) -> list[str]:
+        return ["docker", "exec", *(["-w", workdir] if workdir else []), self.container(suffix), *argv]
+
     def exec_out(self, suffix: str, argv: list[str]) -> tuple[int, str]:
-        cp = self._run(["docker", "exec", self.container(suffix), *argv])
+        cp = self._run(self.exec_argv(suffix, argv))
         return cp.returncode, (cp.stdout or "") + (cp.stderr or "")
 
     def file_nonempty(self, suffix: str, path: str) -> bool:
@@ -238,15 +250,7 @@ class DockerCluster(Cluster):
         return self.exec_rc(suffix, ["test", "-s", path]) == 0
 
     def _meta(self, key: str) -> str:
-        if not self.state_dir:
-            return ""
-        f = self.state_dir / "meta.env"
-        if not f.is_file():
-            return ""
-        for line in f.read_text().splitlines():
-            if line.startswith(f"{key}="):
-                return line.split("=", 1)[1]
-        return ""
+        return read_meta(self.state_dir).get(key, "")
 
     def tsh_ssh(self, host_suffix: str, login: str) -> bool:
         # mirrors lib/admin.sh cluster_tsh: run the cluster image with the admin bot
@@ -284,3 +288,33 @@ class DockerCluster(Cluster):
                 return True
             time.sleep(3)
         return False
+
+
+def read_meta(state_dir: Path | None) -> dict[str, str]:
+    """state/<id>/meta.env as a dict ({} if absent). Written once by lib/cluster.sh."""
+    if not state_dir:
+        return {}
+    f = Path(state_dir) / "meta.env"
+    if not f.is_file():
+        return {}
+    meta: dict[str, str] = {}
+    for line in f.read_text().splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            meta[key] = value
+    return meta
+
+
+# BACKEND (from meta.env) -> implementation. A cluster from before backends existed has no
+# BACKEND recorded, and was docker by construction.
+BACKENDS: dict[str, type[Cluster]] = {"docker": DockerCluster}
+
+
+def make_cluster(cluster_id: str, state_dir: Path | None = None, module: str = "") -> Cluster:
+    """The Cluster for an existing cluster, chosen by the backend that created it."""
+    backend = read_meta(state_dir).get("BACKEND") or "docker"
+    impl = BACKENDS.get(backend)
+    if impl is None:
+        raise ValueError(f"cluster {cluster_id!r}: backend {backend!r} has no Cluster "
+                         f"implementation (have: {', '.join(sorted(BACKENDS))})")
+    return impl(cluster_id, state_dir=state_dir, module=module)
