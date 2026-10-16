@@ -489,8 +489,10 @@ dispatches to `be_<backend>_<op>`; the op contract is the header of `lib/backend
 the same meta field, and `Cluster.exec_argv` is the one place an exec is spelled (the agent's
 MCP tool is handed it as `WORKBENCH_EXEC`). Backends today: `docker`, and `k8s`
 (`docs/remote-kubernetes.md`), which runs a cluster as namespace `th-<id>` (translate →
-`harness kube-up` applies wave by wave → `KubeCluster` execs in; admin access is NOT built
-yet) and publishes images with `crane append` of
+`harness kube-up` applies wave by wave → `KubeCluster` execs in; the admin tbot is a pod
+that `tctl`/`tsh` exec into; `up` publishes the state as ConfigMap `harness-meta`, so
+another client can `attach` it; `forward` makes `127.0.0.1:$INGRESS_PORT` reach the host)
+and publishes images with `crane append` of
 deterministic per-binary layers (`harness layer-tar`, `harness/images.py`) onto a base,
 side images on the in-cluster buildkitd, and artifact images, all content-keyed so the
 registry is a cache shared by every client. **Every kubectl call is pinned** to the
@@ -508,7 +510,7 @@ docker backend's own infra.
 
 ### CLI (`bin/cluster`, `lib/*.sh`)
 `doctor` · `validate [module]` · `build <source>` · `up <module> <source> [--id]` · `run-plan <plan|module> <source> [--features a,b] [--version vNN] [--id]`
-· `ls` · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` ·
+· `ls` · `attach <id>` · `extend <id> [hours]` · `forward [start|stop|status]` (the last three: k8s backend) · `logs <id> [svc]` · `admin <id>` · `tctl <id> …` · `tsh <id> …` · `web <id>` · `report <id>` ·
 `share <run-bundle|id> [--public]` · `teardown <id|--all>`.
 `<source>` is exactly one of `--repo <clone>` / `--package <tar.gz>` / `--binary <dir|teleport>`
 (see Build); `--ent` is inferred for an enterprise package/binary, and then needs a license
@@ -566,6 +568,12 @@ if the cluster enforces it, an MFA device).
   auth binary (e.g. exercising `e/…`).
 - **All ports = the ingress port end-to-end** (proxy `web_listen_addr`, `public_addr`, agent
   `proxy_server`, ingress backend). A public_addr↔dial port split breaks agent reverse tunnels.
+- **The ingress routes TWO SNIs per cluster**: the FQDN, and `<hex(fqdn)>.teleport.cluster.local`,
+  which is what a native `tsh`/`tctl` with an identity sends over TLS routing
+  (`api/utils/cluster.go` EncodeClusterName). With the FQDN alone the handshake dies with
+  `EOF` (nginx) or Traefik's default cert. nginx needs `map_hash_bucket_size 256` for
+  those keys: at the default 64 it refuses to start, `ingress_reload` falls back to a
+  restart, and the shared ingress crash-loops for every cluster.
 - **nginx SNI passthrough, not Traefik** — lima blocks the docker socket even for root
   containers, so label discovery is impossible. Route via `*.map` files + `nginx -s reload`.
 - **Never verify TLS with macOS system `curl`** (LibreSSL → bogus 000 / "bad decrypt"). Use
@@ -803,7 +811,7 @@ if the cluster enforces it, an MFA device).
   needs the derived hash address to resolve — see the scoped-app-address invariant).
 
 ### Build / deploy
-- **Remote Kubernetes backend — DESIGNED, host infra BUILT, phases 1–4 DONE**: run test
+- **Remote Kubernetes backend — DESIGNED, host infra BUILT, phases 1–5 DONE**: run test
   clusters in namespaces on a remote k3s reached through Teleport, so the harness works
   from docker-less Teleport Beams microVMs and test clusters stay reachable from both Beams
   and the laptop. Design + phases: `docs/remote-kubernetes.md` (compose stays the authoring
@@ -812,9 +820,10 @@ if the cluster enforces it, an MFA device).
   self-updating k3s from `infra/` (`infra/README.md`: bring-up, verified checks, gotchas);
   the dev stand-in is the lima VM `harness-k3s` (`infra/lima/`). amd64 images run on an
   arm64 node under Rosetta ONLY as single-platform manifests, never an index (§4).
-  Phases 1–4 DONE (backend seam, translator, image publishing, end-to-end: `bots` and
-  `oidc-caching` give docker's verdicts check for check). NEXT: Phase 5, access
-  (forwarder, `admin`/`tctl`/`tsh`/`web`, `attach`, `extend`).
+  Phases 1–5 DONE (backend seam, translator, image publishing, end-to-end: `bots` and
+  `oidc-caching` give docker's verdicts check for check, and cross-client access:
+  attach/admin/tsh/web/extend/teardown from a second client). NEXT: Phase 0's "from
+  Beams" half (outer-Teleport onboarding), then Phase 6 breadth.
 - **Run from a prebuilt artifact (`--package` / `--binary`) — DONE**: a release tarball or a
   directory of binaries is a first-class source alongside `--repo` (see Build). Verified live:
   `run-plan oidc-caching --package teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz --features

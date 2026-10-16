@@ -29,9 +29,15 @@ ingress_wait_cert() {
 
 # register_route <fqdn> <backend host:port>  — add/replace an SNI route and reload.
 register_route() {
-  local fqdn="$1" backend="$2"; local name="${fqdn%%.*}"
+  local fqdn="$1" backend="$2"; local name="${fqdn%%.*}" hexname
   mkdir -p "$INGRESS_DIR/dynamic"
-  echo "${fqdn} ${backend};" > "$INGRESS_DIR/dynamic/${name}.map"
+  # Also the SNI Teleport's TLS-routed clients send for this cluster: the hex-encoded
+  # cluster name (= the FQDN) under teleport.cluster.local (api/utils/cluster.go
+  # EncodeClusterName). Without it a native `tsh ls` through the ingress never reaches
+  # the proxy.
+  hexname="$(printf '%s' "$fqdn" | od -An -tx1 | tr -d ' \n')"
+  printf '%s %s;\n%s.teleport.cluster.local %s;\n' "$fqdn" "$backend" "$hexname" "$backend" \
+    > "$INGRESS_DIR/dynamic/${name}.map"
   ingress_reload
 }
 

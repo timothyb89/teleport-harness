@@ -8,7 +8,10 @@
 #   cluster build   <source> [--ent]
 #   cluster up      <module> <source> [--id <id>] [--ent]
 #   cluster run-plan <plan|module> <source> [--features a,b] [--version vNN] [--id <id>]
-#   cluster ls
+#   cluster ls                      (k8s: also clusters other clients made)
+#   cluster attach  <id>            manage a k8s cluster another client made
+#   cluster extend  <id> [hours]    push a k8s cluster's expiry out (default 24)
+#   cluster forward [start|stop|status]  reach the k8s host's ingress from this client
 #   cluster logs    <id> [service]
 #   cluster web     <id>
 #   cluster report  <id>
@@ -68,7 +71,7 @@ while [ $# -gt 0 ]; do
     --features) FEATURES="$2"; shift 2 ;;
     --version)  VERSION="$2"; shift 2 ;;
     --ent)      ENT=1; shift ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) POS+=("$1"); shift ;;
   esac
 done
@@ -82,6 +85,9 @@ case "$cmd" in
   up)       cluster_up "$@" ;;
   run-plan) command -v run_plan >/dev/null 2>&1 || die "plan runner not installed yet"; run_plan "$@" ;;
   ls)       cluster_ls ;;
+  attach)   cluster_attach "$@" ;;
+  extend)   cluster_extend "$@" ;;
+  forward)  cluster_forward "$@" ;;
   logs)     cluster_logs "$@" ;;
   admin)    cluster_admin "$@" ;;
   tctl)     cluster_tctl "$@" ;;
@@ -98,6 +104,6 @@ case "$cmd" in
     _inherited="${HARNESS_BACKEND:-}"; load_target
     [ -z "$_inherited" ] || backend_use "$_inherited"
     be build_side_image "$1" "$2" ;;
-  ""|help)  sed -n '2,27p' "$0" ;;
-  *) die "unknown command: $cmd (try: doctor validate build up run-plan ls logs web report share teardown)" ;;
+  ""|help)  sed -n '2,30p' "$0" ;;
+  *) die "unknown command: $cmd (try: doctor validate build up run-plan ls attach extend forward logs admin tctl tsh web report share teardown)" ;;
 esac

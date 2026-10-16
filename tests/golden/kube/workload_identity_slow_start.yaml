@@ -332,7 +332,8 @@ objects:
     entryPoints:
     - harness
     routes:
-    - match: HostSNI(`zz1.lab.example.com`) || HostSNIRegexp(`^.+\.zz1\.lab\.example\.com$`)
+    - match: HostSNI(`zz1.lab.example.com`) || HostSNI(`7a7a312e6c61622e6578616d706c652e636f6d.teleport.cluster.local`)
+        || HostSNIRegexp(`^.+\.zz1\.lab\.example\.com$`)
       services:
       - name: ingress
         port: 8443

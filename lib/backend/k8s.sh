@@ -49,6 +49,10 @@ _k8s_pull_ref() { echo "$K8S_REGISTRY_PULL/$1"; }
 
 _k8s_crane() {
   [ -n "${_K8S_CRANE:-}" ] || _K8S_CRANE="$(tool_path crane)"
+  # The default push address goes through the ingress, so it needs this client's forwarder.
+  if [ -z "${REGISTRY_PUSH:-}" ] && [ -z "${_K8S_FWD_CHECKED:-}" ]; then
+    _K8S_FWD_CHECKED=1; be_k8s_forward start
+  fi
   if [ "${REGISTRY_INSECURE:-0}" = 1 ]; then "$_K8S_CRANE" --insecure "$@"; else "$_K8S_CRANE" "$@"; fi
 }
 
@@ -281,7 +285,8 @@ _k8s_infra_problems() {
 
 be_k8s_infra_up() {
   # The shared infra is installed once on the host (k3s applies infra/k8s/manifests/ by
-  # itself), so there is nothing to start here — only to check.
+  # itself), so there is nothing to start there — only this client's forwarder, then check.
+  be_k8s_forward start
   local problems; problems="$(_k8s_infra_problems)"
   [ -z "$problems" ] || die "harness host infra is not ready (see infra/README.md):
 $problems"
@@ -336,7 +341,28 @@ be_k8s_up() {
   done
   [ -z "$missing" ] || die "not in the registry:$missing (a prebuild that runs 'docker build' instead of 'cluster side-image'?)"
   k8s_publish_artifacts "$out"
-  pybrain kube-up --state-dir "$out" || die "bringing '$id' up failed — inspect: kubectl -n $(_k8s_ns "$id") get pods"
+  local rc=0
+  pybrain kube-up --state-dir "$out" || rc=$?
+  # Publish the state for other clients even when the apply failed part-way: a half-up
+  # cluster from Beams must still be attachable from the laptop, if only to tear it down.
+  _k8s_publish_state "$id" "$out"
+  [ "$rc" = 0 ] || die "bringing '$id' up failed — inspect: kubectl -n $(_k8s_ns "$id") get pods"
+}
+
+# _k8s_publish_state <id> <state-dir> — ConfigMap harness-meta: what `attach` needs to manage
+# this cluster from another client (harness/kube_state.py says what travels).
+_k8s_publish_state() {
+  local id="$1" out="$2" tmp ns; ns="$(_k8s_ns "$id")"
+  kc get namespace "$ns" >/dev/null 2>&1 || return 0
+  tmp="$(mktemp)"
+  if pybrain state-pack --state-dir "$out" --out "$tmp"; then
+    kc -n "$ns" create configmap harness-meta --from-file=state.tgz="$tmp" \
+      --dry-run=client -o yaml | kc apply --server-side --field-manager=teleport-harness -f - >/dev/null \
+      || hwarn "could not publish cluster state to $ns/harness-meta; other clients cannot attach"
+  else
+    hwarn "could not pack the state of '$id'; other clients cannot attach"
+  fi
+  rm -f "$tmp"
 }
 
 be_k8s_auth_healthy() {
@@ -345,6 +371,9 @@ be_k8s_auth_healthy() {
 }
 
 be_k8s_status() {
+  if ! kc get namespace "$(_k8s_ns "$1")" >/dev/null 2>&1; then
+    echo "gone (namespace deleted; 'teardown $1' clears the local state)"; return 0
+  fi
   local st; st="$(kc -n "$(_k8s_ns "$1")" get pod "$1-auth" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
   if [ -z "$st" ]; then echo "-"; elif be_k8s_auth_healthy "$1"; then echo "$st (ready)"; else echo "$st"; fi
 }
@@ -411,9 +440,134 @@ be_k8s_teardown() {
     || hwarn "could not delete namespace $ns (kubectl -n $ns get all)"
 }
 
-# ---- ops: admin access (Phase 5) ----------------------------------------------------------
-be_k8s_admin_up()               { _k8s_todo admin_up 5; }
-be_k8s_admin_ready()            { _k8s_todo admin_ready 5; }
-be_k8s_admin_identity_present() { _k8s_todo admin_identity_present 5; }
-be_k8s_admin_copy_identity()    { _k8s_todo admin_copy_identity 5; }
-be_k8s_admin_run()              { _k8s_todo admin_run 5; }
+# ---- ops: admin access ------------------------------------------------------------------
+# The admin tbot is a pod in the namespace, so the identity it keeps renewed never leaves the
+# cluster; `cluster tctl/tsh` exec into that pod, which runs the cluster's own image (so the
+# client always matches the server version, and a mac needs no linux binaries).
+_k8s_admin_pod() { echo "$1-admin-tbot"; }
+
+be_k8s_admin_up() {
+  local id="$1" out="$2" img="$3" cfg="$4" token="$5" ns pod fqdn ip
+  ns="$(_k8s_ns "$id")"; pod="$(_k8s_admin_pod "$id")"; fqdn="$(cluster_meta "$id" FQDN)"
+  kc -n "$ns" get pod "$pod" >/dev/null 2>&1 && return 0
+  # tbot dials the proxy by its FQDN, which resolves publicly to 127.0.0.1; pin it to the
+  # auth pod, as every other pod's alias is (harness/kube_apply.py).
+  ip="$(kc -n "$ns" get pod "$id-auth" -o jsonpath='{.status.podIP}')"
+  [ -n "$ip" ] || die "auth pod $id-auth has no IP"
+  hlog "starting admin tbot pod (renewable identity output)"
+  kc -n "$ns" create configmap admin-tbot --from-file=tbot.yaml="$cfg" --dry-run=client -o yaml \
+    | kc apply --server-side --field-manager=teleport-harness -f - >/dev/null
+  jq -n --arg ns "$ns" --arg pod "$pod" --arg ip "$ip" --arg fqdn "$fqdn" \
+        --arg img "$K8S_REGISTRY_PULL/$img" --arg token "$token" '{
+    apiVersion: "v1", kind: "Pod",
+    metadata: {name: $pod, namespace: $ns,
+               labels: {"app.kubernetes.io/part-of": "teleport-harness", "harness.teleport/pod": $pod}},
+    spec: {
+      restartPolicy: "Never", enableServiceLinks: false, automountServiceAccountToken: false,
+      terminationGracePeriodSeconds: 5,
+      hostAliases: [{ip: $ip, hostnames: [$fqdn]}],
+      containers: [{name: "tbot", image: $img,
+        command: ["tbot", "start", "-c", "/etc/tbot/tbot.yaml", ("--token=" + $token), "--join-method=token"],
+        volumeMounts: [{name: "cfg", mountPath: "/etc/tbot"},
+                       {name: "id", mountPath: "/idents"},
+                       {name: "id", mountPath: "/id"}]}],
+      volumes: [{name: "cfg", configMap: {name: "admin-tbot"}}, {name: "id", emptyDir: {}}]}}' \
+    | kc apply --server-side --field-manager=teleport-harness -f - >/dev/null
+}
+
+be_k8s_admin_ready() { kc -n "$(_k8s_ns "$1")" get pod "$(_k8s_admin_pod "$1")" >/dev/null 2>&1; }
+
+be_k8s_admin_identity_present() {
+  kc -n "$(_k8s_ns "$1")" exec "$(_k8s_admin_pod "$1")" -c tbot -- test -s /idents/identity 2>/dev/null
+}
+
+be_k8s_admin_copy_identity() {
+  local tmp; tmp="$(mktemp)"
+  kc -n "$(_k8s_ns "$1")" exec "$(_k8s_admin_pod "$1")" -c tbot -- cat /idents/identity > "$tmp" 2>/dev/null \
+    && [ -s "$tmp" ] && mv "$tmp" "$2" || { rm -f "$tmp"; return 1; }
+}
+
+be_k8s_admin_run() {
+  local id="$1" tty="$2"; shift 2
+  local flags=(-i); [ "$tty" = 1 ] && flags=(-i -t)
+  kc -n "$(_k8s_ns "$id")" exec "${flags[@]}" "$(_k8s_admin_pod "$id")" -c tbot -- "$@"
+}
+
+# ---- ops: clusters other clients made ----------------------------------------------------
+# be_k8s_remote_ls — "<id> <expires-at>" for every harness namespace on the host, whichever
+# client made it.
+be_k8s_remote_ls() {
+  kc get namespaces -l app.kubernetes.io/part-of=teleport-harness -o json 2>/dev/null | jq -r '
+    .items[] | .metadata.labels as $l | select($l["harness.teleport/cluster-id"])
+    | "\($l["harness.teleport/cluster-id"]) \($l["harness.teleport/expires-at"] // "-")"'
+}
+
+be_k8s_attach() {
+  local id="$1" out="$2" ns tmp; ns="$(_k8s_ns "$id")"
+  # Resolved here, not lazily in kc: kc may run in a subshell, and this client's connection
+  # is what the attached meta.env must record.
+  _k8s_resolve_connection
+  tmp="$(mktemp)"
+  kc -n "$ns" get configmap harness-meta -o jsonpath='{.binaryData.state\.tgz}' 2>/dev/null \
+    | base64 -d > "$tmp" 2>/dev/null || true
+  [ -s "$tmp" ] || { rm -f "$tmp"; die "no attachable state in $ns (namespace missing, or made before attach existed)"; }
+  pybrain state-unpack --in "$tmp" --state-dir "$out" \
+    --set "KUBECONFIG=${HARNESS_KUBECONFIG:-}" --set "KUBE_CONTEXT=$HARNESS_KUBE_CONTEXT" \
+    || { rm -f "$tmp"; die "could not unpack the state of '$id'"; }
+  rm -f "$tmp"
+}
+
+be_k8s_extend() {
+  local id="$1" hours="$2" at
+  at=$(( $(date +%s) + hours * 3600 ))
+  kc label namespace "$(_k8s_ns "$id")" --overwrite "harness.teleport/expires-at=$at" >/dev/null \
+    || die "could not relabel namespace $(_k8s_ns "$id")"
+  echo "$at"
+}
+
+# ---- ops: the client forwarder -------------------------------------------------------
+# Makes 127.0.0.1:$INGRESS_PORT reach the host's Traefik, so <id>.lab.<domain>:<port> (which
+# resolves to 127.0.0.1) works from this client: tsh, a browser, a local agent. FORWARD=
+#   none (default)      something already listens (lima forwards the port to the mac)
+#   tsh-app:<app>       `tsh proxy app <app>` — the outer Teleport's TCP app (Beams, roaming)
+#   lan:<host[:port]>   a TCP relay to the host on the LAN (harness/relay.py; port 9443)
+#   kubectl             `kubectl port-forward` to Traefik — a fallback: long-lived
+#                       port-forwards drop idle and streaming connections
+_k8s_fwd_pidfile() { echo "$STATE_DIR/.forward-${TARGET:-default}.pid"; }
+
+_k8s_port_open() {
+  python3 -c 'import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(s.connect_ex(("127.0.0.1", int(sys.argv[1]))))' "$1" 2>/dev/null
+}
+
+be_k8s_forward() {
+  local action="${1:-start}" mode="${FORWARD:-none}" pidfile pid log
+  pidfile="$(_k8s_fwd_pidfile)"; log="${pidfile%.pid}.log"
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  case "$action" in
+    status)
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "forwarder running (pid $pid, $mode) on 127.0.0.1:$INGRESS_PORT"
+      elif _k8s_port_open "$INGRESS_PORT"; then echo "127.0.0.1:$INGRESS_PORT is listening (not ours: FORWARD=$mode)"
+      else echo "nothing listening on 127.0.0.1:$INGRESS_PORT (FORWARD=$mode)"; return 1; fi
+      return 0 ;;
+    stop)
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then kill "$pid"; hok "forwarder stopped"; fi
+      rm -f "$pidfile"; return 0 ;;
+    start) ;;
+    *) die "usage: forward [start|stop|status]" ;;
+  esac
+  if _k8s_port_open "$INGRESS_PORT"; then return 0; fi
+  [ "$mode" != none ] || die "nothing listens on 127.0.0.1:$INGRESS_PORT; set FORWARD in targets/${TARGET:-default}.env (tsh-app:<app> | lan:<host> | kubectl)"
+  mkdir -p "$STATE_DIR"
+  case "$mode" in
+    tsh-app:*) require_cmd tsh
+               nohup tsh proxy app "${mode#tsh-app:}" --port "$INGRESS_PORT" >"$log" 2>&1 & ;;
+    lan:*)     nohup uv run --quiet --project "$HARNESS_ROOT" harness relay --port "$INGRESS_PORT" "${mode#lan:}" >"$log" 2>&1 & ;;
+    kubectl)   [ -n "${HARNESS_KUBE_CONTEXT:-}" ] || _k8s_resolve_connection
+               nohup kubectl ${HARNESS_KUBECONFIG:+--kubeconfig "$HARNESS_KUBECONFIG"} --context "$HARNESS_KUBE_CONTEXT" \
+                 -n "$K8S_SYSTEM_NS" port-forward svc/harness-traefik "$INGRESS_PORT:9443" >"$log" 2>&1 & ;;
+    *) die "unknown FORWARD '$mode' (none | tsh-app:<app> | lan:<host[:port]> | kubectl)" ;;
+  esac
+  echo $! > "$pidfile"
+  for _ in $(seq 1 30); do _k8s_port_open "$INGRESS_PORT" && { hok "forwarder up ($mode) on 127.0.0.1:$INGRESS_PORT"; return 0; }; sleep 0.5; done
+  die "forwarder ($mode) did not start listening on $INGRESS_PORT; see $log"
+}

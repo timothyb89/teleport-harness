@@ -123,12 +123,54 @@ cluster_teardown() {
 }
 
 cluster_ls() {
-  local id
+  load_target
+  local id local_ids remote
   printf '%-10s %-34s %-14s %s\n' ID FQDN MODULE STATUS
-  for id in $(list_cluster_ids); do
+  local_ids="$(list_cluster_ids)"
+  for id in $local_ids; do
     local st; st="$(backend_for_cluster "$id" && be status "$id")"
     printf '%-10s %-34s %-14s %s\n' "$id" "$(cluster_meta "$id" FQDN)" "$(cluster_meta "$id" MODULE)" "$st"
   done
+  # Clusters on the target's backend that ANOTHER client made (a Beams session, the
+  # laptop): listed so they can be attached, managed and torn down from here.
+  backend_use "${BACKEND:-docker}"
+  remote="$(be remote_ls 2>/dev/null || true)"
+  local rid exp when
+  while read -r rid exp; do
+    [ -n "$rid" ] || continue
+    printf '%s\n' "$local_ids" | grep -qx "$rid" && continue
+    when="-"; [ "$exp" != "-" ] && when="expires $(date -u -r "$exp" +%Y-%m-%dT%H:%MZ 2>/dev/null || date -u -d "@$exp" +%Y-%m-%dT%H:%MZ)"
+    printf '%-10s %-34s %-14s %s\n' "$rid" "$rid.$LAB_DOMAIN" "?" "not attached ($when): $(basename "$0") attach $rid"
+  done <<<"$remote"
+}
+
+# cluster_attach <id> — manage a cluster another client created: hydrate state/<id>/ from
+# what its `up` published, after which logs/admin/tctl/report/teardown work as usual.
+cluster_attach() {
+  load_target
+  local id="${1:?usage: attach <id>}" out
+  out="$(state_dir_for "$id")"
+  [ -e "$out" ] && die "cluster '$id' already has local state ($out)"
+  be attach "$id" "$out"
+  hok "attached '$id' ($(cluster_meta "$id" MODULE): $(cluster_meta "$id" SOURCE_LABEL))"
+  echo "  admin:    $(basename "$0") admin $id"
+  echo "  teardown: $(basename "$0") teardown $id"
+}
+
+# cluster_extend <id> [hours] — push a cluster's expiry out (default 24h from now).
+cluster_extend() {
+  load_target
+  local id="${1:?usage: extend <id> [hours]}" hours="${2:-24}" at
+  [ -d "$(state_dir_for "$id")" ] || die "no such cluster: $id"
+  case "$hours" in ''|*[!0-9]*) die "hours must be a whole number, got '$hours'" ;; esac
+  backend_for_cluster "$id"
+  at="$(be extend "$id" "$hours")"
+  hok "'$id' now expires $(date -u -r "$at" +%Y-%m-%dT%H:%MZ 2>/dev/null || date -u -d "@$at" +%Y-%m-%dT%H:%MZ)"
+}
+
+cluster_forward() {
+  load_target
+  be forward "${1:-start}"
 }
 
 cluster_logs() {

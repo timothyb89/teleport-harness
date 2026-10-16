@@ -294,6 +294,33 @@ def cmd_kube_up(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_state_pack(args: argparse.Namespace) -> int:
+    """Pack what another client needs to manage this cluster (harness/kube_state.py)."""
+    from .kube_state import pack
+    Path(args.out).write_bytes(pack(Path(args.state_dir)))
+    return EXIT_OK
+
+
+def cmd_state_unpack(args: argparse.Namespace) -> int:
+    """Unpack a packed state into a NEW state dir, recording THIS client's connection."""
+    from .kube_state import CLIENT_KEYS, unpack
+    client = {}
+    for kv in args.set:
+        k, sep, v = kv.partition("=")
+        if not sep or k not in CLIENT_KEYS:
+            raise ValueError(f"--set takes one of {', '.join(CLIENT_KEYS)} as KEY=VALUE, got {kv!r}")
+        client[k] = v
+    unpack(Path(args.input).read_bytes(), Path(args.state_dir), client)
+    return EXIT_OK
+
+
+def cmd_relay(args: argparse.Namespace) -> int:
+    """Relay 127.0.0.1:<port> to <host[:port]> until killed (cluster forward, lan mode)."""
+    from .relay import run
+    run(args.port, args.target)
+    return EXIT_OK
+
+
 def cmd_layer_tar(args: argparse.Namespace) -> int:
     """Write a deterministic image layer (harness/images.py) and print its sha256. The k8s
     backend `crane append`s these, so equal inputs are equal blobs in the shared registry."""
@@ -411,6 +438,23 @@ def main(argv: list[str] | None = None) -> int:
     su.add_argument("--timeout", type=float, default=600.0,
                     help="seconds to wait for any one dependency condition")
     su.set_defaults(fn=cmd_kube_up)
+
+    spk = sub.add_parser("state-pack", help="pack a cluster's state for another client")
+    spk.add_argument("--state-dir", required=True)
+    spk.add_argument("--out", required=True)
+    spk.set_defaults(fn=cmd_state_pack)
+
+    sun = sub.add_parser("state-unpack", help="unpack a packed state into a new state dir")
+    sun.add_argument("--in", dest="input", required=True)
+    sun.add_argument("--state-dir", required=True)
+    sun.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                     help="this client's connection (KUBECONFIG, KUBE_CONTEXT)")
+    sun.set_defaults(fn=cmd_state_unpack)
+
+    srl = sub.add_parser("relay", help="TCP relay 127.0.0.1:<port> -> <host[:port]>")
+    srl.add_argument("--port", type=int, required=True)
+    srl.add_argument("target")
+    srl.set_defaults(fn=cmd_relay)
 
     sl = sub.add_parser("layer-tar", help="write a deterministic image layer; print its sha256")
     sl.add_argument("--out", required=True)

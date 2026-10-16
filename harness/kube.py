@@ -138,6 +138,13 @@ def _argv(value, svc: str, key: str) -> list[str]:
     raise TranslateError(f"service {svc}: {key} must be a string or a list")
 
 
+def teleport_sni(cluster_name: str) -> str:
+    """The SNI Teleport clients use to reach a cluster by name over TLS routing: the
+    hex-encoded cluster name under teleport.cluster.local (api/utils/cluster.go
+    EncodeClusterName). The harness's cluster name is its FQDN."""
+    return f"{cluster_name.encode().hex()}.teleport.cluster.local"
+
+
 def _local_image(image: str) -> bool:
     first = image.split("/", 1)[0]
     has_registry = "/" in image and ("." in first or ":" in first or first == "localhost")
@@ -610,8 +617,12 @@ class _Translator:
             "apiVersion": "traefik.io/v1alpha1", "kind": "IngressRouteTCP",
             "metadata": {"name": "auth", "namespace": self.ns, "labels": self._labels()},
             "spec": {"entryPoints": ["harness"],
-                     # the proxy, and anything below it (scoped apps' derived addresses)
+                     # the proxy; anything below it (scoped apps' derived addresses); and
+                     # the SNI Teleport's TLS-routed clients send for this cluster,
+                     # <hex(cluster name)>.teleport.cluster.local — without it a native
+                     # `tsh ls` through the ingress gets Traefik's default certificate.
                      "routes": [{"match": f"HostSNI(`{self.fqdn}`) || "
+                                          f"HostSNI(`{teleport_sni(self.fqdn)}`) || "
                                           f"HostSNIRegexp(`^.+\\.{re.escape(self.fqdn)}$`)",
                                  "services": [{"name": "ingress", "port": self.port}]}],
                      "tls": {"passthrough": True}},

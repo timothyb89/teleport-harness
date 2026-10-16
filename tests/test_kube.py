@@ -314,3 +314,11 @@ def test_golden_translation(module, tmp_path):
     assert golden.is_file(), f"no snapshot for {module}: run with HARNESS_UPDATE_GOLDEN=1"
     assert got == golden.read_text(), (f"{module} translates differently from {golden.name}; "
                                        f"if intended, regenerate with HARNESS_UPDATE_GOLDEN=1")
+
+
+def test_teleport_sni_matches_what_tsh_sends():
+    # Observed from a real `tsh ls` through Traefik (the SNI it asked for), and
+    # api/utils/cluster.go EncodeClusterName.
+    from harness.kube import teleport_sni
+    assert teleport_sni("p5a.lab.ethernet.fyi") == \
+        "7035612e6c61622e65746865726e65742e667969.teleport.cluster.local"

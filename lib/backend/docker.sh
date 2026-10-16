@@ -173,3 +173,10 @@ be_docker_admin_run() {
   docker run "${flags[@]}" --platform linux/amd64 --network "$(_docker_cluster_net "$id")" -v "$(_docker_admin_vol "$id"):/id:ro" \
     "$(cluster_meta "$id" IMAGE)" "$@"
 }
+
+# Clusters live in this client's own docker daemon: nothing remote to list or attach, no
+# expiry, and the ingress already listens locally.
+be_docker_remote_ls() { :; }
+be_docker_attach() { die "docker clusters live on this client's own daemon; there is nothing to attach"; }
+be_docker_extend() { die "docker clusters do not expire"; }
+be_docker_forward() { [ "${1:-start}" = status ] && echo "docker backend: the ingress listens on 127.0.0.1:${INGRESS_PORT} itself"; return 0; }

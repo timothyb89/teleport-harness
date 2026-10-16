@@ -300,6 +300,23 @@ Only the tail of `build_image` (the `docker build`) moves behind `backend_publis
 
 ## 5. Access: the forwarder
 
+**Status: built (Phase 5)** as `cluster forward [start|stop|status]` (be_k8s_forward), which
+`up`/`run-plan` and any push through the default registry address start implicitly. The
+`kubectl` and `lan:` modes were verified on a spare port, with the registry reached
+through each using verified TLS. `lan:` is a small Python relay (`harness relay`), not
+socat, so it needs nothing beyond the harness's own Python. `tsh-app:` waits on the Phase 0
+onboarding. A new mode, `none` (the default), only checks that something already listens
+on the port, as lima's own port forward does.
+
+**TLS-routed clients need a second SNI route.** `tsh ls` with an identity reaches the
+proxy with SNI `<hex(cluster name)>.teleport.cluster.local` (`api/utils/cluster.go`
+EncodeClusterName), not the FQDN. The route now matches it too. So did the DOCKER ingress,
+where native `tsh` through nginx had never worked (verified: with only the FQDN route,
+`handshake failed: EOF`). The longer key needs `map_hash_bucket_size 256` in
+`ingress/config/nginx.conf`, or nginx refuses to start. That is worse than it sounds: the
+reload fails, `ingress_reload` falls back to a restart, and the shared ingress then
+crash-loops for every docker cluster.
+
 `cluster forward` (new) makes sure `127.0.0.1:$INGRESS_PORT` is listening, based on `FORWARD`:
 - `tsh-app:harness-ingress` → `tsh proxy app harness-ingress --port $INGRESS_PORT`
   (background, pidfile under `state/`). Works from Beams and from the laptop anywhere.
@@ -321,6 +338,21 @@ cluster (reverse tunnels share the web port).
 limitation already exists today.
 
 ## 6. State and cross-environment visibility
+
+**Status: built (Phase 5).** As built, compared with the sketch below:
+- `harness-meta` holds one gzipped tar (`harness/kube_state.py`) of meta.env, setup.json,
+  the render and `kube/plan.json`. It does not hold results, logs, or the admin identity,
+  which is a credential, so another client re-runs `admin`. meta.env's
+  KUBECONFIG/KUBE_CONTEXT are stripped on pack and replaced by the ATTACHING client's own
+  on unpack. It is written even when `up` fails part-way, so a half-up cluster can still
+  be attached and torn down.
+- `cluster ls` lists clusters other clients made as "not attached", with their expiry.
+  When a cluster has been torn down elsewhere, the stale local entry says "gone".
+- The admin tbot is a pod in the namespace (`<id>-admin-tbot`, the cluster's own image,
+  its FQDN pinned to the auth pod). `tctl`/`tsh` exec into it, and `admin` also copies the
+  identity to `state/<id>/identity` for a native tsh through the forwarder.
+- `extend <id> [hours]` relabels the namespace (default 24h from now; `CLUSTER_TTL_HOURS`
+  sets the initial TTL).
 
 `state/<id>/` stays the client-local working dir (render output, results, bundles). In
 addition, `kube-render` writes `meta.env`, `setup.json` and `rendered/` into a ConfigMap
@@ -423,6 +455,13 @@ the laptop:
 5. **Access + visibility.** `forward`, `ls`, `attach`, `tctl/tsh/admin/web`, TTL janitor,
    `extend`. *Exit:* a cluster created from Beams is listed, logged into (tsh + browser) and
    torn down from the laptop.
+   **Done (2026-10-16) between two clients on the mac** (this checkout, and a separate
+   copy with its own empty `state/`); Beams waits on Phase 0. Client B listed client A's
+   cluster as "not attached", attached it, and ran `admin`, `tctl bots ls`, in-cluster
+   `tsh status`, and a native mac `tsh ls` through the ingress. It also minted a `web`
+   invite, whose page loads (200), ran `extend` and `logs`, then `teardown`. Client A then
+   showed the cluster as gone. See §5 and §6 for what was built. Browser login itself
+   (password + MFA on the invite page) was not driven.
 6. **Breadth.** Rows marked 6 above, including NetworkPolicy for isolated networks.
 7. **Operator modules (optional).** A privileged k3s-in-pod (the existing k3s entrypoint,
    minus most rootless workarounds) or vcluster per run, so CRDs don't collide across

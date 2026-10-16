@@ -42,10 +42,16 @@
 #   admin_copy_identity <id> <dest>  copy the identity file to the host
 #   admin_run <id> <tty:0|1> <cmd…>  run a command in the cluster's image, on its network,
 #                                  with the admin identity at /id/identity
+#   remote_ls                      "<id> <expires-at|->" per cluster on the backend, made by
+#                                  ANY client (docker: none — the daemon is this client's)
+#   attach <id> <state-dir>        create <state-dir> for a cluster another client made
+#   extend <id> <hours>            push the cluster's expiry out; print the new epoch
+#   forward <start|stop|status>    make 127.0.0.1:$INGRESS_PORT reach the clusters' ingress
 BACKEND_OPS="preflight use_cluster doctor infra_up image_exists publish_image image_version binary_version
 build_side_image
 up auth_healthy status logs collect_logs exec exec_i running teardown
-admin_up admin_ready admin_identity_present admin_copy_identity admin_run"
+admin_up admin_ready admin_identity_present admin_copy_identity admin_run
+remote_ls attach extend forward"
 
 # backend_use <name> — select a backend for the rest of this process. Refuses an unknown
 # name or an incomplete implementation up front, rather than failing at the first missing
