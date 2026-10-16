@@ -52,7 +52,8 @@ infra/k8s/import-cert.sh
 ```
 
 To point the harness at it, add a target (see the k8s block in
-`targets/default.env.example`) with `BACKEND=k8s`, this `KUBECONFIG` and `INGRESS_PORT=9443`,
+`targets/default.env.example`) with `BACKEND=k8s`, this `KUBECONFIG`, `KUBE_CONTEXT=default`
+and `INGRESS_PORT=9443`,
 then run `bin/cluster --target <it> doctor`.
 
 lima forwards NodePort/LoadBalancer services to the mac, so `https://<x>.lab.<domain>:9443`

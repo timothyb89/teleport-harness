@@ -280,6 +280,20 @@ def cmd_kube_render(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_kube_up(args: argparse.Namespace) -> int:
+    """Bring a kube-rendered cluster up (harness/kube_apply.py): namespace, secrets, objects,
+    then pods wave by wave. Progress on stderr; exit 1 with the reason on failure."""
+    from .kube_apply import ApplyError, Kubectl, apply_cluster
+
+    try:
+        apply_cluster(Path(args.state_dir), Kubectl(), timeout=args.timeout,
+                      log=lambda m: print(f"[kube] {m}", file=sys.stderr))
+    except ApplyError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_ERR
+    return EXIT_OK
+
+
 def cmd_layer_tar(args: argparse.Namespace) -> int:
     """Write a deterministic image layer (harness/images.py) and print its sha256. The k8s
     backend `crane append`s these, so equal inputs are equal blobs in the shared registry."""
@@ -391,6 +405,12 @@ def main(argv: list[str] | None = None) -> int:
     sk.add_argument("--state-dir", required=True, help="state/<id>/ (render output + meta.env)")
     sk.add_argument("--expires-at", type=int, help="unix time the janitor may delete it after")
     sk.set_defaults(fn=cmd_kube_render)
+
+    su = sub.add_parser("kube-up", help="apply a kube-rendered cluster, wave by wave")
+    su.add_argument("--state-dir", required=True)
+    su.add_argument("--timeout", type=float, default=600.0,
+                    help="seconds to wait for any one dependency condition")
+    su.set_defaults(fn=cmd_kube_up)
 
     sl = sub.add_parser("layer-tar", help="write a deterministic image layer; print its sha256")
     sl.add_argument("--out", required=True)

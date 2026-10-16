@@ -214,6 +214,11 @@ class _Translator:
                 raise TranslateError(f"service {name}: no container_name (the harness names "
                                      f"every container <id>-<service>)")
             _dns_label(cn, f"service {name}: container_name")
+            if cn != f"{self.id}-{name}":
+                # Checks address a service by the suffix after "<id>-" (Cluster.container),
+                # and on this backend that suffix is looked up as the service name.
+                raise TranslateError(f"service {name}: container_name {cn!r} is not "
+                                     f"{self.id}-{name}")
             for key in ("environment", "command", "entrypoint", "healthcheck"):
                 _no_dollar(s.get(key), f"service {name}: {key}")
             hc = s.get("healthcheck")

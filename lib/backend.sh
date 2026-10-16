@@ -11,7 +11,12 @@
 # backend that created it, whatever target the current shell happens to be pointed at.
 #
 # The ops, and what each must do (the docker implementation is the reference):
-#   preflight                      fail fast if the backend's tools are missing
+#   preflight                      fail fast if the backend's tools are missing; resolve
+#                                  and export anything NEW clusters must record (k8s: the
+#                                  exact kubeconfig + context)
+#   use_cluster <id>               restore what <id> recorded at creation, so commands on an
+#                                  existing cluster reach IT and nothing else, whatever the
+#                                  current target or environment says
 #   doctor                         backend-specific doctor checks (pass/chk_warn/chk_fail)
 #   infra_up                       shared, long-lived infra (ingress, cert) is up
 #   image_exists <tag>             the teleport image for <tag> is already published
@@ -37,7 +42,7 @@
 #   admin_copy_identity <id> <dest>  copy the identity file to the host
 #   admin_run <id> <tty:0|1> <cmd…>  run a command in the cluster's image, on its network,
 #                                  with the admin identity at /id/identity
-BACKEND_OPS="preflight doctor infra_up image_exists publish_image image_version binary_version
+BACKEND_OPS="preflight use_cluster doctor infra_up image_exists publish_image image_version binary_version
 build_side_image
 up auth_healthy status logs collect_logs exec exec_i running teardown
 admin_up admin_ready admin_identity_present admin_copy_identity admin_run"
@@ -60,6 +65,7 @@ backend_use() {
 backend_for_cluster() {
   local b; b="$(cluster_meta "${1:?backend_for_cluster <id>}" BACKEND)"
   backend_use "${b:-docker}"
+  be use_cluster "$1"
 }
 
 # be <op> [args…] — call the selected backend's implementation of <op>.

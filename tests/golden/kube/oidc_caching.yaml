@@ -280,7 +280,7 @@ objects:
         claimName: vol-cache-idp-data
     containers:
     - name: cache-idp
-      image: registry.harness:5000/teleport-harness-oidc:v2
+      image: registry.harness:5000/teleport-harness-oidc:v4
       args:
       - -issuer=https://cache-idp.lab.example.com:8443
       - -addr=:8443
@@ -536,6 +536,5 @@ plan:
     container: auth
     path: /apply-on-startup
   local_images:
-  - teleport-harness-oidc:v2
   - teleport-harness-oidc:v4
   - teleport-harness:test

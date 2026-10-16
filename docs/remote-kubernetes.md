@@ -385,6 +385,41 @@ the laptop:
 4. **End to end.** `KubeCluster`, waves, teardown, log collection into the bundle.
    *Exit:* `bots` and `oidc-caching` plans run from Beams with the **same verdicts** as
    the docker backend on the same source, and `share` works on the bundle.
+   **Done (2026-10-16) from the mac against the lima stand-in; "from Beams" waits on
+   Phase 0.** On v18.11.0-rc.2: `bots` 10/10, and `oidc-caching` (all four modules, 26
+   pods in 8 waves) gives the same verdict as docker on every one of its 52 checks; 90s
+   end to end against docker's 53s. The bundle stages for `share` (checked with
+   `harness gist-stage`; no gist was published) and gains `rendered/kube/`. What was built:
+   - `harness/kube_apply.py` (`harness kube-up`): refuses an existing namespace (state
+     dirs are per-client, so another client may own the id), applies the namespace, the
+     Secrets (license read from the host, wildcard cert copied from `harness-system`; the
+     values travel on stdin and are never written to disk), then the other objects, then
+     pods wave by wave. Before each pod it waits on its `needs` and pins its aliases to the
+     owners' pod IPs. Server-side apply, because a ConfigMap can exceed client-side
+     apply's 256 KiB annotation limit. A pod stuck on an unrecoverable reason
+     (`InvalidImageName`, …) or `Failed` stops the apply with that pod named.
+   - `be_k8s_up` also checks that every harness image the pods name is in the registry
+     before applying. That check found a latent bug that affects docker too:
+     `oidc_caching` and `oidc_response_limit` pinned `teleport-harness-oidc:v2`, which
+     nothing builds (the component builds `v4`). On docker they had worked only off a stale
+     local image. Fixed, and `tests/test_render.py` now enforces that the pins match.
+   - `KubeCluster` (harness/cluster.py) execs into the service's pod and container from
+     `plan.json`. It reads `--previous` logs first (docker's logs span restarts), and reads
+     files under a pull-back mount inside the pod, so `agent_result` needs no copy step.
+     DockerCluster's tctl/audit helpers now go through `exec_argv`, so both backends share
+     them. The translator now refuses a `container_name` other than `<id>-<service>`,
+     because checks address services by that suffix.
+   - **Every kubectl call is pinned** to an explicit kubeconfig and context. The target
+     must name `KUBE_CONTEXT` (`KUBECONFIG` is optional), a new cluster records both in
+     `meta.env`, and a new backend op, `use_cluster`, restores them for any command on an
+     existing cluster. Found the hard way: `cluster logs` loads no target, so `kubectl`
+     reached for the user's default kubeconfig, a WORK cluster. It failed only on a stale
+     login, and `teardown`, which loads the default docker target, would have aimed
+     `kubectl delete namespace` the same way. A k8s cluster whose `meta.env` records no
+     context is now refused outright.
+   - Not yet: `restart_auth` (Phase 6, `bound_keypair_apply_on_startup`) and admin
+     access (Phase 5) refuse. Per-cluster artifact TAGS are left in the registry by
+     teardown (content blobs are shared, so the cost is small; registry GC is open).
 5. **Access + visibility.** `forward`, `ls`, `attach`, `tctl/tsh/admin/web`, TTL janitor,
    `extend`. *Exit:* a cluster created from Beams is listed, logged into (tsh + browser) and
    torn down from the laptop.

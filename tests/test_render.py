@@ -306,3 +306,20 @@ def test_proxy_public_addrs_are_additive_and_fqdn_stays_first(rendered):
         assert addrs == ["zz1.lab.example.com:8443", "lb.lab.example.com:443"]
     else:
         assert addrs == ["zz1.lab.example.com:8443"]  # unchanged for every other module
+
+
+def test_every_oidc_image_pin_matches_the_component_that_builds_it():
+    """Only components/oidc-server's prebuild BUILDS the oidc image, under the tag in its own
+    render.yaml. A unit that names the image itself (render contexts don't share vars) must
+    use that same tag, or it references an image nothing builds. That passes silently for as
+    long as a stale image of the old tag survives in a local docker cache, and fails on any
+    fresh host (oidc_caching and oidc_response_limit still pinned v2 after the component moved to v4)."""
+    root = Path(__file__).resolve().parent.parent
+    want = yaml.safe_load((root / "components/oidc-server/render.yaml").read_text())["oidc_image"]
+    pins = {}
+    for rv in sorted(root.glob("*/*/render.yaml")):
+        got = (yaml.safe_load(rv.read_text()) or {}).get("oidc_image")
+        if got:
+            pins[str(rv.relative_to(root))] = got
+    assert len(pins) > 1
+    assert {k: v for k, v in pins.items() if v != want} == {}

@@ -145,10 +145,7 @@ class DockerCluster(Cluster):
 
     def get_nodes(self) -> list[dict]:
         # mirrors: docker exec <id>-auth tctl get nodes --format json  (|| '[]')
-        cp = self._run(
-            ["docker", "exec", self.container("auth"),
-             "tctl", "get", "nodes", "--format", "json"]
-        )
+        cp = self._run(self.exec_argv("auth", ["tctl", "get", "nodes", "--format", "json"]))
         if cp.returncode != 0 or not cp.stdout.strip():
             return []
         try:
@@ -168,10 +165,7 @@ class DockerCluster(Cluster):
         # name"). Scope qualification is only expressible in the TWO-arg form, so a name
         # written as `<scope>::<name>` is passed as its own positional argument.
         ref = [kind, name] if SCOPE_SEP in name else [f"{kind}/{name}"]
-        cp = self._run(
-            ["docker", "exec", self.container("auth"),
-             "tctl", "get", *ref, "--format", "json"]
-        )
+        cp = self._run(self.exec_argv("auth", ["tctl", "get", *ref, "--format", "json"]))
         if cp.returncode != 0 or not cp.stdout.strip():
             return None
         try:
@@ -221,10 +215,9 @@ class DockerCluster(Cluster):
     def audit_events(self) -> list[dict]:
         # cat every file the file audit backend wrote (NDJSON, one event per line);
         # parse defensively so non-JSON lines / index files are skipped.
-        cp = self._run([
-            "docker", "exec", self.container("auth"),
+        cp = self._run(self.exec_argv("auth", [
             "sh", "-c", "find /var/lib/teleport/audit/events -type f -exec cat {} + 2>/dev/null",
-        ])
+        ]))
         events: list[dict] = []
         for line in (cp.stdout or "").splitlines():
             line = line.strip()
@@ -290,6 +283,84 @@ class DockerCluster(Cluster):
         return False
 
 
+class KubeCluster(DockerCluster):
+    """A cluster on the k8s backend: namespace th-<id>, one pod per compose service (or per
+    netns group), the service's process in a container named after the service. Where each
+    suffix runs comes from the plan harness/kube.py wrote (state/<id>/kube/plan.json).
+
+    It inherits DockerCluster's tctl/audit/file logic, which is all phrased as exec_out
+    into a service, and replaces only the backend-specific parts: exec, logs, and reading
+    files the services write into the state dir (on this backend they stay in the pod's
+    volume, so they are read where they are)."""
+
+    def __init__(self, cluster_id: str, state_dir: Path | None = None, module: str = ""):
+        super().__init__(cluster_id, state_dir=state_dir, module=module)
+        self._plan: dict | None = None
+
+    @property
+    def plan(self) -> dict:
+        if self._plan is None:
+            if not self.state_dir:
+                raise ValueError(f"cluster {self.id}: the k8s backend needs the state dir")
+            self._plan = json.loads((Path(self.state_dir) / "kube" / "plan.json").read_text())
+        return self._plan
+
+    def _kubectl(self, *args: str) -> list[str]:
+        # The connection this cluster was created with (meta.env), not the environment's:
+        # the argv must reach THIS cluster even when handed elsewhere (the agent's MCP tool).
+        from .kube_apply import Kubectl
+        meta = read_meta(self.state_dir)
+        if not meta.get("KUBE_CONTEXT"):
+            raise ValueError(f"cluster {self.id}: meta.env records no KUBE_CONTEXT")
+        return Kubectl(context=meta["KUBE_CONTEXT"], kubeconfig=meta.get("KUBECONFIG", "")).argv(*args)
+
+    def _where(self, suffix: str) -> tuple[str, str]:
+        svc = self.plan["services"].get(suffix)
+        if not svc:
+            raise ValueError(f"cluster {self.id}: no service {suffix!r} "
+                             f"(have: {', '.join(sorted(self.plan['services']))})")
+        return svc["pod"], svc["container"]
+
+    def exec_argv(self, suffix: str, argv: list[str], workdir: str | None = None) -> list[str]:
+        pod, container = self._where(suffix)
+        if workdir:
+            # kubectl exec has no -w; cd first, then exec whatever follows (the agent's MCP
+            # tool appends its own argv to this prefix).
+            argv = ["sh", "-c", 'cd "$1" && shift && exec "$@"', "sh", workdir, *argv]
+        return self._kubectl("exec", "-n", self.plan["namespace"], pod, "-c", container, "--", *argv)
+
+    def logs(self, suffix: str) -> str:
+        # `docker logs` spans container restarts; a restarted k8s container's earlier run
+        # is only under --previous, so put it first, as docker would.
+        pod, container = self._where(suffix)
+        ns = self.plan["namespace"]
+        prev = self._run(self._kubectl("logs", "-n", ns, pod, "-c", container, "--previous"))
+        cur = self._run(self._kubectl("logs", "-n", ns, pod, "-c", container))
+        return ((prev.stdout if prev.returncode == 0 else "")
+                + (cur.stdout or "") + (cur.stderr if cur.returncode != 0 else ""))
+
+    def state_file(self, relpath: str) -> str | None:
+        # A file under a read-write state-dir mount was written inside a pod volume
+        # (kube.py's pullbacks); read it there. Anything else is a host-side file.
+        rel = relpath.strip("/")
+        for pb in self.plan.get("pullbacks", []):
+            src = pb["source"].strip("/")
+            if rel == src or rel.startswith(src + "/"):
+                inner = pb["path"].rstrip("/") + rel[len(src):]
+                rc, out = self.exec_out(pb["container"], ["cat", inner])
+                return out if rc == 0 else None
+        return super().state_file(relpath)
+
+    def kube_get(self, kind: str, name: str, namespace: str = KUBE_NAMESPACE) -> dict | None:
+        return None   # the k8s-runner component is docker-only (requires_backend)
+
+    def tsh_ssh(self, host_suffix: str, login: str) -> bool:
+        return False  # needs admin access on this backend (Phase 5); no module uses it yet
+
+    def restart_auth(self, timeout: float = 150.0) -> bool:
+        return False  # Phase 6 (bound_keypair_apply_on_startup), docs/remote-kubernetes.md §7
+
+
 def read_meta(state_dir: Path | None) -> dict[str, str]:
     """state/<id>/meta.env as a dict ({} if absent). Written once by lib/cluster.sh."""
     if not state_dir:
@@ -307,7 +378,7 @@ def read_meta(state_dir: Path | None) -> dict[str, str]:
 
 # BACKEND (from meta.env) -> implementation. A cluster from before backends existed has no
 # BACKEND recorded, and was docker by construction.
-BACKENDS: dict[str, type[Cluster]] = {"docker": DockerCluster}
+BACKENDS: dict[str, type[Cluster]] = {"docker": DockerCluster, "k8s": KubeCluster}
 
 
 def make_cluster(cluster_id: str, state_dir: Path | None = None, module: str = "") -> Cluster:

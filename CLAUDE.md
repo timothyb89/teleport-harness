@@ -488,11 +488,16 @@ dispatches to `be_<backend>_<op>`; the op contract is the header of `lib/backend
 (no `BACKEND` in meta.env = docker). Python mirrors it: `make_cluster` picks the `Cluster` by
 the same meta field, and `Cluster.exec_argv` is the one place an exec is spelled (the agent's
 MCP tool is handed it as `WORKBENCH_EXEC`). Backends today: `docker`, and `k8s`
-(`docs/remote-kubernetes.md`), which so far publishes IMAGES only: `crane append` of
+(`docs/remote-kubernetes.md`), which runs a cluster as namespace `th-<id>` (translate →
+`harness kube-up` applies wave by wave → `KubeCluster` execs in; admin access is NOT built
+yet) and publishes images with `crane append` of
 deterministic per-binary layers (`harness layer-tar`, `harness/images.py`) onto a base,
 side images on the in-cluster buildkitd, and artifact images, all content-keyed so the
-registry is a cache shared by every client. Its other ops refuse with the phase they land
-in. `crane`/`buildctl` are pinned and sha256-checked in `lib/tools.sh` and fetched into
+registry is a cache shared by every client. **Every kubectl call is pinned** to the
+kubeconfig + context recorded in the cluster's `meta.env` (`use_cluster` op; a k8s target
+MUST set `KUBE_CONTEXT`). Never let a k8s code path fall back to the ambient kubeconfig:
+the user's default one holds work clusters, and `teardown` deletes a namespace.
+`crane`/`buildctl` are pinned and sha256-checked in `lib/tools.sh` and fetched into
 `.cache/tools/` on first use. A component prebuild builds a side image with
 `"$HARNESS_ROOT/bin/cluster" side-image <context> <tag>` (never `docker build`), so it
 builds on whichever backend the render is for. A Dockerfile that COMPILES must
@@ -798,7 +803,7 @@ if the cluster enforces it, an MFA device).
   needs the derived hash address to resolve — see the scoped-app-address invariant).
 
 ### Build / deploy
-- **Remote Kubernetes backend — DESIGNED, host infra BUILT, phases 1–3 DONE**: run test
+- **Remote Kubernetes backend — DESIGNED, host infra BUILT, phases 1–4 DONE**: run test
   clusters in namespaces on a remote k3s reached through Teleport, so the harness works
   from docker-less Teleport Beams microVMs and test clusters stay reachable from both Beams
   and the laptop. Design + phases: `docs/remote-kubernetes.md` (compose stays the authoring
@@ -807,8 +812,9 @@ if the cluster enforces it, an MFA device).
   self-updating k3s from `infra/` (`infra/README.md`: bring-up, verified checks, gotchas);
   the dev stand-in is the lima VM `harness-k3s` (`infra/lima/`). amd64 images run on an
   arm64 node under Rosetta ONLY as single-platform manifests, never an index (§4).
-  Phases 1–3 DONE (backend seam, translator, image publishing). NEXT: Phase 4, the
-  executor (`up`/waves/exec/logs/teardown on a namespace).
+  Phases 1–4 DONE (backend seam, translator, image publishing, end-to-end: `bots` and
+  `oidc-caching` give docker's verdicts check for check). NEXT: Phase 5, access
+  (forwarder, `admin`/`tctl`/`tsh`/`web`, `attach`, `extend`).
 - **Run from a prebuilt artifact (`--package` / `--binary`) — DONE**: a release tarball or a
   directory of binaries is a first-class source alongside `--repo` (see Build). Verified live:
   `run-plan oidc-caching --package teleport-v18.11.0-rc.2-linux-amd64-bin.tar.gz --features

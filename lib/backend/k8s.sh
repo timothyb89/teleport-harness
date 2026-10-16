@@ -3,18 +3,22 @@
 # kubectl (from Beams: through `tsh kube`). Design: docs/remote-kubernetes.md; the host's
 # shared infra (registry, Traefik, buildkitd, janitor) is infra/k8s/, set up once.
 #
-# Built so far (Phase 3): everything about IMAGES. No docker daemon is involved anywhere:
+# Images (Phase 3). No docker daemon is involved anywhere:
 #   - the teleport image is `crane append` of one deterministic layer per binary
 #     (harness layer-tar) onto a base that buildkitd builds from lib/backend/k8s/base.Dockerfile;
 #   - side images (the oidc-server) are Dockerfile builds on the in-cluster buildkitd;
 #   - artifact images carry large read-only mounts (k8s_publish_artifacts).
 # Every image is content-keyed and the in-cluster registry is the cache, so whichever
 # client (laptop or Beams) publishes a key first, the others find it there.
-# Running clusters is Phase 4; those ops refuse with a pointer until then.
+# Clusters (Phase 4): `up` translates the render (harness/kube.py), publishes artifacts,
+# then applies wave by wave (harness/kube_apply.py); the verifier execs in through
+# KubeCluster (harness/cluster.py). Admin access is Phase 5 and refuses until then.
+# Every kubectl call is pinned to the cluster's recorded kubeconfig + context (kc).
 #
 # Target env (targets/<t>.env):
 #   BACKEND=k8s
-#   KUBE_CONTEXT       kubectl context of the harness host (default: the current context)
+#   KUBE_CONTEXT       kubectl context of the harness host (REQUIRED: never the ambient one)
+#   KUBECONFIG         optional; e.g. lima's own file, to keep the harness off your others
 #   INGRESS_PORT       the harness Traefik port, 9443 (infra/k8s/manifests/harness-20-traefik.yaml)
 #   REGISTRY_PUSH      where THIS client pushes (default registry.lab.<domain>:<INGRESS_PORT>,
 #                      the TLS route through Traefik; *.lab resolves to 127.0.0.1, so it works
@@ -30,7 +34,14 @@ K8S_ARTIFACT_REPO=harness-artifact
 K8S_HELPER_UPSTREAM=busybox:1.37
 K8S_DOC="docs/remote-kubernetes.md"
 
-kc() { kubectl ${KUBE_CONTEXT:+--context "$KUBE_CONTEXT"} "$@"; }
+# Every kubectl call names its kubeconfig and context outright. Ambient defaults are how a
+# command meant for the harness host ends up on whatever cluster the user's own kubeconfig
+# currently points at (a work cluster, say) — so for an EXISTING cluster they come from its
+# meta.env (be_k8s_use_cluster), and a new one records what preflight resolved.
+kc() {
+  [ -n "${HARNESS_KUBE_CONTEXT:-}" ] || _k8s_resolve_connection
+  kubectl ${HARNESS_KUBECONFIG:+--kubeconfig "$HARNESS_KUBECONFIG"} --context "$HARNESS_KUBE_CONTEXT" "$@"
+}
 
 _k8s_registry_push() { echo "${REGISTRY_PUSH:-registry.lab.${HARNESS_DOMAIN}:${INGRESS_PORT}}"; }
 _k8s_push_ref() { echo "$(_k8s_registry_push)/$1"; }
@@ -85,9 +96,10 @@ _k8s_buildkit() {
   pod="$(kc -n "$K8S_SYSTEM_NS" get pod -l app=buildkitd --field-selector=status.phase=Running \
            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   [ -n "$pod" ] || die "no running buildkitd pod in $K8S_SYSTEM_NS (infra/k8s/manifests/harness-30-buildkitd.yaml)"
-  addr="kube-pod://$pod?namespace=$K8S_SYSTEM_NS${KUBE_CONTEXT:+&context=$KUBE_CONTEXT}"
+  addr="kube-pod://$pod?namespace=$K8S_SYSTEM_NS${HARNESS_KUBE_CONTEXT:+&context=$HARNESS_KUBE_CONTEXT}"
   hlog "buildkitd: building $tag from $ctx"
-  "$(tool_path buildctl)" --addr "$addr" build --progress plain \
+  # buildctl's kube-pod helper runs plain kubectl, so it gets the kubeconfig via the env.
+  KUBECONFIG="${HARNESS_KUBECONFIG:-${KUBECONFIG:-}}" "$(tool_path buildctl)" --addr "$addr" build --progress plain \
     --frontend dockerfile.v0 --local context="$ctx" --local dockerfile="$ctx" \
     --opt platform=linux/amd64 \
     --output "type=image,name=$(_k8s_pull_ref "$tag"),push=true" >&2 \
@@ -233,11 +245,28 @@ k8s_publish_artifacts() {
 }
 
 # ---- ops: host + infra ------------------------------------------------------------
+# _k8s_resolve_connection — pin a NEW cluster's connection from the target: KUBE_CONTEXT is
+# required (never "whatever the kubeconfig's current context is", which `tsh kube login`
+# or `kubectl config use-context` can move at any time), KUBECONFIG optional.
+_k8s_resolve_connection() {
+  [ -n "${KUBE_CONTEXT:-}" ] || die "the k8s backend needs KUBE_CONTEXT in targets/${TARGET:-default}.env (it never falls back to your kubeconfig's current context)"
+  export HARNESS_KUBECONFIG="${KUBECONFIG:-}" HARNESS_KUBE_CONTEXT="$KUBE_CONTEXT"
+}
+
+be_k8s_use_cluster() {
+  local id="$1"
+  HARNESS_KUBECONFIG="$(cluster_meta "$id" KUBECONFIG)"
+  HARNESS_KUBE_CONTEXT="$(cluster_meta "$id" KUBE_CONTEXT)"
+  [ -n "$HARNESS_KUBE_CONTEXT" ] || die "cluster $id records no KUBE_CONTEXT in its meta.env; refusing to guess which Kubernetes cluster it is on"
+  export HARNESS_KUBECONFIG HARNESS_KUBE_CONTEXT
+}
+
 be_k8s_preflight() {
   require_cmd kubectl jq openssl
+  _k8s_resolve_connection      # what a new cluster records in meta.env
   tool_path crane >/dev/null
   kc get namespace "$K8S_SYSTEM_NS" >/dev/null 2>&1 \
-    || die "cannot reach namespace $K8S_SYSTEM_NS with kubectl${KUBE_CONTEXT:+ (context $KUBE_CONTEXT)} — is the host up and set up per infra/README.md?"
+    || die "cannot reach namespace $K8S_SYSTEM_NS with kubectl (context $HARNESS_KUBE_CONTEXT) — is the host up and set up per infra/README.md?"
 }
 
 # _k8s_infra_problems — one line per missing piece of the shared infra (none = healthy).
@@ -260,12 +289,14 @@ $problems"
 
 be_k8s_doctor() {
   local t0 t1 problems line
+  [ -n "${KUBE_CONTEXT:-}" ] || { chk_fail "KUBE_CONTEXT is not set in targets/${TARGET:-default}.env"; return 0; }
+  _k8s_resolve_connection
   t0="$(date +%s)"
   if kc get namespace "$K8S_SYSTEM_NS" >/dev/null 2>&1; then
     t1="$(date +%s)"
-    pass "kubectl reaches $K8S_SYSTEM_NS${KUBE_CONTEXT:+ (context $KUBE_CONTEXT)} ($((t1 - t0))s round trip)"
+    pass "kubectl reaches $K8S_SYSTEM_NS(context $HARNESS_KUBE_CONTEXT) ($((t1 - t0))s round trip)"
   else
-    chk_fail "kubectl cannot reach namespace $K8S_SYSTEM_NS${KUBE_CONTEXT:+ (context $KUBE_CONTEXT)} (infra/README.md)"
+    chk_fail "kubectl cannot reach namespace $K8S_SYSTEM_NS (context $HARNESS_KUBE_CONTEXT; infra/README.md)"
     return 0
   fi
   if tool_path crane >/dev/null && tool_path buildctl >/dev/null; then
@@ -276,16 +307,111 @@ be_k8s_doctor() {
   else while IFS= read -r line; do chk_fail "$line"; done <<<"$problems"; fi
 }
 
-# ---- ops: clusters (Phase 4) and admin access (Phase 5) ------------------------------
-be_k8s_up()           { _k8s_todo up; }
-be_k8s_auth_healthy() { _k8s_todo auth_healthy; }
-be_k8s_status()       { _k8s_todo status; }
-be_k8s_logs()         { _k8s_todo logs; }
-be_k8s_collect_logs() { _k8s_todo collect_logs; }
-be_k8s_exec()         { _k8s_todo exec; }
-be_k8s_exec_i()       { _k8s_todo exec_i; }
-be_k8s_running()      { _k8s_todo running; }
-be_k8s_teardown()     { _k8s_todo teardown; }
+# ---- ops: clusters --------------------------------------------------------------------
+# A cluster is namespace th-<id>. Which pod/container runs each compose service comes from
+# the plan kube-render wrote (state/<id>/kube/plan.json): a service that joined another's
+# netns runs in THAT pod, as its own container.
+_k8s_ns() { echo "th-$1"; }
+_k8s_plan() { echo "$(state_dir_for "$1")/kube/plan.json"; }
+
+# _k8s_where <id> <svc> -> "<pod> <container>"
+_k8s_where() {
+  jq -er --arg s "$2" '.services[$s] | select(.) | "\(.pod) \(.container)"' "$(_k8s_plan "$1")" 2>/dev/null \
+    || die "cluster $1 has no service '$2' (have: $(jq -r '.services | keys | join(" ")' "$(_k8s_plan "$1")" 2>/dev/null))"
+}
+
+_k8s_services() { jq -r '.services | keys[]' "$(_k8s_plan "$1")"; }
+
+be_k8s_up() {
+  local id="$1" out="$2" expires img missing=""
+  # The janitor (infra/k8s/manifests/harness-40-janitor.yaml) deletes the namespace after
+  # this, so a cluster abandoned by a Beams session doesn't run forever.
+  expires=$(( $(date +%s) + ${CLUSTER_TTL_HOURS:-24} * 3600 ))
+  pybrain kube-render --state-dir "$out" --expires-at "$expires" >&2 || die "kube-render failed"
+  # Every harness image the pods reference must already be in the registry (the teleport
+  # image from build_image, side images from component prebuilds); a miss here is a
+  # clearer error than an ImagePullBackOff later.
+  for img in $(jq -r '.local_images[]' "$out/kube/plan.json"); do
+    be_k8s_image_exists "$img" || missing="$missing $img"
+  done
+  [ -z "$missing" ] || die "not in the registry:$missing (a prebuild that runs 'docker build' instead of 'cluster side-image'?)"
+  k8s_publish_artifacts "$out"
+  pybrain kube-up --state-dir "$out" || die "bringing '$id' up failed — inspect: kubectl -n $(_k8s_ns "$id") get pods"
+}
+
+be_k8s_auth_healthy() {
+  [ "$(kc -n "$(_k8s_ns "$1")" get pod "$1-auth" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = True ]
+}
+
+be_k8s_status() {
+  local st; st="$(kc -n "$(_k8s_ns "$1")" get pod "$1-auth" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  if [ -z "$st" ]; then echo "-"; elif be_k8s_auth_healthy "$1"; then echo "$st (ready)"; else echo "$st"; fi
+}
+
+# be_k8s_logs <id> [-f] [service…] — the subset of `compose logs` the CLI uses.
+be_k8s_logs() {
+  local id="$1"; shift
+  local follow="" a pod ctr svc svcs=""
+  for a in "$@"; do
+    case "$a" in
+      -f|--follow) follow=-f ;;
+      --no-color) ;;
+      -*) die "logs: '$a' is not supported on the k8s backend (have: -f, service names)" ;;
+      *) svcs="$svcs $a" ;;
+    esac
+  done
+  [ -n "$svcs" ] || svcs="$(_k8s_services "$id")"
+  # shellcheck disable=SC2086  # word-split list of service names
+  set -- $svcs
+  if [ $# = 1 ]; then
+    read -r pod ctr <<<"$(_k8s_where "$id" "$1")"
+    kc -n "$(_k8s_ns "$id")" logs ${follow:+"$follow"} "$pod" -c "$ctr"; return
+  fi
+  [ -z "$follow" ] || die "logs -f follows one service at a time on the k8s backend"
+  for svc in "$@"; do
+    read -r pod ctr <<<"$(_k8s_where "$id" "$svc")"
+    kc -n "$(_k8s_ns "$id")" logs "$pod" -c "$ctr" 2>&1 | sed "s/^/$svc | /" || true
+  done
+}
+
+be_k8s_collect_logs() {
+  local id="$1" dir="$2" svc pod ctr ns
+  ns="$(_k8s_ns "$id")"
+  for svc in $(_k8s_services "$id"); do
+    read -r pod ctr <<<"$(_k8s_where "$id" "$svc")"
+    # a restarted container's earlier run first, as `docker logs` would show it
+    { kc -n "$ns" logs "$pod" -c "$ctr" --previous 2>/dev/null || true
+      kc -n "$ns" logs "$pod" -c "$ctr" 2>&1 || true; } > "$dir/$svc.log"
+  done
+}
+
+be_k8s_exec() {
+  local id="$1" pod ctr; read -r pod ctr <<<"$(_k8s_where "$1" "$2")"; shift 2
+  kc -n "$(_k8s_ns "$id")" exec "$pod" -c "$ctr" -- "$@"
+}
+
+be_k8s_exec_i() {
+  local id="$1" pod ctr; read -r pod ctr <<<"$(_k8s_where "$1" "$2")"; shift 2
+  kc -n "$(_k8s_ns "$id")" exec -i "$pod" -c "$ctr" -- "$@"
+}
+
+be_k8s_running() {
+  local pod ctr; read -r pod ctr <<<"$(_k8s_where "$1" "$2")"
+  kc -n "$(_k8s_ns "$1")" get pod "$pod" -o json 2>/dev/null | jq -e --arg c "$ctr" \
+    '[(.status.containerStatuses // []) + (.status.initContainerStatuses // []) | .[]
+      | select(.name == $c and .state.running)] | length > 0' >/dev/null
+}
+
+be_k8s_teardown() {
+  local id="$1" ns; ns="$(_k8s_ns "$id")"
+  # Everything the cluster made lives in its namespace (the route, the secrets, the PVCs).
+  # Not waited on: deletion finishes in the background, and the janitor ignores it.
+  kc delete namespace "$ns" --wait=false --ignore-not-found >/dev/null 2>&1 \
+    || hwarn "could not delete namespace $ns (kubectl -n $ns get all)"
+}
+
+# ---- ops: admin access (Phase 5) ----------------------------------------------------------
 be_k8s_admin_up()               { _k8s_todo admin_up 5; }
 be_k8s_admin_ready()            { _k8s_todo admin_ready 5; }
 be_k8s_admin_identity_present() { _k8s_todo admin_identity_present 5; }

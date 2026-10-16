@@ -15,6 +15,7 @@ _docker_admin_vol() { echo "harness-admin-$1"; }
 _docker_cluster_net() { echo "teleport-harness-$1_internal"; }
 
 be_docker_preflight() { require_cmd docker; }
+be_docker_use_cluster() { :; }   # one local daemon; nothing to select
 
 be_docker_doctor() {
   # docker + lima

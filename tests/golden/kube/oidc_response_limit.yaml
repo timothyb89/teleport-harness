@@ -396,7 +396,7 @@ objects:
         claimName: vol-bigdisco-data
     containers:
     - name: bigdisco
-      image: registry.harness:5000/teleport-harness-oidc:v2
+      image: registry.harness:5000/teleport-harness-oidc:v4
       args:
       - -issuer=https://bigdisco.lab.example.com:8443
       - -addr=:8443
@@ -439,7 +439,7 @@ objects:
         claimName: vol-bigjwks-data
     containers:
     - name: bigjwks
-      image: registry.harness:5000/teleport-harness-oidc:v2
+      image: registry.harness:5000/teleport-harness-oidc:v4
       args:
       - -issuer=https://bigjwks.lab.example.com:8443
       - -addr=:8443
@@ -851,6 +851,5 @@ plan:
     container: auth
     path: /apply-on-startup
   local_images:
-  - teleport-harness-oidc:v2
   - teleport-harness-oidc:v4
   - teleport-harness:test

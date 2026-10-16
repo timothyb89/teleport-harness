@@ -59,6 +59,7 @@ def _obj(t, kind: str, name: str) -> dict:
     ({"auth": _auth(volumes=["/dev/null:/dev/kmsg"])}, {}, r"device bind"),
     ({"auth": _auth(volumes=["nope:/x"])}, {}, r"'nope' is not declared"),
     ({"auth": {"image": "x"}}, {}, r"no container_name"),
+    ({"auth": _auth(), "a": {"image": "x", "container_name": "zz1-b"}}, {}, r"'zz1-b' is not zz1-a"),
     ({"auth": _auth(), "a": {"image": "x", "container_name": "zz1-a", "depends_on": ["b"]},
       "b": {"image": "x", "container_name": "zz1-b", "depends_on": ["a"]}}, {}, r"dependency cycle"),
 ])

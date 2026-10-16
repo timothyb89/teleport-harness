@@ -28,6 +28,9 @@ cluster_report() {
   # these a script-backed check is unreviewable: the report cites the script's output while
   # the script itself was never published.
   cp -R "$out/scripts" "$bundle/rendered/" 2>/dev/null || true
+  # what the k8s backend applied (kube-render output: manifests + plan; no secret values,
+  # which are filled at apply time and never written here)
+  cp -R "$out/kube" "$bundle/rendered/" 2>/dev/null || true
   # structured verification results (per-module, written by the Python verifier)
   cp "$out"/results-*.json "$bundle/" 2>/dev/null || true
   # setup provenance manifest (roles/tokens/bots/services + source links), for inspection
