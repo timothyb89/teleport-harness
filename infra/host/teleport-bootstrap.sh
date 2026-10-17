@@ -23,12 +23,15 @@ if [ -z "$PROXY_ADDR" ]; then
 fi
 
 echo "harness: installing teleport-update against $PROXY_ADDR"
-# install.sh builds its scratch dir as "${TMPDIR:-/tmp}.XXXXXXXXXX" — no slash — so with
-# TMPDIR unset it mktemps a SIBLING of /tmp directly under /, CoreOS's read-only ostree
-# root (unlike /tmp itself, which is writable): "mktemp: ... '/tmp.XXXXXXXXXX': Read-only
-# file system". /var is writable, so point TMPDIR there instead (lands at /var/tmp.XXXXXX,
-# not inside the pre-existing /var/tmp/ — harmless, it's throwaway installer scratch space).
-export TMPDIR=/var/tmp
+# install.sh does `mktemp -d -p ${HOME:-}/` for its scratch dir. systemd units don't set
+# $HOME by default, so this collapses to `mktemp -d -p /` — CoreOS's read-only ostree
+# root: "mktemp: ... '/tmp.XXXXXXXXXX': Read-only file system" (the template is still
+# reported as under /tmp because mktemp's DEFAULT template, with -p giving the dir, is
+# "tmp.XXXXXXXXXX" — it's not actually /tmp itself, which IS writable). /root is a
+# symlink to /var/roothome on ostree, so set HOME explicitly rather than relying on
+# whatever a oneshot root service happens to inherit. TMPDIR=/var/tmp too, in case any
+# other step in the script (or a future revision of it) uses that instead.
+export HOME=/root TMPDIR=/var/tmp
 curl -sfL "https://$PROXY_ADDR/scripts/install.sh" | bash
 
 mkdir -p /etc/systemd/system/teleport.service.d
