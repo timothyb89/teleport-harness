@@ -65,22 +65,34 @@ things, only two of which Ignition can set up:
 ### Host-level Teleport agent (TPM join)
 
 If `--teleport-proxy` was given, the box also stages a *host-level* Teleport agent
-(`ssh_service` + `app_service` for Cockpit — `/etc/teleport.yaml`), separate from the
-`teleport-agent` helm chart planned for kube access to this box's k3s API (see
-`docs/remote-kubernetes.md` Phase 0). It joins via TPM, which needs one manual step
-after first boot, because the provisioning token on the proxy side can only be created
-once the box's TPM identity is known:
+(`ssh_service` + `app_service` for Cockpit — `/etc/teleport_host.yaml`), separate from
+the `teleport-agent` helm chart planned for kube access to this box's k3s API (see
+`docs/remote-kubernetes.md` Phase 0). It's installed as a **named** teleport-update
+instance (`TELEPORT_INSTALL_SUFFIX=host` in `teleport-bootstrap.sh`) rather than the
+default, unnamed one — upstream's default install hardcodes its systemd unit under
+`/lib/systemd/system`, part of the read-only ostree `/usr` tree, where it fails outright;
+the named path uses `/etc/systemd/system` instead, which is always writable. That also
+means the service is `teleport_host.service` (not `teleport.service`), the config is
+`/etc/teleport_host.yaml`, the data dir is `/var/lib/teleport_host`, and the linked
+binaries live under `/opt/teleport/host/bin/` rather than `/usr/local/bin` (only
+`teleport-update` itself stays at the usual `/usr/local/bin/teleport-update`).
 
-1. SSH in and run `sudo teleport tpm identify` to get the EKCert hash/serial.
+It joins via TPM, which needs one manual step after first boot, because the provisioning
+token on the proxy side can only be created once the box's TPM identity is known:
+
+1. SSH in and run `sudo /opt/teleport/host/bin/teleport tpm identify` to get the EKCert
+   hash/serial.
 2. On the outer cluster, create a `join_method: tpm` provision token named
    `<hostname>-host` (or whatever `--teleport-token-name` was set to) with an allow rule
    for that EKCert hash/serial.
-3. `teleport.service` is already retrying in the background (`systemctl status
-   teleport`) and picks up the token on its next attempt — no further host-side action.
+3. `teleport_host.service` is already retrying in the background (`systemctl status
+   teleport_host`) and picks up the token on its next attempt — no further host-side
+   action.
 
-Until step 2, `teleport.service` fails and retries indefinitely; that's expected steady
-state, not a bug (see the `StartLimitIntervalSec=0` drop-in in `teleport-bootstrap.sh`).
-TPM join is enterprise-gated — the outer cluster needs to be licensed for it.
+Until step 2, `teleport_host.service` fails and retries indefinitely; that's expected
+steady state, not a bug (see the `StartLimitIntervalSec=0` drop-in in
+`teleport-bootstrap.sh`). TPM join is enterprise-gated — the outer cluster needs to be
+licensed for it.
 
 Once joined, Cockpit is reachable with no LAN exposure needed: `tsh app login cockpit`.
 

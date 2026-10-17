@@ -4,11 +4,13 @@
 # only gives kube access to this box's k3s API.
 #
 # Rendered by build-ignition.sh (placeholder substitution) into host/out/teleport.yaml,
-# included by fcos.bu as /etc/teleport.yaml. The binary + systemd unit come from
-# teleport-update (teleport-bootstrap.sh), not an rpm-ostree layer.
+# included by fcos.bu as /etc/teleport_host.yaml (not /etc/teleport.yaml — see
+# teleport-bootstrap.sh's TELEPORT_INSTALL_SUFFIX=host, needed to get teleport-update's
+# systemd unit onto writable ground). The binary + systemd unit come from teleport-update,
+# not an rpm-ostree layer.
 version: v3
 teleport:
-  data_dir: /var/lib/teleport
+  data_dir: /var/lib/teleport_host   # matches the "host" install suffix
   proxy_server: __PROXY_ADDR__
 join_params:
   method: tpm

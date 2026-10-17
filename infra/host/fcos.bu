@@ -40,7 +40,7 @@ storage:
       mode: 0644
       contents:
         local: host/out/teleport.env
-    - path: /etc/teleport.yaml
+    - path: /etc/teleport_host.yaml
       mode: 0644
       contents:
         local: host/out/teleport.yaml
