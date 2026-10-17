@@ -12,9 +12,9 @@ version: v3
 teleport:
   data_dir: /var/lib/teleport_host   # matches the "host" install suffix
   proxy_server: __PROXY_ADDR__
-join_params:
-  method: tpm
-  token_name: __TOKEN_NAME__
+  join_params:
+    method: tpm
+    token_name: __TOKEN_NAME__
 ssh_service:
   enabled: yes
 app_service:
