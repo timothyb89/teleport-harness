@@ -23,6 +23,12 @@ if [ -z "$PROXY_ADDR" ]; then
 fi
 
 echo "harness: installing teleport-update against $PROXY_ADDR"
+# install.sh builds its scratch dir as "${TMPDIR:-/tmp}.XXXXXXXXXX" — no slash — so with
+# TMPDIR unset it mktemps a SIBLING of /tmp directly under /, CoreOS's read-only ostree
+# root (unlike /tmp itself, which is writable): "mktemp: ... '/tmp.XXXXXXXXXX': Read-only
+# file system". /var is writable, so point TMPDIR there instead (lands at /var/tmp.XXXXXX,
+# not inside the pre-existing /var/tmp/ — harmless, it's throwaway installer scratch space).
+export TMPDIR=/var/tmp
 curl -sfL "https://$PROXY_ADDR/scripts/install.sh" | bash
 
 mkdir -p /etc/systemd/system/teleport.service.d
