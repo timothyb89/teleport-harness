@@ -95,6 +95,86 @@ still evidence: the same assertions fail for the same reasons.
    plus three exited docker clusters (`c303c4a`, `c96337b`, `ce54506`) await the user's
    cleanup.
 
+### First real run from a Beams VM (2026-10-22)
+
+Driven from inside a Teleport Beams microVM (no docker), against the **real CoreOS
+host** (not the lima stand-in), reached via the "from Beams" workaround: `kubectl` auth'd
+through a second tbot + `kubernetes` output (Beams itself has no native kube access
+yet — that's still the Phase 0 gap below), `KUBE_CONTEXT` the outer Teleport cluster's
+k3s context. `--repo ~/projects/core` @ `19a7616d75b3` (v19.0.0-prealpha.2 master).
+
+**Environment gaps found and fixed, none of them backend bugs** (worth folding into
+the "Resuming on another machine" list below if this becomes a repeated setup):
+- No Go toolchain, no `make` — a fresh Beams VM has neither. Go installed via the
+  beams-bootstrap daemon's `install-toolchain-go` task (not wired into `run-task`'s CLI
+  yet — went through the raw `run_task` op over the daemon's UDS socket instead);
+  `make` via `apt-get`.
+- `HARNESS_CC` must be overridden to plain `gcc` on a native-amd64 Beams VM — the
+  default `x86_64-unknown-linux-gnu-gcc` is the mac cross-toolchain name and doesn't
+  exist here.
+- `make ensure-webassets[-e] WEBASSETS_SKIP_BUILD=1` has to be run in the clone before
+  ANY `--repo` build, OSS and `--ent` separately (two different embed roots).
+- **No wildcard-cert Secret existed yet in `harness-system`** on the real host —
+  `infra/k8s/import-cert.sh` needs a local docker volume that doesn't exist from
+  Beams. Stopgap: issued one directly with a one-off `acme.sh` Pod *in-cluster*
+  (CF token as a k8s Secret, DNS-01, then `kubectl create secret` the result) rather
+  than touching the ephemeral VM's disk — a preview of the not-yet-built in-cluster
+  ACME CronJob from §1.
+- **No `harness-ingress` TCP app published** (Phase 0's other half, below, still not
+  done) — `FORWARD=kubectl` (plain `kubectl port-forward` to Traefik) works fine as the
+  data-plane forwarder for a scripted run with no human browser/tsh access needed.
+- **The `claude` CLI was broken out of the box**: the globally npm-installed package's
+  `bin/claude.exe` is a stub that errors ("native binary not installed" — postinstall
+  never ran), and the actually-working ELF binary sat in a hashed npm staging dir
+  (`@anthropic-ai/.claude-code-<hash>/bin/claude.exe`) with no PATH entry at all. This
+  silently breaks every agent-driven module (`docs_bound_keypair`, `docs_generic_oidc`)
+  on a fresh Beams VM — `lib/agent.sh` just warns and the plan FAILs on
+  `agent-result.json missing`. Fixed with a symlink into `~/.local/bin/claude`; a Beams
+  image fix would be better long-term.
+
+**Results** (`--version v19 --features <everything each module's render.yaml provides>`,
+excluding `operator_generic_oidc` and `tpm` — both `requires_backend: docker`, Phase 7/8
+territory, not run):
+
+| Module/plan | Result |
+|---|---|
+| `bots` (tbot+bound_keypair) | PASS 10/10 |
+| `oidc-caching` (generic_oidc+kubernetes+oidc_caching+oidc_response_limit) | PASS all 4 |
+| `bound-keypair-status` | PASS |
+| `bound_keypair_apply_on_startup` (`--ent`) | PASS 13/13 — the 2026-10-16 finding below ("pre-seeded bot refused: initial public key or registration secret required") did **not** reproduce; looks fixed on master since, or was specific to a different commit |
+| `docs_bound_keypair` | PASS (once `claude` was fixed) — agent completed the guide, reported 4 real doc issues (advisory) |
+| `scoped_usage_mode` | 18 PASS / 1 FAIL — one precondition (`su-idbot` identity file not visible at verify time) under a 17-pod/3-wave namespace; every substantive admission+join assertion passed. Not root-caused; retry before trusting the 1 FAIL |
+| `scoped_app_access` | FAIL — reproduces the EXACT already-documented master-drift finding below (inline join string read as a file path). Good parity signal, not new |
+| `terraform_bot` | FAIL — reproduces the documented provider-schema drift (`teleport_bot` resource shape changed) |
+| `terraform_generic_oidc` | 3 PASS / 2 FAIL — the module's own known-failing probe (provider drops `must_match_fields`) behaves as designed |
+| `terraform_native_join_lb` | FAIL, but uninformative right now: the SAME provider-schema drift above blocks `terraform apply` for every runner, so the ALPN/LB logic this module exists to test is never reached. Needs the provider HCL fixed (or the HCL updated for the new resource shape) before this module can say anything new |
+| `workload_identity_sds_override` (`--ent`) | FAIL — `workload_identity_x509_issuer_override/default` resource not found (never got created). Different failure shape than the documented `--package v18.11.0-rc.2` run (6 P / 2 F); this was `--repo` master instead, so not directly comparable — needs a same-source re-run on docker to tell backend-vs-source-drift apart |
+| `workload_identity_slow_start` | `fast` PASS, `slow` FAIL — no SVID served, auth watcher saw `Unable to communicate with the Teleport Auth Service` under the shaped profile. The existing parity table above already shows a 7P/6F split for this module (`--package`, both backends) — unclear yet whether this is the same known split or a new `--repo`/real-host-specific regression; needs the same side-by-side comparison treatment as the package-sourced parity runs above |
+| `docs_generic_oidc` | FAIL, **not fixable from Beams**: `render.yaml` hardcodes `docs_root: /Users/tim/projects/docs-website/content/19.x/docs`, an uncommitted mac-local docs-website working tree (by the module's own comment, the generic_oidc guide isn't committed anywhere yet) |
+
+Net: no new backend-vs-docker divergence found with confidence — every FAIL either
+reproduced an already-known master-drift finding, is a content-availability gap
+unrelated to the backend, or needs a same-source comparison run before it can be
+called a finding at all. The environment-setup gaps above (Go/make/webassets/cert/
+claude) are the real yield of this pass and are generic to "freshly provisioned Beams
+VM," not specific to this one.
+
+**Next steps, revised:**
+1. Re-run `workload_identity_sds_override` and `workload_identity_slow_start` with the
+   same `--package v18.11.0-rc.2` already used for their existing parity rows, to
+   separate "k8s backend regression" from "v19 master drift" for both.
+2. Fix/update `terraform_bot`'s and `terraform_generic_oidc`'s HCL for the provider's
+   new `teleport_bot` resource shape — currently masks whatever `terraform_native_join_lb`
+   is trying to prove.
+3. `docs_generic_oidc` still needs its guide content reachable from wherever it runs —
+   either commit it into the clone's `docs/` (the module's own stated end-state) or make
+   `docs_root` resolve to something other than a fixed mac path.
+4. Phase 0 "from Beams" is now half-done in practice: `kubectl` reaches the host (via
+   the tbot-kubernetes-output workaround, not native Teleport kube access) and
+   `FORWARD=kubectl` is a working stand-in for the `harness-ingress` TCP app — but the
+   app itself still isn't published, so human tsh/browser access to a test cluster from
+   Beams is untested. `tsh-app` forward mode remains the one untested mode.
+
 ### Resuming on another machine
 
 Not in git, so recreate them:
@@ -111,8 +191,13 @@ Not in git, so recreate them:
   INGRESS_PORT=9443
   # FORWARD=none                # lima forwards 9443 itself; tsh-app:<app> from Beams
   ```
-- **Tools:** `uv`, `kubectl`, `jq`, `python3`; `crane`/`buildctl` download themselves
-  (pinned, checksummed: `lib/tools.sh`). `--repo` builds also need the cross toolchain.
+- **Tools:** `uv`, `kubectl`, `jq`, `python3`, `make`; `crane`/`buildctl` download
+  themselves (pinned, checksummed: `lib/tools.sh`). `--repo` builds also need a Go
+  toolchain matching `go.mod` plus a cross compiler (`HARNESS_CC`, default the mac
+  messense toolchain name) — override `HARNESS_CC=gcc` on a native-amd64 Linux client
+  instead, and run `make ensure-webassets[-e] WEBASSETS_SKIP_BUILD=1` in the clone first
+  (see "First real run from a Beams VM" above for the concrete gaps a fresh Beams VM
+  has — none pre-installed).
 - **Throwaway or rebuildable:** `.cache/` (binaries and the tool downloads), the
   registry's contents (the cache rebuilds on first push), and `state/`. A live k8s cluster
   made elsewhere can be picked up with `cluster attach <id>`.
