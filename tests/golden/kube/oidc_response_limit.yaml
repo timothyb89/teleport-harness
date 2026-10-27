@@ -10,7 +10,7 @@ objects:
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: cm-auth-entrypoint-sh-7301428d
+    name: cm-auth-entrypoint-sh-6d9e4fb6
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
@@ -47,7 +47,7 @@ objects:
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: cm-scripts-46f8e2fb
+    name: cm-scripts-34f11d43
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
@@ -449,6 +449,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: secret-wildcard-cert
       secret:
@@ -476,9 +479,9 @@ objects:
     - name: bind-apply-on-startup-fa025427
       persistentVolumeClaim:
         claimName: bind-apply-on-startup-fa025427
-    - name: cm-auth-entrypoint-sh-7301428d
+    - name: cm-auth-entrypoint-sh-6d9e4fb6
       configMap:
-        name: cm-auth-entrypoint-sh-7301428d
+        name: cm-auth-entrypoint-sh-6d9e4fb6
         items:
         - key: auth-entrypoint.sh
           path: auth-entrypoint.sh
@@ -504,7 +507,7 @@ objects:
         readOnly: true
       - name: bind-apply-on-startup-fa025427
         mountPath: /apply-on-startup
-      - name: cm-auth-entrypoint-sh-7301428d
+      - name: cm-auth-entrypoint-sh-6d9e4fb6
         mountPath: /scripts/auth-entrypoint.sh
         readOnly: true
         subPath: auth-entrypoint.sh
@@ -544,6 +547,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: secret-wildcard-cert
       secret:
@@ -593,6 +599,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: secret-wildcard-cert
       secret:
@@ -641,6 +650,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: secret-wildcard-cert
       secret:
@@ -689,6 +701,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-bigdisco-yaml-df8d6fbc
       configMap:
@@ -696,9 +711,9 @@ objects:
         items:
         - key: tbot-bigdisco.yaml
           path: tbot-bigdisco.yaml
-    - name: cm-scripts-46f8e2fb
+    - name: cm-scripts-34f11d43
       configMap:
-        name: cm-scripts-46f8e2fb
+        name: cm-scripts-34f11d43
         items:
         - key: join-oneshot.sh
           path: join-oneshot.sh
@@ -720,7 +735,7 @@ objects:
         mountPath: /etc/tbot.yaml
         readOnly: true
         subPath: tbot-bigdisco.yaml
-      - name: cm-scripts-46f8e2fb
+      - name: cm-scripts-34f11d43
         mountPath: /scripts
         readOnly: true
     dnsPolicy: None
@@ -747,6 +762,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-bigjwks-yaml-f426cb35
       configMap:
@@ -754,9 +772,9 @@ objects:
         items:
         - key: tbot-bigjwks.yaml
           path: tbot-bigjwks.yaml
-    - name: cm-scripts-46f8e2fb
+    - name: cm-scripts-34f11d43
       configMap:
-        name: cm-scripts-46f8e2fb
+        name: cm-scripts-34f11d43
         items:
         - key: join-oneshot.sh
           path: join-oneshot.sh
@@ -778,7 +796,7 @@ objects:
         mountPath: /etc/tbot.yaml
         readOnly: true
         subPath: tbot-bigjwks.yaml
-      - name: cm-scripts-46f8e2fb
+      - name: cm-scripts-34f11d43
         mountPath: /scripts
         readOnly: true
     dnsPolicy: None
@@ -805,6 +823,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-ok-yaml-59c95498
       configMap:
@@ -812,9 +833,9 @@ objects:
         items:
         - key: tbot-ok.yaml
           path: tbot-ok.yaml
-    - name: cm-scripts-46f8e2fb
+    - name: cm-scripts-34f11d43
       configMap:
-        name: cm-scripts-46f8e2fb
+        name: cm-scripts-34f11d43
         items:
         - key: join-oneshot.sh
           path: join-oneshot.sh
@@ -836,7 +857,7 @@ objects:
         mountPath: /etc/tbot.yaml
         readOnly: true
         subPath: tbot-ok.yaml
-      - name: cm-scripts-46f8e2fb
+      - name: cm-scripts-34f11d43
         mountPath: /scripts
         readOnly: true
     dnsPolicy: None

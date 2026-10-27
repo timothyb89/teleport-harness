@@ -32,7 +32,7 @@ objects:
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: cm-auth-entrypoint-sh-7301428d
+    name: cm-auth-entrypoint-sh-6d9e4fb6
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
@@ -691,6 +691,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: secret-wildcard-cert
       secret:
@@ -720,9 +723,9 @@ objects:
     - name: bind-apply-on-startup-fa025427
       persistentVolumeClaim:
         claimName: bind-apply-on-startup-fa025427
-    - name: cm-auth-entrypoint-sh-7301428d
+    - name: cm-auth-entrypoint-sh-6d9e4fb6
       configMap:
-        name: cm-auth-entrypoint-sh-7301428d
+        name: cm-auth-entrypoint-sh-6d9e4fb6
         items:
         - key: auth-entrypoint.sh
           path: auth-entrypoint.sh
@@ -753,7 +756,7 @@ objects:
         readOnly: true
       - name: bind-apply-on-startup-fa025427
         mountPath: /apply-on-startup
-      - name: cm-auth-entrypoint-sh-7301428d
+      - name: cm-auth-entrypoint-sh-6d9e4fb6
         mountPath: /scripts/auth-entrypoint.sh
         readOnly: true
         subPath: auth-entrypoint.sh
@@ -793,6 +796,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     hostname: httpbin-scoped
     containers:
     - name: httpbin
@@ -824,6 +830,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     hostname: httpbin-unscoped
     containers:
     - name: httpbin-decoy
@@ -855,6 +864,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-app-agent-yaml-8cb16b1a
       configMap:
@@ -919,6 +931,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-app-agent-unscoped-yaml-3a51aaf4
       configMap:
@@ -978,6 +993,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-cfg-scoped-bare-yaml-82bcfa52
       configMap:
@@ -1025,6 +1043,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-cfg-scoped-proxy-yaml-d8ca3294
       configMap:
@@ -1072,6 +1093,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-cfg-unscoped-sqn-yaml-26f909ba
       configMap:
@@ -1119,6 +1143,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-app-bot-yaml-314b8ebb
       configMap:
@@ -1178,6 +1205,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-nf-bot-yaml-a2388987
       configMap:
@@ -1231,6 +1261,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-unscoped-app-bot-yaml-e2011a7f
       configMap:
@@ -1281,6 +1314,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-scoped-app-access-9e64e528
       configMap:

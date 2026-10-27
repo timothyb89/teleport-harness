@@ -98,7 +98,7 @@ objects:
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: cm-auth-entrypoint-sh-7301428d
+    name: cm-auth-entrypoint-sh-6d9e4fb6
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
@@ -139,7 +139,7 @@ objects:
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: cm-render-resources-sh-1c472f93
+    name: cm-render-resources-sh-4c26abd9
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
@@ -150,7 +150,7 @@ objects:
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: cm-scripts-1c1315e2
+    name: cm-scripts-8cd2884b
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
@@ -848,6 +848,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: secret-wildcard-cert
       secret:
@@ -883,9 +886,9 @@ objects:
     - name: bind-apply-on-startup-fa025427
       persistentVolumeClaim:
         claimName: bind-apply-on-startup-fa025427
-    - name: cm-auth-entrypoint-sh-7301428d
+    - name: cm-auth-entrypoint-sh-6d9e4fb6
       configMap:
-        name: cm-auth-entrypoint-sh-7301428d
+        name: cm-auth-entrypoint-sh-6d9e4fb6
         items:
         - key: auth-entrypoint.sh
           path: auth-entrypoint.sh
@@ -914,7 +917,7 @@ objects:
         readOnly: true
       - name: bind-apply-on-startup-fa025427
         mountPath: /apply-on-startup
-      - name: cm-auth-entrypoint-sh-7301428d
+      - name: cm-auth-entrypoint-sh-6d9e4fb6
         mountPath: /scripts/auth-entrypoint.sh
         readOnly: true
         subPath: auth-entrypoint.sh
@@ -954,6 +957,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: secret-wildcard-cert
       secret:
@@ -1002,6 +1008,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: vol-oidc-ca-data
       persistentVolumeClaim:
@@ -1042,6 +1051,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-yaml-ac909804
       configMap:
@@ -1100,20 +1112,23 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: vol-idents
       persistentVolumeClaim:
         claimName: vol-idents
-    - name: cm-scripts-1c1315e2
+    - name: cm-scripts-8cd2884b
       configMap:
-        name: cm-scripts-1c1315e2
+        name: cm-scripts-8cd2884b
         items:
         - key: token-manager.sh
           path: token-manager.sh
           mode: 493
-    - name: cm-render-resources-sh-1c472f93
+    - name: cm-render-resources-sh-4c26abd9
       configMap:
-        name: cm-render-resources-sh-1c472f93
+        name: cm-render-resources-sh-4c26abd9
         items:
         - key: render-resources.sh
           path: render-resources.sh
@@ -1142,10 +1157,10 @@ objects:
       - name: vol-idents
         mountPath: /idents
         readOnly: true
-      - name: cm-scripts-1c1315e2
+      - name: cm-scripts-8cd2884b
         mountPath: /scripts
         readOnly: true
-      - name: cm-render-resources-sh-1c472f93
+      - name: cm-render-resources-sh-4c26abd9
         mountPath: /render-resources.sh
         readOnly: true
         subPath: render-resources.sh
@@ -1173,6 +1188,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-agent-deny-yaml-b7d38ec3
       configMap:
@@ -1220,6 +1238,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-agent-discovery-yaml-e2ec88e4
       configMap:
@@ -1267,6 +1288,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-agent-expr-yaml-9efc3ec5
       configMap:
@@ -1314,6 +1338,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-agent-expr-deny-yaml-8dd651a1
       configMap:
@@ -1361,6 +1388,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-agent-scoped-deny-yaml-38f24601
       configMap:
@@ -1408,6 +1438,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-agent-scoped-discovery-yaml-de7c8719
       configMap:
@@ -1455,6 +1488,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-agent-scoped-static-yaml-737c37ad
       configMap:
@@ -1502,6 +1538,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-agent-static-yaml-ed8e1ad7
       configMap:
@@ -1549,6 +1588,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-gobot-disc-yaml-844764db
       configMap:
@@ -1596,6 +1638,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-gobot-scoped-disc-yaml-21b797c1
       configMap:
@@ -1643,6 +1688,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-gobot-scoped-static-yaml-b309ceab
       configMap:
@@ -1690,6 +1738,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tbot-gobot-static-yaml-c9c59ea5
       configMap:

@@ -41,6 +41,10 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# The harness checkout root (same convention as tests/test_kube.py's REPO), used only to
+# recognize + normalize absolute paths under it — see _stable().
+_HARNESS_ROOT = Path(__file__).resolve().parent.parent
+
 # Every pod references harness-built images by this name; the node's registries.yaml maps it
 # to the in-cluster registry (infra/k3s/registries.yaml, docs/remote-kubernetes.md §4).
 REGISTRY = "registry.harness:5000"
@@ -401,10 +405,15 @@ class _Translator:
         return art
 
     def _stable(self, src: str) -> str:
-        """src relative to the state dir when it lives there (object names derived from it
-        must not depend on where the state dir happens to be), else unchanged."""
+        """src relative to the state dir or the harness checkout when it lives under either
+        (object names derived from it must not depend on where those happen to be — a shared
+        script like auth-entrypoint.sh is mounted from an absolute path under the checkout,
+        and that path is a different machine/clone-dependent string on every client), else
+        unchanged."""
         if src.startswith(str(self.state_dir) + "/"):
             return "$STATE/" + src[len(str(self.state_dir)) + 1:]
+        if src.startswith(str(_HARNESS_ROOT) + "/"):
+            return "$HARNESS/" + src[len(str(_HARNESS_ROOT)) + 1:]
         return src
 
     @staticmethod
@@ -488,6 +497,15 @@ class _Translator:
             c["securityContext"] = sc
         return c
 
+    def _se_level(self) -> str:
+        """Deterministic SELinux MCS pair for this namespace (derived from the cluster id,
+        so it's stable across a render/re-render but distinct across clusters). Two distinct
+        categories, matching the pair size container runtimes normally allocate."""
+        h = hashlib.sha256(self.id.encode()).hexdigest()
+        a = int(h[:8], 16) % 1024
+        b = (a + 1 + int(h[8:16], 16) % 1023) % 1024
+        return f"s0:c{a},c{b}"
+
     def _labels(self, **extra) -> dict:
         return {"app.kubernetes.io/part-of": "teleport-harness",
                 "harness.teleport/cluster-id": self.id, **extra}
@@ -517,7 +535,21 @@ class _Translator:
                             "enableServiceLinks": False,
                             # test workloads get no credentials to the cluster running them
                             "automountServiceAccountToken": False,
-                            "terminationGracePeriodSeconds": 10}}
+                            "terminationGracePeriodSeconds": 10,
+                            # Pin a deterministic MCS pair for every pod in this namespace.
+                            # `local-path` PVCs are a `local`-type volume, which kubelet never
+                            # relabels (unlike emptyDir/most CSI volumes) — the directory keeps
+                            # whichever container happened to label it first (its creating
+                            # helper pod, or the first consumer), and every OTHER pod gets a
+                            # fresh random MCS category from the container runtime. On an
+                            # SELinux-enforcing host that's permission-denied on the *directory
+                            # listing* (readdir), not the open — `test -s`/`cat` on a known path
+                            # still fail too, POSIX mode bits notwithstanding. Found via
+                            # scoped_usage_mode: su-idbot (writer) and su-actor (reader) share
+                            # one PVC; su-actor's happened-to-match category could read it,
+                            # su-idbot's own could not read the directory IT HAD JUST WRITTEN.
+                            # Same category namespace-wide makes every pod agree.
+                            "securityContext": {"seLinuxOptions": {"level": self._se_level()}}}}
             hostnames = {self.services[m]["hostname"] for m in members if "hostname" in self.services[m]}
             if len(hostnames) > 1:
                 raise TranslateError(f"pod {pname}: members set different hostnames {sorted(hostnames)}")

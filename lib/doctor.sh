@@ -12,8 +12,11 @@ doctor() {
   if command -v "${HARNESS_CC:-x86_64-unknown-linux-gnu-gcc}" >/dev/null 2>&1; then pass "cross toolchain present (${HARNESS_CC:-x86_64-unknown-linux-gnu-gcc})"
   else chk_warn "cross toolchain missing (needed only for --repo builds; --package/--binary runs are fine): brew install messense/macos-cross-toolchains/x86_64-unknown-linux-gnu"; fi
 
-  # target env
+  # target env — DNS-01 token issues the wildcard cert. On the k8s backend the cert is a
+  # Secret provisioned on the host separately (infra/k8s/import-cert.sh or an in-cluster
+  # acme.sh Pod), not by this client, so an empty token here is a warning, not a hard fail.
   if [ -n "${CF_DNS_API_TOKEN:-}" ]; then pass "target '${TARGET:-default}': HARNESS_DOMAIN=$HARNESS_DOMAIN, DNS token set"
+  elif [ "$HARNESS_BACKEND" = k8s ]; then chk_warn "CF_DNS_API_TOKEN empty in targets/${TARGET:-default}.env (fine on the k8s backend if the host already has a wildcard-cert Secret)"
   else chk_fail "CF_DNS_API_TOKEN empty in targets/${TARGET:-default}.env"; fi
   [ -n "${ACME_EMAIL:-}" ] && pass "ACME_EMAIL=$ACME_EMAIL" || chk_warn "ACME_EMAIL unset (LE registration may warn)"
 

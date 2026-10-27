@@ -10,7 +10,7 @@ objects:
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: cm-auth-entrypoint-sh-7301428d
+    name: cm-auth-entrypoint-sh-6d9e4fb6
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
@@ -44,7 +44,7 @@ objects:
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: cm-tf-8d08ddf2
+    name: cm-tf-ceceb6ff
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
@@ -55,7 +55,7 @@ objects:
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    name: cm-tf-entrypoint-sh-16adf958
+    name: cm-tf-entrypoint-sh-cb9350c2
     namespace: th-zz1
     labels:
       app.kubernetes.io/part-of: teleport-harness
@@ -303,6 +303,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: secret-wildcard-cert
       secret:
@@ -324,9 +327,9 @@ objects:
     - name: bind-apply-on-startup-fa025427
       persistentVolumeClaim:
         claimName: bind-apply-on-startup-fa025427
-    - name: cm-auth-entrypoint-sh-7301428d
+    - name: cm-auth-entrypoint-sh-6d9e4fb6
       configMap:
-        name: cm-auth-entrypoint-sh-7301428d
+        name: cm-auth-entrypoint-sh-6d9e4fb6
         items:
         - key: auth-entrypoint.sh
           path: auth-entrypoint.sh
@@ -352,7 +355,7 @@ objects:
         readOnly: true
       - name: bind-apply-on-startup-fa025427
         mountPath: /apply-on-startup
-      - name: cm-auth-entrypoint-sh-7301428d
+      - name: cm-auth-entrypoint-sh-6d9e4fb6
         mountPath: /scripts/auth-entrypoint.sh
         readOnly: true
         subPath: auth-entrypoint.sh
@@ -392,6 +395,9 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: cm-tf-idbot-yaml-dc349ae7
       configMap:
@@ -453,18 +459,21 @@ objects:
     enableServiceLinks: false
     automountServiceAccountToken: false
     terminationGracePeriodSeconds: 10
+    securityContext:
+      seLinuxOptions:
+        level: s0:c874,c236
     volumes:
     - name: art-tf-plugins-f61551dd
       emptyDir: {}
-    - name: cm-tf-entrypoint-sh-16adf958
+    - name: cm-tf-entrypoint-sh-cb9350c2
       configMap:
-        name: cm-tf-entrypoint-sh-16adf958
+        name: cm-tf-entrypoint-sh-cb9350c2
         items:
         - key: tf-entrypoint.sh
           path: tf-entrypoint.sh
-    - name: cm-tf-8d08ddf2
+    - name: cm-tf-ceceb6ff
       configMap:
-        name: cm-tf-8d08ddf2
+        name: cm-tf-ceceb6ff
         items:
         - key: main.tf
           path: main.tf
@@ -498,11 +507,11 @@ objects:
       - name: art-tf-plugins-f61551dd
         mountPath: /plugins
         readOnly: true
-      - name: cm-tf-entrypoint-sh-16adf958
+      - name: cm-tf-entrypoint-sh-cb9350c2
         mountPath: /scripts/tf-entrypoint.sh
         readOnly: true
         subPath: tf-entrypoint.sh
-      - name: cm-tf-8d08ddf2
+      - name: cm-tf-ceceb6ff
         mountPath: /work
         readOnly: true
       - name: vol-tf-identity
