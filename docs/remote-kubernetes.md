@@ -211,8 +211,50 @@ How the parity table was made: run the same module with the same source on both 
 `jq -r '.results[] | "\(.status) \(.verb) \(.args|join(" "))"' state/<id>/results-<m>.json`
 between the two, after replacing each cluster id with a placeholder (`sed s/<id>/ID/g`).
 
+### First `--package` run against the real host from Beams (2026-10-27)
+
+`scoped_usage_mode` against `teleport-v18.11.8-rc.2-linux-amd64-bin.tar.gz` — first time a
+binary package (as opposed to `--repo`) ran on this backend. Target: `targets/beams-k3s.env`
+(`BACKEND=k8s`, `KUBECONFIG=~/.teleport-bot/kube/kubeconfig.yaml`, `KUBE_CONTEXT=tim-beams.
+beams.sh-k3s`, `FORWARD=kubectl`) — reusing the pre-seeded tbot kubeconfig from the earlier
+"from Beams" run rather than the native `tsh kube` path (still the Phase 0 gap).
+
+First run: 69 PASS / 1 FAIL — `su-idbot`'s `/idents/identity` output file missing at verify
+time, reproducing the exact flake noted in Phase 6 ("not root-caused; retry before trusting
+the 1 FAIL"). Root-caused this time: `local-path` PVCs are a `hostPath`-backed volume type,
+which kubelet never relabels for SELinux (unlike emptyDir/most CSI volumes) — the directory
+keeps whichever container happened to label it first, and every other pod gets its own
+random MCS category from the runtime. `su-idbot` (writer) and `su-actor` (reader) share one
+PVC; `su-actor`'s category happened to match the directory's and could read it, `su-idbot`'s
+own could not read the directory it had JUST WRITTEN — confirmed with `ls -laZ` showing the
+dir's `c130,c469` against `su-idbot`'s own `c402,c600` (`cat /proc/self/attr/current`). Not
+flaky in the sense of racy timing — flaky in the sense of "whichever pod's category the
+directory happens to end up with," which can differ run to run.
+
+Fixed in `harness/kube.py`: every pod in a namespace now gets a deterministic
+`seLinuxOptions.level` keyed off the cluster id, so every pod sharing a PVC agrees on its
+label. Re-ran the same source against a fresh cluster: **70/70**. Along the way, found (and
+fixed) that the kube golden snapshot tests were already failing on a clean checkout on this
+machine, unrelated to the above: object names hash in the absolute checkout path for files
+mounted from `harness/templates/scripts` (e.g. `auth-entrypoint.sh`), which `_stable()`
+normalized for the state dir but never for the checkout root — so names baked in a
+machine/clone-path-dependent string, contrary to the test file's own stated intent ("replace
+... the harness checkout with $STATE / $HARNESS"). Fixed; goldens now regenerate identically
+across repeated runs and are portable across checkouts.
+
+Also fixed `doctor`: it hard-failed on an empty `CF_DNS_API_TOKEN` even for the k8s backend,
+where the wildcard cert is a Secret already provisioned on the host (not issued by this
+client) — now a warning when `BACKEND=k8s`.
+
 ### Rules that must not be relearned
 
+- `local-path` PVCs (the only StorageClass this setup has) are `hostPath`-backed, so kubelet
+  never relabels them for SELinux — the directory's MCS category is whichever pod touched it
+  first, and every pod gets its own random one from the runtime. Two pods sharing a PVC can
+  therefore randomly fail to read/list it (denied at `readdir`, not `open` — POSIX mode bits
+  don't help). Every rendered pod now gets a deterministic `seLinuxOptions.level` keyed off
+  the cluster id for exactly this reason; don't let a future change special-case it away per
+  pod or the mismatch comes back.
 - Every k8s kubectl call is pinned to the cluster's recorded KUBECONFIG + KUBE_CONTEXT
   (`use_cluster`). An unpinned call once reached a WORK cluster through the default
   kubeconfig. Never add a k8s code path that falls back to the ambient context.
