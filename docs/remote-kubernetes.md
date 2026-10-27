@@ -89,11 +89,13 @@ still evidence: the same assertions fail for the same reasons.
    list at the end of this doc). `tsh-app` forward mode is the only untested mode.
 3. Real hardware: `infra/host/` (CoreOS) on the box; `test-libvirt.sh` is untested.
 4. Phase 7 (operator: vcluster or privileged k3s-in-pod) and Phase 8 (KubeVirt TPM spike).
-5. Smaller open items: registry GC (per-cluster artifact tags pile up); in-cluster ACME
-   CronJob (today `infra/k8s/import-cert.sh` copies the cert from the docker backend's
-   `harness-certs` volume); five leaked docker admin tbots and volumes from before Phase 1
-   plus three exited docker clusters (`c303c4a`, `c96337b`, `ce54506`) await the user's
-   cleanup.
+5. Smaller open items: registry GC (per-cluster artifact tags pile up); self-contained
+   in-cluster cert issuance + cutting per-client setup boilerplate — rough plan written
+   up in `docs/k8s-startup-config.md` (today `infra/k8s/import-cert.sh` copies the cert
+   from the docker backend's `harness-certs` volume, which is what the 2026-10-27 run
+   below had to work around); five leaked docker admin tbots and volumes from before
+   Phase 1 plus three exited docker clusters (`c303c4a`, `c96337b`, `ce54506`) await the
+   user's cleanup.
 
 ### First real run from a Beams VM (2026-10-22)
 
