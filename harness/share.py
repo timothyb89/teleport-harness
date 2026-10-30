@@ -55,7 +55,14 @@ def stage_gist(bundle: Path, stage: Path) -> list[str]:
         rel = f.relative_to(bundle).as_posix()
         flat = _flat(rel)
         mapping[rel] = gist_anchor(flat)
-        shutil.copyfile(f, stage / flat)
+        if f.stat().st_size == 0:
+            # `gh gist create` rejects a blank file outright ("a gist file cannot be
+            # blank") — an empty per-service log (nothing written to stdout) is the
+            # common case. A placeholder keeps the file (and its results.md anchor)
+            # instead of silently dropping it.
+            (stage / flat).write_text("(empty)\n")
+        else:
+            shutil.copyfile(f, stage / flat)
         staged.append(flat)
 
     md_path = bundle / "results.md"

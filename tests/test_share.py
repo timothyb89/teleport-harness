@@ -31,6 +31,19 @@ def _bundle(tmp_path: Path) -> Path:
     return b
 
 
+def test_stage_pads_empty_files(tmp_path):
+    # an empty per-service log (nothing written to stdout) is common and `gh gist create`
+    # rejects a blank file outright ("a gist file cannot be blank") — stage_gist must not
+    # hand one through verbatim.
+    bundle = _bundle(tmp_path)
+    (bundle / "logs" / "bkbot.log").write_text("")
+    stage = tmp_path / "stage"
+    files = stage_gist(bundle, stage)
+    assert "logs--bkbot.log" in files
+    staged = stage / "logs--bkbot.log"
+    assert staged.stat().st_size > 0
+
+
 def test_gist_anchor_slug():
     assert gist_anchor("rendered--docker-compose.yml") == "#file-rendered-docker-compose-yml"
     assert gist_anchor("logs--auth.log") == "#file-logs-auth-log"
