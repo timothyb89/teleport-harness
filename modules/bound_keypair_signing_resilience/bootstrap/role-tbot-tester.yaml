@@ -1,0 +1,11 @@
+# Minimal role for the test bot: enough to prove its produced identity actually
+# authenticates and performs an authorized action (list tokens) via tctl --identity.
+kind: role
+version: v7
+metadata:
+  name: tbot-tester
+spec:
+  allow:
+    rules:
+      - resources: [token]
+        verbs: [read, list]

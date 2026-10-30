@@ -1,0 +1,17 @@
+{# Directory storage (not ephemeral/in-memory) so id_bkp/bkp_state (the bound keypair +
+   prior join state - see lib/auth/join/boundkeypair/boundkeypair.go PrivateKeyPath/
+   JoinStatePath) survive between the actor's repeated `tbot start` invocations in the
+   same container, so every invocation after the first is a RECOVERY join against the
+   already-bound key, not a fresh initial join. #}
+version: v2
+onboarding:
+  join_method: bound_keypair
+  token: bk-token
+  bound_keypair:
+    registration_secret: {{ reg_secret }}
+proxy_server: {{ fqdn }}:{{ port }}
+oneshot: true
+storage: {type: directory, path: /var/lib/tbot}
+outputs:
+  - type: identity
+    destination: {type: directory, path: /out/id}

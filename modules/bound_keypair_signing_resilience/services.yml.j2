@@ -1,0 +1,15 @@
+{# bound_keypair_signing_resilience: bk-bot's container stays alive (sleep infinity) so
+   checks.py can `exec_out` a fresh `tbot start -c /etc/tbot.yaml` on demand for each join/
+   recovery attempt it wants to drive, rather than letting tbot run as its own daemon loop.
+   Composed onto the base auth. #}
+services:
+  bkbot:
+    image: {{ image }}
+    platform: linux/amd64
+    container_name: {{ cluster_id }}-bkbot
+    entrypoint: ["sleep", "infinity"]
+    volumes:
+      - {{ out }}/config/tbot.yaml:/etc/tbot.yaml:ro
+    networks: [internal]
+    depends_on:
+      auth: {condition: service_healthy}

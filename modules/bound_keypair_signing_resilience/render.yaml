@@ -1,0 +1,7 @@
+# Render context for bound_keypair_signing_resilience (see harness/render.py).
+reg_secret: harness-bksr-regsecret    # bk-bot's registration secret (also pinned in checks.py)
+# bk-bot is created at bootstrap against bk-token; the actor drives every subsequent
+# join/recovery attempt itself via `exec_out` rather than tbot's own daemon loop, so no
+# other bot services are declared here.
+bots:
+  - {name: bk-bot, roles: tbot-tester, token: bk-token}

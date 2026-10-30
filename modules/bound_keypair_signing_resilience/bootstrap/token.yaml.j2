@@ -1,0 +1,19 @@
+{# The bound_keypair join token, authorized by a preset registration secret. Unlike
+   modules/bound_keypair's token, recovery.mode is `relaxed` (not `insecure`): join state
+   verification must be ENABLED for IssueJoinState() to be reached at all (in `insecure`
+   mode it's skipped entirely - see docs/pages/.../bound-keypair/concepts.mdx#recovery).
+   `relaxed` keeps the recovery LIMIT from gating recovery attempts on its own, so every
+   lockout this module observes is attributable to the injected signing failure, not to
+   running out of recovery attempts. #}
+kind: token
+version: v2
+metadata: {name: bk-token}
+spec:
+  roles: [Bot]
+  bot_name: bk-bot
+  join_method: bound_keypair
+  bound_keypair:
+    onboarding:
+      registration_secret: {{ reg_secret }}
+    recovery:
+      mode: relaxed

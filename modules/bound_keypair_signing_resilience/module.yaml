@@ -1,0 +1,102 @@
+# e2e verification of timothyb89/bound-keypair-resilient-signing (core commit dad8f4a4934,
+# "Fix bound keypair lockouts when signing fails") against a REAL auth server + REAL bot,
+# complementing the unit tests in lib/join/boundkeypair/boundkeypair_test.go
+# (TestJoinBoundKeypair_JoinStateSigningFails, TestJoinBoundKeypair_CertSigningFails).
+#
+# checks.py drives bk-bot's joins itself and toggles two TEST-ONLY fault hooks that exist
+# ONLY in a disposable worktree built for this run (see the hooks' own comments in
+# lib/auth/bot.go and lib/join/boundkeypair/boundkeypair.go on that worktree) - never
+# merged into the branch under test. This module therefore only runs meaningfully against
+# that worktree's build; against an unmodified checkout the fault sentinels are simply
+# never set and every case degenerates to a plain join.
+#
+# KNOWN RESULT, not a bug in this module: `post-commit-fault-retry` is expected to show a
+# lock even on the FIXED commit. The fix orders signing before the backend write for each
+# of the two writes individually, but the write and the response that carries its result
+# back to the client remain two separate, non-atomic steps - a crash/dropped connection
+# between them still leaves the client holding state the server has already moved past.
+# Closing that needs a transactional write (or an idempotent resume) across both writes,
+# which the commit's own message defers as a larger refactor. This module exists to make
+# that residual risk visible and roughly quantified, not to claim the fix is incomplete in
+# some way its author didn't already know.
+#
+# LIMITATION: the `throttled-signing-failures` case reuses the SAME bk-bot across all
+# trials, so once it locks (likely, given the fault rate), the remaining trials are
+# meaningless and the loop stops early - the headline number is really "did it lock within
+# N tries", not a smooth rate. Quantifying an actual rate needs a fresh bot per trial
+# (or an unlock step between trials), left as a follow-up rather than blocking this module.
+name: bound_keypair_signing_resilience
+description: >
+  A real bound_keypair bot's recovery joins are hit with two injected signing/delivery
+  faults. One (cert signing fails before any write) is fully covered by the fix: no state
+  change, no lock, clean retry. The other (the token patch commits but the response never
+  arrives) is NOT covered - the fix narrows the window but doesn't close it - and the
+  retry is expected to get locked. A 3rd case repeats the uncovered fault across several
+  trials to get a rough sense of how often it bites under intermittent failures.
+provides_feature: bound_keypair_signing_resilience
+requires_features: [bound_keypair]
+min_version: v17
+# checks.py tampers with live CA-adjacent state and leaves the token/bot potentially
+# LOCKED by design (see the post-commit-fault case) - a sibling module sharing this bot,
+# token or auth would see a cluster in deliberately broken states.
+exclusive: true
+
+preconditions: |
+  resource_present token/bk-token
+  resource_field    token/bk-token spec.join_method bound_keypair
+
+claims:
+  - id: cert-signing-failure-is-fully-safe
+    statement: >
+      A recovery join that fails while generating certs (before any backend write) leaves
+      the bot instance's generation counter, the token's recovery state and the cluster's
+      lock count unchanged, and a subsequent clean rejoin succeeds and DOES advance the
+      generation.
+    why: |
+      This is the half of the fix that generalizes cleanly to live traffic: signing is
+      attempted before the only write this operation makes (`updateBotInstance`'s commit
+      in lib/auth/bot.go), so a failure here can never leave the backend ahead of what the
+      client holds. This exercises a STANDARD rejoin (tbot's cached cert is left in place),
+      the realistic shape of a periodic renewal interrupted by a transient signing failure
+      - a hard rejoin would instead mint a brand new bot instance regardless of the fault,
+      which wouldn't say anything about this specific write.
+
+      - The fault really fired (the bkbot log shows the injected error).
+      - The bot instance's own generation counter - a resource `recovery_count` cannot see
+        - plus `recovery_count` and the live lock count are unchanged across the failed
+        attempt.
+      - The retry (fault cleared) succeeds and the SAME instance's generation counter does
+        advance, with no lock created - proving the earlier "unchanged" was a withheld
+        write, not a withheld ABILITY to write.
+    artifacts: [checks.py]
+    checks: |
+      observation_equals     host cert-signing-failure fault_confirmed true
+      observation_unchanged  host cert-signing-failure status.bound_keypair.recovery_count lock_count status.bound_keypair.bound_bot_instance_id
+      observation_equals     host cert-signing-failure newly_committed_write_a false
+      observation_equals     host cert-signing-failure newly_locked false
+      observation_equals     host cert-signing-failure-retry newly_committed_write_a true
+      observation_equals     host cert-signing-failure-retry newly_locked false
+
+  - id: post-commit-fault-still-locks
+    statement: >
+      A recovery join whose backend write succeeds but whose response never reaches the
+      client still locks the token on retry, even on the fixed commit - the residual gap
+      the fix's own commit message defers.
+    why: |
+      This is the case that matters: it proves the fix narrows, but does not eliminate,
+      the lockout surface, with a real client and a real server rather than an argument
+      about code order.
+
+      - The fault really fired (`join_exit_code` is non-zero while active).
+      - The write nonetheless landed: `recovery_count` or the bound key material changed
+        between before/after even though the client never saw a successful response.
+      - The retry (fault cleared, so nothing is interfering anymore) comes back locked -
+        the live lock count goes up, not down or flat.
+    artifacts: [checks.py]
+    checks: |
+      observation_equals host post-commit-fault fault_confirmed true
+      observation_equals host post-commit-fault join_exit_code 1
+      observation_equals host post-commit-fault newly_locked false
+      observation_equals host post-commit-fault newly_committed_write_b true
+      observation_equals host post-commit-fault-retry join_exit_code 1
+      observation_equals host post-commit-fault-retry newly_locked true
