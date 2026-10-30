@@ -15,7 +15,7 @@
 #   cluster logs    <id> [service]
 #   cluster web     <id>
 #   cluster report  <id>
-#   cluster share   <run-bundle|id> [--public]
+#   cluster share   <run-bundle|id|exported-tar.gz> [--public] [--export [path]]
 #   cluster teardown <id|--all>
 #
 # <source> is exactly one of (mutually exclusive):
