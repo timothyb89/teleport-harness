@@ -16,7 +16,9 @@
 
 # cluster_share <run-bundle-dir | cluster-id | exported-tar.gz> [--public] [--export [path]]
 cluster_share() {
-  load_target
+  # load_target is deferred to where it's actually needed (resolving a cluster id into a
+  # fresh report) — an explicit bundle dir or an already-exported tar.gz needs no target
+  # config at all, so `share` works with no targets/<t>.env configured.
   local arg="${1:-}"
   [ -n "$arg" ] || die "usage: share <run-bundle-dir | cluster-id | exported-tar.gz> [--public] [--export [path]]"
   shift || true
@@ -66,6 +68,7 @@ cluster_share() {
     bundle="$arg"
   elif [ -d "$(state_dir_for "$arg")" ]; then
     hlog "no bundle path given — generating a fresh report for cluster '$arg'"
+    load_target
     bundle="$(cluster_report "$arg")"
   else
     die "no such bundle dir, cluster, or export file: $arg"
