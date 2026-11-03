@@ -27,17 +27,18 @@ auth container:
                                     this module exists to make that residual risk visible
                                     and measured, not to disprove the fix.
 
-A 3rd case reruns the write-B-race case across many trials with the fault toggled on a
-fraction of the time, to get an actual LOCK RATE rather than one data point - the question
-being whether the fix reduces that rate relative to its parent commit (pre-fix every
-failure locks; post-fix only this specific race does).
+A 3rd case reruns the write-B-race case across several trials, each on its OWN freshly
+created token, with the fault active on half of them - giving a real LOCK RATE rather than
+one data point, and separating "the fault fired and it locked" from "no fault, no lock".
+The per-trial token is load-bearing: a bound_keypair lockout targets the JOIN TOKEN, so
+reusing a single token means the first lock silently blocks every later trial (see the
+loop's own comment for how that invalidated an earlier version of this case).
 """
 
 from __future__ import annotations
 
 import base64
 import json
-import random
 import time
 
 TOKEN = "bk-token"
@@ -47,8 +48,19 @@ REG_SECRET = "harness-bksr-regsecret"  # must match render.yaml
 CERT_SIGN_FAULT = "/tmp/inject-cert-sign-failure"
 POST_COMMIT_FAULT = "/tmp/inject-post-commit-fault"
 
-THROTTLE_TRIALS = 20      # keep modest: each trial is a real join against a real auth
-THROTTLE_FAULT_RATE = 0.4
+# The hooks' own error strings (see the TEST-ONLY commit's comments in lib/auth/bot.go and
+# lib/join/boundkeypair/boundkeypair.go). Matched against the captured `tbot start` output
+# so "the fault fired" is evidence from the client, not an assumption that touching the
+# sentinel file had an effect.
+CERT_SIGN_FAULT_TEXT = "injected: simulated GenerateUserCerts signing failure"
+POST_COMMIT_FAULT_TEXT = "injected: simulated response-delivery failure after a successful commit"
+
+# Each trial is a real token plus three real joins, so keep it modest. The fault is
+# alternated deterministically rather than sampled: with one fresh token per trial each
+# outcome is independent, so alternating measures the same two things (P(lock | fault
+# fired), and that no fault means no lock) while guaranteeing BOTH arms are populated -
+# a random schedule can leave one empty and make the verdict flake on the RNG.
+THROTTLE_TRIALS = 10
 
 ACTOR = "checks.py"
 
@@ -121,6 +133,67 @@ def _set_fault(cluster, path: str, on: bool) -> None:
     cluster.exec_out("auth", argv)
 
 
+def _write_file(cluster, suffix: str, path: str, content: str) -> None:
+    """base64 round-trip so YAML (newlines, braces, quotes) survives the exec argv intact -
+    the same trick act() uses to persist its records."""
+    b64 = base64.b64encode(content.encode()).decode()
+    cluster.exec_out(suffix, ["sh", "-c", f"printf %s '{b64}' | base64 -d > {path}"])
+
+
+# An explicit recovery limit, unlike the bootstrapped bk-token which leaves it defaulting
+# to 1: a trial spends one recovery on its retry, and a limit-exhausted refusal would be
+# indistinguishable from the lockout this case is trying to count.
+_TRIAL_TOKEN_YAML = """kind: token
+version: v2
+metadata: {{name: {name}}}
+spec:
+  roles: [Bot]
+  bot_name: {bot}
+  join_method: bound_keypair
+  bound_keypair:
+    onboarding:
+      registration_secret: {secret}
+    recovery:
+      mode: relaxed
+      limit: 5
+"""
+
+
+def _create_trial_token(cluster, name: str, secret: str) -> bool:
+    path = f"/tmp/{name}.yaml"
+    _write_file(cluster, "auth", path,
+                _TRIAL_TOKEN_YAML.format(name=name, bot=BOT_NAME, secret=secret))
+    rc, _ = cluster.exec_out("auth", ["tctl", "create", "-f", path])
+    return rc == 0
+
+
+def _trial_tbot_config(cluster, idx: int, token: str, secret: str) -> str | None:
+    """Write a per-trial tbot config derived from the bootstrapped one, so proxy_server/port
+    stay defined in exactly one place (config/tbot.yaml.j2). Fresh storage and output dirs
+    mean the trial starts with NO bound keypair, no join state and no working identity -
+    a genuine first join against its own token.
+
+    Returns the in-container path, or None if the config could not be derived - never a
+    silently-unmodified config, which would quietly run the trial against the SHARED
+    bk-token and reintroduce exactly the cross-trial interference this design removes.
+    """
+    rc, base = cluster.exec_out("bkbot", ["cat", "/etc/tbot.yaml"])
+    if rc != 0 or not base.strip():
+        return None
+    cfg = (base
+           .replace(f"token: {TOKEN}", f"token: {token}")
+           .replace(f"registration_secret: {REG_SECRET}", f"registration_secret: {secret}")
+           .replace("path: /var/lib/tbot", f"path: /var/lib/tbot-t{idx}")
+           .replace("path: /out/id", f"path: /out/id-t{idx}"))
+    if f"token: {token}" not in cfg or f"registration_secret: {secret}" not in cfg:
+        return None
+    if f"path: /var/lib/tbot-t{idx}" not in cfg:
+        return None
+    path = f"/tmp/tbot-t{idx}.yaml"
+    _write_file(cluster, "bkbot", path, cfg)
+    return path
+
+
 # tbot's directory storage mixes two independent things in /var/lib/tbot: the bound
 # keypair + prior join state (PrivateKeyPath/JoinStatePath/KeyHistoryPath in
 # lib/auth/join/boundkeypair/boundkeypair.go: id_bkp, id_bkp.pub, bkp_state,
@@ -179,6 +252,16 @@ def _run_tbot_hard(cluster) -> tuple[int, str]:
     rm_argv = ["rm", "-f"] + [f"/var/lib/tbot/{f}" for f in _WORKING_IDENTITY_FILES]
     cluster.exec_out("bkbot", rm_argv)
     return _settle(cluster, cluster.exec_out("bkbot", ["tbot", "start", "-c", "/etc/tbot.yaml"]))
+
+
+def _run_tbot_hard_in(cluster, storage: str, cfg: str) -> tuple[int, str]:
+    """`_run_tbot_hard` against an arbitrary storage dir + config - the per-trial equivalent
+    used by the throttle loop. Wipes only the working identity, keeping the bound keypair
+    and prior join state, so this is a hard rejoin (patchToken/write B) rather than a fresh
+    registration."""
+    rm_argv = ["rm", "-f"] + [f"{storage}/{f}" for f in _WORKING_IDENTITY_FILES]
+    cluster.exec_out("bkbot", rm_argv)
+    return _settle(cluster, cluster.exec_out("bkbot", ["tbot", "start", "-c", cfg]))
 
 
 def _record(case, before, after, rc, note="", fault_text=None, expect_fault_text=None):
@@ -282,7 +365,7 @@ def _act_once(cluster, nodes):
     records.append(_record(
         "cert-signing-failure", before1, after1, rc1,
         note="fault active during this join; expect failure, no state change, no lock",
-        fault_text=out1, expect_fault_text="injected: simulated GenerateUserCerts signing failure"))
+        fault_text=out1, expect_fault_text=CERT_SIGN_FAULT_TEXT))
     records.append(_record("cert-signing-failure-retry", after1, after1_retry, rc1_retry,
                             note="fault cleared; expect this retry to succeed with no lock"))
 
@@ -301,44 +384,117 @@ def _act_once(cluster, nodes):
     records.append(_record(
         "post-commit-fault", before2, after2, rc2,
         note="fault active during this join; expect failure but the write DOES land",
-        fault_text=out2, expect_fault_text="injected: simulated response-delivery failure after a successful commit"))
+        fault_text=out2, expect_fault_text=POST_COMMIT_FAULT_TEXT))
     records.append(_record("post-commit-fault-retry", after2, after2_retry, rc2_retry,
                             note="fault cleared; this is the case expected to be LOCKED despite the fix"))
 
-    # 3. Quantify: repeat the write-B-race case across many trials with the fault toggled
-    #    probabilistically (not every time), and tally how often the bot ends up locked.
-    #    Each trial needs a fresh, unlocked token/bot, so bk-bot itself can't be reused
-    #    once it locks (recorded as `stopped_early`) - the headline number is the fraction
-    #    of trials that reached a lock before THROTTLE_TRIALS ran out.
-    locks_before_throttle = _lock_count(cluster)
-    throttle_locks = 0
-    throttle_runs = 0
-    stopped_early = False
+    # 3. Quantify the residual race across trials, each on its OWN fresh token.
+    #
+    #    Why a fresh token per trial: a bound_keypair lockout targets the JOIN TOKEN (these
+    #    joins are non-renewable, so tryLockBotDueToGenerationMismatch sets
+    #    spec.target.join_token - lib/auth/bot.go), so once case 2 above has locked
+    #    bk-token, EVERY subsequent join on it is refused before it can reach patchToken().
+    #    An earlier version of this loop reused bk-token after case 2, which meant none of
+    #    its trials could commit write B or create a new lock: it ran its whole budget
+    #    against an already-locked token and reported a falsely reassuring "no lock within
+    #    the trial budget" (recovery_count and last_recovered_at provably never moved for
+    #    the loop's entire duration). A token per trial - its own registration secret, its
+    #    own tbot storage, an explicit recovery limit so that can't gate either - makes
+    #    each trial independent and the tally mean something.
+    #
+    #    Each trial is THREE joins on a brand new token, and the first one is essential:
+    #      1. a clean initial join, so the client ends up holding a VALID join state;
+    #      2. a hard rejoin with the fault maybe active - patchToken() commits (issuing a
+    #         new join state) but the response is lost, leaving the client on its OLD one;
+    #      3. a hard rejoin, always fault-free, which presents that now-STALE join state.
+    #    Step 1 is what makes step 3 lockable. Without it the faulted join IS the initial
+    #    join, so a lost response leaves the client with NO join state rather than a stale
+    #    one - refused, but not a lockout, because staleness is what
+    #    verifyBoundKeypairJoinState treats as possible key theft. An earlier version of
+    #    this loop omitted step 1 and measured a 0% lock rate with the faults provably
+    #    firing (every faulted join exited 1 with fault_confirmed true); the
+    #    some_faulted_trial_locked check below is what surfaced that rather than letting a
+    #    0% rate read as good news.
+    trials = []
     for i in range(THROTTLE_TRIALS):
-        fault_on = random.random() < THROTTLE_FAULT_RATE
+        trial_token, trial_secret = f"{TOKEN}-t{i}", f"{REG_SECRET}-t{i}"
+        storage = f"/var/lib/tbot-t{i}"
+        if not _create_trial_token(cluster, trial_token, trial_secret):
+            trials.append({"trial": i, "setup_ok": False, "why": "token create failed"})
+            continue
+        cfg = _trial_tbot_config(cluster, i, trial_token, trial_secret)
+        if cfg is None:
+            trials.append({"trial": i, "setup_ok": False, "why": "per-trial tbot config failed"})
+            continue
+
+        # 1. Seed: a clean join so there is a valid join state to go stale later.
+        rc_seed, _ = _settle(cluster, cluster.exec_out("bkbot", ["tbot", "start", "-c", cfg]))
+        if rc_seed != 0:
+            trials.append({"trial": i, "setup_ok": False,
+                           "why": f"seed join failed (exit {rc_seed})"})
+            continue
+
+        # Baseline AFTER seeding, so the seed join can never be mistaken for the lock.
+        locks_before = _lock_count(cluster)
+        fault_on = (i % 2 == 0)
+
+        # 2. The race: write B commits, the response carrying the new join state does not.
         _set_fault(cluster, POST_COMMIT_FAULT, fault_on)
-        _run_tbot_hard(cluster)
+        rc_fault, out_fault = _run_tbot_hard_in(cluster, storage, cfg)
         _set_fault(cluster, POST_COMMIT_FAULT, False)
-        throttle_runs += 1
-        if _lock_count(cluster) > locks_before_throttle:
-            throttle_locks += 1
-            stopped_early = True
-            break
+
+        # 3. The retry, nothing interfering: a lock here is the stale join state alone.
+        rc_retry, _ = _run_tbot_hard_in(cluster, storage, cfg)
+
+        trials.append({
+            "trial": i,
+            "setup_ok": True,
+            "token": trial_token,
+            "fault_on": fault_on,
+            "fault_confirmed": bool(fault_on and POST_COMMIT_FAULT_TEXT in (out_fault or "")),
+            "seed_join_exit_code": rc_seed,
+            "faulted_join_exit_code": rc_fault,
+            "retry_exit_code": rc_retry,
+            "locked": _lock_count(cluster) > locks_before,
+        })
+
+    ran = [t for t in trials if t.get("setup_ok")]
+    faulted = [t for t in ran if t["fault_on"]]
+    clean = [t for t in ran if not t["fault_on"]]
+    faulted_locked = [t for t in faulted if t["locked"]]
+    clean_locked = [t for t in clean if t["locked"]]
     records.append({
         "case": "throttled-signing-failures",
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "token": TOKEN,
+        "token": f"{TOKEN}-t0..{TOKEN}-t{THROTTLE_TRIALS - 1}",
         "actor": ACTOR,
-        "trials_run": throttle_runs,
-        "trials_planned": THROTTLE_TRIALS,
-        "fault_rate": THROTTLE_FAULT_RATE,
-        "locked": throttle_locks > 0,
-        "stopped_early": stopped_early,
-        "note": ("bk-bot got locked and further trials against it would be meaningless; "
-                 "see note in module.yaml for why this module can't yet repeat this with "
-                 "a fresh bot per trial") if stopped_early else
-                ("no lock within the trial budget at this fault rate - does not mean the "
-                 "race can't happen, only that it didn't in this run"),
+        "before": {},
+        # Everything assertable goes in `after`: observation_equals reads rec["after"][f]
+        # and FAILs on a missing field, which is why the previous version of this record -
+        # with its fields at the top level - could carry no declarative checks at all, and
+        # so reported a wrong answer without failing anything.
+        "after": {
+            "trials_planned": str(THROTTLE_TRIALS),
+            "trials_ran": str(len(ran)),
+            "setup_failures": str(len(trials) - len(ran)),
+            "faulted_trials": str(len(faulted)),
+            "clean_trials": str(len(clean)),
+            "faulted_trials_locked": str(len(faulted_locked)),
+            "clean_trials_locked": str(len(clean_locked)),
+            "lock_rate_faulted": f"{len(faulted_locked) / len(faulted):.2f}" if faulted else "n/a",
+            "lock_rate_clean": f"{len(clean_locked) / len(clean):.2f}" if clean else "n/a",
+            # Actor-computed booleans: observation_equals only does exact equality and
+            # there is no observation_greater verb, so the comparisons happen here.
+            # `some_faulted_trial_locked` is the anti-vacuity guard - if the trials were
+            # being refused up front again, nothing would lock and this would go false.
+            "some_faulted_trial_locked": str(bool(faulted_locked)).lower(),
+            "no_clean_trial_locked": str(not clean_locked).lower(),
+        },
+        "trials": trials,
+        "note": ("each trial is a fresh token + three joins (clean seed, maybe-faulted hard "
+                 "rejoin, clean retry); the fault is alternated so half the trials carry "
+                 "it. Expect every faulted trial to lock and no clean one to - the residual "
+                 "race is reliable when triggered, and absent otherwise"),
     })
 
     return records

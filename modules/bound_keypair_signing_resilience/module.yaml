@@ -20,11 +20,18 @@
 # that residual risk visible and roughly quantified, not to claim the fix is incomplete in
 # some way its author didn't already know.
 #
-# LIMITATION: the `throttled-signing-failures` case reuses the SAME bk-bot across all
-# trials, so once it locks (likely, given the fault rate), the remaining trials are
-# meaningless and the loop stops early - the headline number is really "did it lock within
-# N tries", not a smooth rate. Quantifying an actual rate needs a fresh bot per trial
-# (or an unlock step between trials), left as a follow-up rather than blocking this module.
+# FIXED (was a LIMITATION, and a misleading one): `throttled-signing-failures` used to
+# reuse the SAME bk-token across all trials. Because a bound_keypair lockout targets the
+# JOIN TOKEN, case 2 above had already locked that token before the loop started, so every
+# trial was refused before reaching patchToken() - none could commit write B or create a
+# new lock. The loop did not even stop early (its baseline lock count was already 1, so
+# its "did a new lock appear" test never tripped): it ran the full budget of no-op trials
+# and reported "no lock within the trial budget at this fault rate", which reads like
+# reassurance but meant nothing could have happened at all. Confirmed from the run data -
+# recovery_count and last_recovered_at never moved for the loop's whole duration. The case
+# now creates a FRESH token per trial (own registration secret, own tbot storage, explicit
+# recovery limit), so trials are independent, and it carries declarative checks of its own
+# so a vacuous result fails instead of passing quietly.
 name: bound_keypair_signing_resilience
 description: >
   A real bound_keypair bot's recovery joins are hit with two injected signing/delivery
@@ -100,3 +107,34 @@ claims:
       observation_equals host post-commit-fault newly_committed_write_b true
       observation_equals host post-commit-fault-retry join_exit_code 1
       observation_equals host post-commit-fault-retry newly_locked true
+
+  - id: the-residual-race-is-the-only-thing-that-locks
+    statement: >
+      Across repeated independent trials, a join locks if and only if the post-commit
+      fault fired during it: every faulted trial ends locked, and no fault-free trial
+      does. The lockout surface that remains is exactly the one narrow race, not a
+      general fragility of bound_keypair joining.
+    why: |
+      Cases 1 and 2 are each a single data point. This repeats the write-B race across
+      trials that cannot contaminate each other - a fresh token per trial, since a
+      bound_keypair lock targets the JOIN TOKEN and one shared token would mean the first
+      lock silently gags every later trial. That makes the two halves separable:
+
+      - **`no_clean_trial_locked`** is the fix-relevant half: trials where nothing was
+        injected never lock. Pre-fix, an ordinary signing failure could lock on its own;
+        this says that at repetition, a clean join is simply a clean join.
+      - **`some_faulted_trial_locked`** is the anti-vacuity guard, and it is the check
+        that would have caught this case's earlier wrong answer: if the trials were being
+        refused up front again, nothing would lock and this goes false instead of
+        reporting a falsely reassuring zero.
+      - **`setup_failures`** must be 0, so "no locks" can never be an artifact of trials
+        that failed to get off the ground.
+
+      `lock_rate_faulted`/`lock_rate_clean` are recorded for the actual numbers but not
+      asserted - the pass/fail lives in the two booleans, so a run is not failed over a
+      rate that drifts without a regression behind it.
+    artifacts: [checks.py]
+    checks: |
+      observation_equals host throttled-signing-failures setup_failures 0
+      observation_equals host throttled-signing-failures no_clean_trial_locked true
+      observation_equals host throttled-signing-failures some_faulted_trial_locked true
